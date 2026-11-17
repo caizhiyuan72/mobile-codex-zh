@@ -26,6 +26,39 @@ async function toolbar(page,width,height){
  assert.ok(geometry.prompt.height<=Math.max(112,height*.27)+2,'input has a bounded height');
  assert.equal(geometry.active,'prompt');return geometry;
 }
+async function editingLine(page,expected){
+ const result=await page.locator('#prompt').evaluate(field=>{
+  const style=getComputedStyle(field),line=parseFloat(style.lineHeight),paddingTop=parseFloat(style.paddingTop),paddingBottom=parseFloat(style.paddingBottom);
+  const position=field.selectionDirection==='backward'?field.selectionStart:field.selectionEnd;
+  // These fixtures use short explicit lines, so this check is independent of caret measurement.
+  const row=field.value.slice(0,position).split('\n').length-1;
+  return {value:field.value,start:field.selectionStart,end:field.selectionEnd,direction:field.selectionDirection,
+   top:paddingTop+row*line-field.scrollTop,bottom:paddingTop+(row+1)*line-field.scrollTop,
+   visibleTop:paddingTop,visibleBottom:field.clientHeight-paddingBottom,scrollTop:field.scrollTop,
+   maxScroll:field.scrollHeight-field.clientHeight,height:field.clientHeight,cssMax:parseFloat(style.maxHeight)};
+ });
+ assert.equal(result.value,expected.value,'keyboard resize preserves the draft');
+ assert.equal(result.start,expected.start,'keyboard resize preserves selection start');
+ assert.equal(result.end,expected.end,'keyboard resize preserves selection end');
+ if(expected.direction)assert.equal(result.direction,expected.direction,'keyboard resize preserves selection direction');
+ assert.ok(result.height<=result.cssMax+1,'composer uses the actual CSS height limit');
+ assert.ok(result.top>=result.visibleTop-1,'active editing line stays below the top padding');
+ assert.ok(result.bottom<=result.visibleBottom+1,'active editing line stays above the bottom padding');
+ return result;
+}
+async function earlierSelection(page,width,theme){
+ const value=Array.from({length:9},(_,i)=>'第'+(i+1)+'行内容').join('\n');
+ await page.setViewportSize({width,height:820});await page.locator('#prompt').fill(value);await settle(page);
+ const selection=await page.locator('#prompt').evaluate(field=>{
+  const start=field.value.indexOf('第2行')+2,end=field.value.indexOf('第7行')+2;
+  field.setSelectionRange(start,end,'backward');field.scrollTop=parseFloat(getComputedStyle(field).lineHeight);
+  return {value:field.value,start,end,direction:'backward'};
+ });
+ await page.setViewportSize({width,height:420});await settle(page);
+ const result=await editingLine(page,selection);
+ assert.ok(result.scrollTop<result.maxScroll,'editing an earlier line never jumps to the draft tail');
+ await page.screenshot({path:path.join(output,`keyboard-selection-${width}-${theme}.png`)});
+}
 async function githubLayout(page,width,theme){
  const states=[
   ['unconfigured',{configured:false,clientId:'',state:'idle',scopes:[]}],
@@ -79,10 +112,13 @@ async function githubLayout(page,width,theme){
     window.Native={locale:()=>JSON.stringify({choice:'zh-CN',systemLanguage:'zh-CN'}),postMessage(raw){const message=JSON.parse(raw);window.layoutCalls.push(message);const result=message.action==='state'?window.layoutState:message.action==='github.status'?{github:window.layoutState.github}:message.action==='rpc'?{data:[],marketplaces:[]}:{};setTimeout(()=>window.mobileCodexEvent('response',{id:message.id,result}),0);}};
    },state);
    await page.goto('https://appassets.androidplatform.net/index.html');await page.locator('[data-id="a"]').waitFor();
-   await page.locator('#prompt').fill('这是第一行\n第二行\n第三行\n第四行\n第五行应在输入框内滚动');await page.locator('#prompt').focus();await settle(page);
+   const draft='这是第一行\n第二行\n第三行\n第四行\n第五行应在输入框内滚动';
+   await page.locator('#prompt').fill(draft);await page.locator('#prompt').focus();await settle(page);
    await toolbar(page,width,820);await page.screenshot({path:path.join(output,`composer-${width}-${theme}.png`)});
    await page.setViewportSize({width,height:420});await settle(page);await toolbar(page,width,420);
+   if(width===320)await editingLine(page,{value:draft,start:draft.length,end:draft.length});
    await page.screenshot({path:path.join(output,`keyboard-${width}-${theme}.png`)});
+   if(width===320)await earlierSelection(page,width,theme);
    await page.locator('#composer-options').click();await settle(page);
    const picker=await page.locator('#model-picker').boundingBox();assert.ok(picker.x>=-1&&picker.x+picker.width<=width+1&&picker.y>=-1&&picker.y+picker.height<=421,'model picker fits short viewport');
    await page.locator('#model-picker [data-close]').click();await settle(page);
@@ -98,7 +134,7 @@ async function githubLayout(page,width,theme){
    const stop=await page.locator('#stop').boundingBox();assert.ok(stop.width>=43.5&&stop.height>=43.5,'Stop remains reachable');
    await page.locator('#stop').click();await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.stop'));
    assert.equal(await page.locator('#live-start,#account-button,#composer-invite').count(),0);
-   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,picker:true,apiPanel:true,githubStates,stop:true});await page.close();
+   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,caret:width===320,selection:width===320,picker:true,apiPanel:true,githubStates,stop:true});await page.close();
   }
   fs.writeFileSync(path.join(output,'results.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results));
  } finally {await browser.close();}

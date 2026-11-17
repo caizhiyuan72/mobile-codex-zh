@@ -337,8 +337,31 @@
     (last ? choices.at(-1) : choices[0])?.focus();
   }
   function scrollLatest() { following = true; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight; historyView.top = $('chat-scroll').scrollTop; $('jump-latest').hidden = true; }
-  let composerFramePending = false, composerMeasureKey = '', viewportFramePending = false;
+  let composerFramePending = false, composerMeasureKey = '', composerLayoutKey = '', composerMeasuredHeight = 0, viewportFramePending = false;
   function updateComposerExpansion() { sizeComposer(); }
+  function revealComposerSelection(field, styles, line) {
+    const range = document.createRange();
+    if (typeof range.getBoundingClientRect !== 'function') return;
+    const mirror = document.createElement('div');
+    mirror.setAttribute('aria-hidden', 'true');
+    for (const property of ['fontFamily','fontSize','fontWeight','fontStyle','fontStretch','fontVariant','fontFeatureSettings','fontVariationSettings','lineHeight','letterSpacing','wordSpacing','textIndent','textAlign','textTransform','direction','tabSize','whiteSpace','wordBreak','overflowWrap','paddingTop','paddingRight','paddingBottom','paddingLeft']) mirror.style[property] = styles[property];
+    Object.assign(mirror.style, {position:'fixed', left:'-10000px', top:'0', visibility:'hidden', pointerEvents:'none', contain:'layout style paint', boxSizing:'border-box', width:field.clientWidth + 'px'});
+    // A real text range accounts for wrapping; it never changes the textarea's selection.
+    const text = document.createTextNode(field.value + '\u200b');
+    mirror.append(text); document.body.append(mirror);
+    try {
+      const position = field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd;
+      range.setStart(text, position); range.collapse(true);
+      let rect = range.getBoundingClientRect();
+      if (!rect.height) { range.setEnd(text, position + 1); rect = range.getBoundingClientRect(); }
+      if (!rect.height) return;
+      const paddingTop = parseFloat(styles.paddingTop) || 0, paddingBottom = parseFloat(styles.paddingBottom) || 0;
+      const row = Math.max(0, Math.round((rect.top - mirror.getBoundingClientRect().top - paddingTop) / line));
+      const top = paddingTop + row * line, bottom = top + line;
+      if (top < field.scrollTop + paddingTop) field.scrollTop = top - paddingTop;
+      else if (bottom > field.scrollTop + field.clientHeight - paddingBottom) field.scrollTop = bottom - field.clientHeight + paddingBottom;
+    } finally { mirror.remove(); }
+  }
   function measureComposer() {
     composerFramePending = false;
     const field = $('prompt');
@@ -348,11 +371,17 @@
     composerMeasureKey = key;
     const styles = getComputedStyle(field), line = parseFloat(styles.lineHeight) || 24;
     const padding = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
-    const cap = Math.max(line + padding, Math.min(line * 4 + padding, height * .27));
+    const cssMax = parseFloat(styles.maxHeight);
+    const cap = Math.min(Number.isFinite(cssMax) ? cssMax : Infinity, Math.max(line + padding, Math.min(line * 4 + padding, height * .27)));
+    const scrollTop = field.scrollTop;
     field.style.height = 'auto';
     const contentHeight = field.scrollHeight;
     field.style.height = Math.min(Math.max(line + padding, contentHeight), cap) + 'px';
     field.style.overflowY = contentHeight > cap ? 'auto' : 'hidden';
+    field.scrollTop = scrollTop;
+    const layoutKey = [field.clientWidth, line, padding, textSizePercent].join('\u0000');
+    if ((layoutKey !== composerLayoutKey || field.clientHeight !== composerMeasuredHeight) && document.activeElement === field && field.clientHeight && contentHeight > field.clientHeight) revealComposerSelection(field, styles, line);
+    composerLayoutKey = layoutKey; composerMeasuredHeight = field.clientHeight;
     if (following) scrollLatest();
   }
   function sizeComposer() {
