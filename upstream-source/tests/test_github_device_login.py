@@ -36,7 +36,10 @@ class GitHubDeviceLoginTests(unittest.TestCase):
                 return {"device_code": "test-device-code", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": life, "interval": 5}, ""
             if url == login.USER_URL:
                 return user or {"login": "caizhiyuan72"}, header
-            return next(values), ""
+            value = next(values)
+            if isinstance(value, Exception):
+                raise value
+            return value, ""
 
         result = login.authorize("Iv1.fixtureClient", "caizhiyuan72", request=network, monotonic=clock.read, sleep=clock.sleep, announce=messages.append)
         return result, clock, calls, messages
@@ -71,6 +74,41 @@ class GitHubDeviceLoginTests(unittest.TestCase):
         with self.assertRaisesRegex(login.LoginError, "过期"):
             self.authorize([], life=2)
 
+    def test_transient_poll_failure_keeps_the_same_device_authorization(self):
+        result, clock, calls, messages = self.authorize([
+            login.NetworkLoginError("temporary failure"),
+            {"access_token": "fixture-token", "token_type": "bearer", "scope": "public_repo,workflow"}])
+        self.assertEqual(result, ("fixture-token", 0, "caizhiyuan72"))
+        polls = [call for call in calls if call[0] == login.TOKEN_URL]
+        self.assertEqual([call[1]["device_code"] for call in polls], ["test-device-code", "test-device-code"])
+        self.assertEqual(clock.sleeps, [5, 5])
+        self.assertEqual(sum(call[0] == login.DEVICE_URL for call in calls), 1)
+        self.assertNotIn("fixture-token", " ".join(messages))
+
+    def test_verifying_user_retries_with_the_token_still_in_memory(self):
+        clock, calls, messages = Clock(), [], []
+        responses = iter([
+            ({"device_code": "device", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5}, ""),
+            ({"access_token": "fixture-token", "token_type": "bearer", "scope": "public_repo,workflow"}, ""),
+            login.NetworkLoginError("temporary failure"),
+            ({"login": "caizhiyuan72"}, "public_repo,workflow")])
+        def network(url, form=None, token=None):
+            calls.append((url, token))
+            value = next(responses)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        result = login.authorize("Iv1.fixtureClient", "caizhiyuan72", request=network,
+            monotonic=clock.read, sleep=clock.sleep, announce=messages.append)
+        self.assertEqual(result, ("fixture-token", 0, "caizhiyuan72"))
+        self.assertEqual(calls, [(login.DEVICE_URL, None), (login.TOKEN_URL, None),
+            (login.USER_URL, "fixture-token"), (login.USER_URL, "fixture-token")])
+        self.assertNotIn("fixture-token", " ".join(messages))
+
+    def test_network_retries_stop_before_the_device_deadline(self):
+        with self.assertRaises(login.NetworkLoginError):
+            self.authorize([login.NetworkLoginError("temporary failure")], life=10)
+
     def test_malformed_and_non_bearer_tokens_are_rejected(self):
         for response in ({"access_token": "fixture\npassword=other", "token_type": "bearer"}, {"access_token": "fixture", "token_type": "mac"}, {"access_token": "fixture", "token_type": "bearer", "expires_in": 0}):
             with self.subTest(response=response), self.assertRaises(login.LoginError):
@@ -96,6 +134,16 @@ class GitHubDeviceLoginTests(unittest.TestCase):
             with self.assertRaises(login.LoginError) as result:
                 login.request_json(login.USER_URL, token="fixture-token")
             self.assertNotIn("fixture-token", str(result.exception))
+
+    def test_only_transient_http_and_network_errors_allow_retry(self):
+        for status in (401, 403, 429, 500, 502, 503):
+            with self.subTest(status=status), patch.object(login.urllib.request, "build_opener") as opener:
+                opener.return_value.open.side_effect = login.urllib.error.HTTPError(login.USER_URL, status,
+                    "fixture-token", {}, io.BytesIO(b'{"secret":"fixture-token"}'))
+                with self.assertRaises(login.LoginError) as result:
+                    login.request_json(login.USER_URL, token="fixture-token")
+                self.assertEqual(isinstance(result.exception, login.NetworkLoginError), status in (429, 500, 502, 503))
+                self.assertNotIn("fixture-token", str(result.exception))
 
     def test_temporary_broker_is_bound_to_exact_repository_and_capability(self):
         bridge = login.CredentialBridge("fixture-token", 0, "caizhiyuan72/mobile-codex-zh")

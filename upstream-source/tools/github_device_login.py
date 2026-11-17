@@ -29,6 +29,10 @@ class LoginError(Exception):
     pass
 
 
+class NetworkLoginError(LoginError):
+    """A temporary connection failure; keep an in-progress device login alive."""
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, url):
         return None
@@ -62,7 +66,15 @@ def request_json(url, form=None, token=None):
         if not isinstance(result, dict):
             raise ValueError()
         return result, scope_header
-    except (OSError, ValueError, urllib.error.URLError):
+    except urllib.error.HTTPError as error:
+        status = error.code
+        error.close()
+        if status == 429 or 500 <= status <= 599:
+            raise NetworkLoginError("GitHub 授权服务暂时不可用，正在保留当前授权并重试。") from None
+        raise LoginError("无法连接 GitHub 授权服务，或授权已失效；没有保存凭据。") from None
+    except (OSError, urllib.error.URLError):
+        raise NetworkLoginError("GitHub 授权连接暂时中断，正在保留当前授权并重试。") from None
+    except ValueError:
         raise LoginError("无法连接 GitHub 授权服务，或授权已失效；没有保存凭据。") from None
 
 
@@ -76,8 +88,18 @@ def scopes(value):
 def authorize(client_id, expected_login, request=request_json, monotonic=time.monotonic, sleep=time.sleep, announce=print):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{7,127}", client_id):
         raise LoginError("请提供自有 GitHub OAuth 应用的公开 Client ID，不需要 Client Secret。")
+    def connected(url, form=None, token=None, *, until, pause=5):
+        while True:
+            try:
+                return request(url, form, token)
+            except NetworkLoginError:
+                if monotonic() + pause >= until:
+                    raise
+                announce("GitHub 连接中断，当前授权仍保留在内存；稍后自动重试。")
+                sleep(pause)
+
     began = monotonic()
-    device, _ = request(DEVICE_URL, {"client_id": client_id, "scope": "public_repo workflow"})
+    device, _ = connected(DEVICE_URL, {"client_id": client_id, "scope": "public_repo workflow"}, until=began + 60)
     if device.get("error"):
         raise LoginError("GitHub 未能开始授权，请检查 Client ID 并开启 Device Flow。")
     code, user_code = device.get("device_code"), device.get("user_code")
@@ -102,8 +124,8 @@ def authorize(client_id, expected_login, request=request_json, monotonic=time.mo
         if monotonic() >= deadline:
             break
         started = monotonic()
-        response, _ = request(TOKEN_URL, {"client_id": client_id, "device_code": code,
-                                       "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
+        response, _ = connected(TOKEN_URL, {"client_id": client_id, "device_code": code,
+                                         "grant_type": "urn:ietf:params:oauth:grant-type:device_code"}, until=deadline, pause=interval)
         if monotonic() >= deadline:
             break
         error = response.get("error")
@@ -134,7 +156,7 @@ def authorize(client_id, expected_login, request=request_json, monotonic=time.mo
                 raise LoginError("GitHub 返回的令牌期限无效。") from None
             if expiry <= monotonic():
                 raise LoginError("GitHub 访问令牌已过期，请重新登录。")
-        user, granted_header = request(USER_URL, token=token)
+        user, granted_header = connected(USER_URL, token=token, until=min(monotonic() + 90, expiry or float("inf")))
         scopes(granted_header or response.get("scope", ""))
         login = user.get("login", "")
         if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
