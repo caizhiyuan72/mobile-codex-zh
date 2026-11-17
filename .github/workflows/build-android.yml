@@ -158,6 +158,64 @@ jobs:
           path: build-artifacts/
           if-no-files-found: error
           retention-days: 14
+      - name: Test and compile the parallel migration edition
+        run: bash gradlew --no-daemon --build-cache testParallelUnitTest lintParallel assembleParallel
+      - name: Collect parallel APK and Android-compatible signing tool
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, shutil, subprocess, zipfile
+          from pathlib import Path
+          original = json.loads(Path('../build-artifacts/build-info.json').read_text())
+          if original['commit'] != os.environ['BUILD_COMMIT']:
+              raise ValueError('Parallel source identity differs from the verified build')
+          out = Path('../parallel-build-artifacts'); out.mkdir(exist_ok=True)
+          name = f"mobile-codex-{original['versionName']}-parallel-arm64-unsigned.apk"
+          apk = out / name
+          candidates = list(Path('app/build/outputs/apk/parallel').glob('*.apk'))
+          if len(candidates) != 1:
+              raise ValueError('Expected exactly one parallel APK')
+          shutil.copyfile(candidates[0], apk)
+          tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+          badging = subprocess.check_output([str(tools / 'aapt'), 'dump', 'badging', str(apk)], text=True)
+          identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
+          package = original['package'] + '.next'
+          if not identity or (identity.group(1), int(identity.group(2)), identity.group(3)) != (package, original['versionCode'], original['versionName']):
+              raise ValueError('Unexpected parallel APK identity')
+          if "application-label:'Codex CN API'" not in badging:
+              raise ValueError('Parallel app must have a distinguishable launcher name')
+          abis = re.search(r'^native-code: (.+)$', badging, re.M)
+          if not abis or re.findall(r"'([^']+)'", abis.group(1)) != ['arm64-v8a']:
+              raise ValueError('Parallel APK must contain only ARM64 libraries')
+          if re.search(r'^application-debuggable', badging, re.M):
+              raise ValueError('Parallel APK must not be debuggable')
+          with zipfile.ZipFile(apk) as archive:
+              for asset in Path('app/src/main/assets/web').rglob('*'):
+                  if asset.is_file() and archive.read('assets/web/' + asset.relative_to('app/src/main/assets/web').as_posix()) != asset.read_bytes():
+                      raise ValueError('Parallel APK web asset differs from source: ' + asset.name)
+          # Convert Google's SDK signer to DEX for local signing on Android.
+          # No private signing key is generated, uploaded, or stored in CI.
+          signer = out / 'apksigner-android.jar'
+          subprocess.run([str(tools / 'd8'), '--min-api', '29', '--lib',
+              str(Path(os.environ['ANDROID_HOME']) / 'platforms/android-35/android.jar'),
+              '--output', str(signer), str(tools / 'lib/apksigner.jar')], check=True)
+          source = Path('../build-artifacts') / original['source']
+          shutil.copyfile(source, out / source.name)
+          info = {**original, 'variant':'parallel', 'package':package, 'label':'Codex CN API',
+                  'apk':name, 'apkBytes':apk.stat().st_size, 'signed':False,
+                  'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+                  'signer':signer.name, 'signerSha256':hashlib.sha256(signer.read_bytes()).hexdigest()}
+          (out / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
+          (out / 'SHA256SUMS').write_text(''.join(digest + '  ' + filename + '\n' for digest, filename in
+              [(info['apkSha256'], info['apk']), (info['sourceSha256'], info['source']), (info['signerSha256'], info['signer'])]))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-parallel-build-${{ github.sha }}
+          path: parallel-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

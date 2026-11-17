@@ -45,6 +45,13 @@ android {
             minifyEnabled false
             if (suppliedSigningStore) signingConfig signingConfigs.provided
         }
+        // A distinct installation for migration when the old V5 key is unavailable.
+        // Its signing identity must be kept for all subsequent parallel updates.
+        parallel {
+            initWith release
+            applicationIdSuffix '.next'
+            matchingFallbacks = ['release']
+        }
     }
     testOptions { unitTests { returnDefaultValues = true; includeAndroidResources = true } }
     lint { abortOnError true }

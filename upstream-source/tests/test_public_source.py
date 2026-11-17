@@ -25,6 +25,14 @@ class PublicSourceTests(unittest.TestCase):
         self.assertIn("namespace 'dev.mobilecodex.app'", gradle)
         self.assertIn("applicationId 'dev.mobilecodex.app.zhcnv3'", gradle)
 
+    def test_parallel_migration_build_has_a_distinct_identity_and_launcher_label(self):
+        gradle = (ROOT / 'app/build.gradle').read_text(encoding='utf-8')
+        self.assertRegex(gradle, r"parallel\s*\{\s*initWith release\s*applicationIdSuffix '\.next'")
+        manifest = (ROOT / 'app/src/parallel/AndroidManifest.xml').read_text(encoding='utf-8')
+        self.assertIn('android:label="Codex CN API"', manifest)
+        main = (ROOT / 'app/src/main/AndroidManifest.xml').read_text(encoding='utf-8')
+        self.assertIn('android:authorities="${applicationId}.updates"', main)
+
     def test_source_and_docs_do_not_embed_developer_home_paths(self):
         roots = [ROOT / 'app/src', ROOT / 'docs', ROOT / 'tools', ROOT / '.github']
         files = [ROOT / 'README.md', ROOT / 'app/build.gradle']
