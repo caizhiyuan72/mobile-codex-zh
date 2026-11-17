@@ -131,11 +131,11 @@ public class GitHubAuthTest {
         try (GitHubCredentials broker = new GitHubCredentials(context, auth::credentialFor, auth::agentStatus)) {
             Map<String, String> env = new java.util.HashMap<>();
             broker.configure(env);
-            java.nio.file.Path installed = java.nio.file.Path.of(env.get("MC_GITHUB_CLI"));
+            java.nio.file.Path installed = new java.io.File(env.get("MC_GITHUB_CLI")).toPath();
             try (java.io.InputStream asset = context.getAssets().open("mobile-github.py")) {
                 assertArrayEquals(asset.readAllBytes(), java.nio.file.Files.readAllBytes(installed));
             }
-            assertTrue(java.nio.file.Files.isRegularFile(java.nio.file.Path.of(env.get("MC_GITHUB_HELPER"))));
+            assertTrue(java.nio.file.Files.isRegularFile(new java.io.File(env.get("MC_GITHUB_HELPER")).toPath()));
             for (String secret : List.of(TOKEN, DEVICE, REFRESH)) assertFalse(env.toString().contains(secret));
         }
     }
