@@ -209,7 +209,23 @@ jobs:
           (out / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
           (out / 'SHA256SUMS').write_text(''.join(digest + '  ' + filename + '\n' for digest, filename in
               [(info['apkSha256'], info['apk']), (info['sourceSha256'], info['source']), (info['signerSha256'], info['signer'])]))
+          from tools.apk_download_kit import make_kit, reconstruct
+          kit = Path('../parallel-download-kit'); kit.mkdir(exist_ok=True)
+          recipe = make_kit(apk, kit)
+          # Exercise the actual compressed runtime members from this build's release APK.
+          restored = kit / '.verification.apk'
+          reconstruct(Path('../build-artifacts') / original['apk'], kit, restored)
+          restored.unlink()
+          for filename in ['build-info.json', 'SHA256SUMS', info['source'], info['signer']]:
+              shutil.copyfile(out / filename, kit / filename)
+          print('Verified parallel download kit:', recipe['skeletonBytes'], 'bytes of literal APK data')
           PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-parallel-download-kit-${{ github.sha }}
+          path: parallel-download-kit/
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: codex-cn-api-parallel-build-${{ github.sha }}
