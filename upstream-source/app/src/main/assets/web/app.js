@@ -7,6 +7,7 @@
   const pending = new Map(), requestQueue = new Map();
   let agentUi = null;
   let apiProvidersUi = window.MobileCodexApiProviders;
+  const githubUi = window.MobileCodexGitHub;
   let reportsUi = null;
   let terminalState = {id:'', revision:-1, running:false, stopping:false}, terminalSending = false;
   const dialogs = [], frame = fn => (window.requestAnimationFrame || (cb => setTimeout(cb, 0)))(fn);
@@ -1544,6 +1545,7 @@
     if (changedFileContext) resetFileContext();
     setDraftScope(next); state = historySnapshot(next, changedThread);
     apiProvidersUi?.render(state);
+    githubUi?.render(state);
     state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {}; setCharacterState(state.characters);
     const logged = configuredApi(), selected = state.workspace.selected;
     const name = selected ? state.workspace.name : t('일반 대화');
@@ -2059,6 +2061,7 @@
   }
   reportsUi = window.MobileCodexReports?.({document, call, t, show, close});
   window.mobileCodexEvent = (name, data) => {
+    if (name === 'github.changed') { state.github = data.github; githubUi?.render(data); return; }
     if (name === 'reports.available') { reportsUi?.available(data); return; }
     if (name.startsWith('agents.')) { agentUi?.event(name, data); return; }
     if (name === 'response') { const p = pending.get(data.id); if (p) { clearTimeout(p.timer); pending.delete(data.id); data.error ? p.reject(new Error(data.error)) : p.resolve(data.result || {}); } return; }
@@ -2302,6 +2305,7 @@
   document.querySelectorAll('input[name="permission"]').forEach(r => r.addEventListener('change', () => setPermissionMode(r.value).catch(error => toast(error.message))));
   ensureCharacterPackUi(); ensureNotificationSettings();
   apiProvidersUi?.init({call, refresh:()=>call('state').then(render), toast});
+  githubUi?.init({call, refresh:()=>call('github.status').then(value => { state.github = value.github; githubUi?.render(value); }), toast});
   if ($('api-effort-choice')) on('api-effort-choice', () => {
     const value = $('api-effort-choice').value;
     if (![...$('effort').options].some(o => o.value === value)) {

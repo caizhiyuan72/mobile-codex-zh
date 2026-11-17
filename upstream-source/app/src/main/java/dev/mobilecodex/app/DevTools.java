@@ -20,6 +20,9 @@ final class DevTools {
     private File prefix;
     private String loadError = "";
     private boolean prepared;
+    private GitHubCredentials githubCredentials;
+
+    void setGitHubCredentials(GitHubCredentials value) { githubCredentials = value; }
 
     DevTools(Context context) {
         this.context = context;
@@ -112,6 +115,7 @@ final class DevTools {
     void configure(ProcessBuilder builder, File codexHome, File aliases) throws Exception {
         File root = prepare();
         environment(builder.environment(), root, nativeDir, context.getFilesDir(), context.getCacheDir(), codexHome, aliases, manifest);
+        if (githubCredentials != null) githubCredentials.configure(builder.environment());
     }
     static void environment(Map<String, String> env, File prefix, File nativeDir, File home, File cache, File codexHome, File aliases, JSONObject manifest) throws Exception {
         String usr = prefix.getAbsolutePath(), lib = nativeDir.getAbsolutePath();

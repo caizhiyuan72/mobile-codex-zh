@@ -87,6 +87,8 @@ public final class Engine {
     private String authState = "unconfigured", authError = "";
     private boolean autoRestorePaused;
     private final ApiProviders apiProviders;
+    private final GitHubAuth githubAuth;
+    private final GitHubCredentials githubCredentials;
     private JSONArray models = new JSONArray();
     private JSONArray sessions = new JSONArray();
     private JSONObject active;
@@ -117,7 +119,10 @@ public final class Engine {
         authState = apiProviders.configured() ? "configured" : "unconfigured";
         processHome = codexHome.root();
         instructions = new PersonalInstructions(codexHome);
+        githubAuth = new GitHubAuth(context, value -> event("github.changed", value));
+        githubCredentials = new GitHubCredentials(context, githubAuth::credentialFor);
         devTools = new DevTools(context);
+        devTools.setGitHubCredentials(githubCredentials);
         linux = new LinuxRuntime(context, devTools, this::linuxChanged);
         changes = new ChangeReview(new File(context.getFilesDir(), "change-backups"), this::git);
         workDir = new File(context.getFilesDir(), "workspace"); workDir.mkdirs();
@@ -185,6 +190,7 @@ public final class Engine {
             "authState", authState, "authError", t(authError),
             "apiProviders", apiProviders.snapshot().optJSONArray("apiProviders"), "apiActive", apiProviders.activeId(),
             "apiMigrationError", apiProviders.snapshot().optString("apiMigrationError"),
+            "github", githubAuth.status().optJSONObject("github"),
             "models", models, "workspace", documents.workspace(), "projects", documents.projects(), "sessions", summaries,
             "threadId", threadId, "turnId", turnId,
             "turnDiff", active == null ? "" : active.optString("turnDiff"), "messages", snapshotMessages(),
@@ -361,8 +367,25 @@ public final class Engine {
     public void updatesChanged(JSONObject data) { event("updates.changed", data); }
     public boolean canInstallUpdate() { return runningTurns.isEmpty() && !VoiceInput.active() && !linux.status().optBoolean("busy") && !terminal.busy(); }
     public void voiceInputChanged() { event("voice.changed", obj()); }
+    JSONObject githubStatus() { return githubAuth.status(); }
+    String githubVerificationUri() { return githubAuth.verificationUri(); }
     public void phoneStateChanged() { io.execute(this::publish); }
     public void handle(String action, JSONObject args, Reply reply) {
+        // Login cancellation and local sign-out must remain responsive during a Codex RPC.
+        if (action.startsWith("github.")) {
+            try {
+                switch (action) {
+                    case "github.status" -> { }
+                    case "github.configure" -> githubAuth.configure(args.optString("clientId"));
+                    case "github.login" -> githubAuth.begin();
+                    case "github.cancel" -> githubAuth.cancel();
+                    case "github.disconnect" -> githubAuth.disconnect();
+                    default -> throw new IOException("不支持的 GitHub 操作。");
+                }
+                reply.complete(githubAuth.status(), null);
+            } catch (Exception error) { reply.complete(null, error); }
+            return;
+        }
         // The terminal owns its bounded writer and stop deadline. These controls
         // must also respond while the Codex queue is waiting on an RPC.
         if (Set.of("terminal.input", "terminal.stop", "terminal.state").contains(action)) {

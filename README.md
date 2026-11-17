@@ -11,6 +11,7 @@
 - 移除订阅登录、订阅用量组件、Live 实时语音、Pro 网页咨询、外部 Claude/Gemini CLI 邀请流程。
 - 输入操作收为单排，统一按钮点击尺寸；加入轻量面板和按压动效，流式消息按帧合并刷新。
 - Android 系统听写放入添加菜单，识别结果进入草稿，由用户发送。
+- 新增 GitHub 浏览器设备授权设置页，内置 Git 使用加密保存的授权；首次配置使用自己注册的公开 OAuth Client ID，无需 `gh` 或 Client Secret。详见 [登录说明](docs/GITHUB_LOGIN.md)。
 - 32 张聊天插图从 27,729,762 字节缩为 1,429,728 字节；原画保留，最终 APK 大小待构建后测量。
 
 `/models` 扫描只读取模型 ID。模型能否完成对话、工具调用、推理强度和原生子智能体任务，取决于第三方服务商的实际兼容情况，不能由扫描成功推断。
@@ -45,7 +46,7 @@ python3 tools/prepare_devtools.py
 bash gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
 ```
 
-详见 [优化与验证记录](docs/API_OPTIMIZATION.md)、[源码恢复状态](docs/SOURCE_STATUS.md)、[更新说明](docs/UPDATES.md)。
+详见 [优化与验证记录](docs/API_OPTIMIZATION.md)、[GitHub 浏览器授权与首次构建](docs/GITHUB_LOGIN.md)、[源码恢复状态](docs/SOURCE_STATUS.md)、[更新说明](docs/UPDATES.md)。
 
 ## 历史发布
 

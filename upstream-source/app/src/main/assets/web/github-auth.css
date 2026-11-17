@@ -1,0 +1,33 @@
+.github-auth-panel { min-width: 0; overflow-wrap: anywhere; }
+.github-auth-panel [hidden] { display: none !important; }
+.github-auth-card { display: grid; gap: 12px; margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.github-auth-card p { margin: 0; }
+.github-auth-card > strong { display: block; min-width: 0; }
+.github-action-area { display: grid; gap: 8px; }
+.github-action-area > p { margin: 0; }
+.github-auth-panel button { min-width: 44px; min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.github-auth-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.github-auth-actions > button { flex: 1 1 160px; }
+.github-auth-panel button { transition: transform 120ms var(--ease), opacity 120ms var(--ease); }
+.github-auth-panel button:active:not(:disabled) { transform: scale(.98); }
+.github-code-card { display: grid; min-width: 0; gap: 8px; padding: 12px; border-radius: var(--r-md); background: var(--fill-1); animation: github-code-enter 160ms var(--ease); }
+.github-code-card label, .github-config-form label { font-size: var(--fs-sm); font-weight: 500; }
+.github-code-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.github-code-row .github-user-code { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; margin: 0; padding: 8px; text-align: center; font-family: var(--mono); font-size: clamp(16px, 4.5vw, 22px); font-weight: 600; letter-spacing: .04em; user-select: text; -webkit-user-select: text; }
+.github-app-config { padding: 4px 0; }
+.github-app-config > summary { display: flex; align-items: center; min-height: 44px; font-weight: 500; cursor: pointer; }
+.github-app-config > summary::after { content: '+'; margin-left: auto; padding-left: 8px; color: var(--text-2); }
+.github-app-config[open] > summary::after { content: '−'; }
+.github-app-config > summary::-webkit-details-marker { display: none; }
+.github-app-config ol { margin: 8px 0 12px; padding-left: 24px; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.7; }
+.github-config-form { display: grid; gap: 8px; margin-top: 12px; }
+.github-config-form .text-input { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; margin: 0; }
+.github-config-form button { justify-self: start; max-width: 100%; margin-top: 4px; }
+.github-permission-note { margin-top: 20px; }
+.github-disconnect-note { margin-top: 8px; }
+.github-auth-panel .github-auth-error { color: var(--danger); }
+@keyframes github-code-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .github-auth-panel button { transition: none; }
+  .github-code-card { animation: none; }
+}

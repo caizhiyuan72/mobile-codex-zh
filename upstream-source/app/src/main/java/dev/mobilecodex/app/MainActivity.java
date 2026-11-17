@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat;
 import org.json.JSONObject;
 import org.json.JSONArray;
 import java.io.File;
+import java.io.IOException;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -49,7 +50,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
         if (!"https".equals(uri.getScheme()) || !HOST.equals(uri.getHost()) || path == null
                 || !(path.equals("/index.html") || path.equals("/app.css") || path.equals("/visual-system.css") || path.equals("/spacing.css")
                 || path.equals("/app.js") || path.equals("/ui-core.js") || path.equals("/translations.js") || path.equals("/translations-zh.js")
-                || path.equals("/locale.js") || path.equals("/api-providers.js") || path.equals("/reasoning-policy.js") || path.equals("/reports.js"))) {
+                || path.equals("/locale.js") || path.equals("/api-providers.js") || path.equals("/reasoning-policy.js") || path.equals("/reports.js")
+                || path.equals("/github-auth.js") || path.equals("/github-auth.css"))) {
             return deniedResponse();
         }
         String mime = path.endsWith(".css") ? "text/css" : path.endsWith(".js") ? "application/javascript" : "text/html";
@@ -63,6 +65,14 @@ public final class MainActivity extends Activity implements Engine.Ui {
     static boolean isBrowserUri(Uri uri, boolean allowHttp) {
         return ("https".equals(uri.getScheme()) || (allowHttp && "http".equals(uri.getScheme())))
             && uri.getHost() != null && !uri.getHost().isEmpty() && uri.getUserInfo() == null;
+    }
+    static Uri githubBrowserUri(boolean setup, String verificationUri) {
+        if (setup) return Uri.parse("https://github.com/settings/applications/new");
+        Uri uri = Uri.parse(verificationUri == null ? "" : verificationUri);
+        if (!"https".equals(uri.getScheme()) || !"github.com".equals(uri.getAuthority())
+                || !"/login/device".equals(uri.getPath()) || uri.getQuery() != null || uri.getFragment() != null)
+            throw new IllegalArgumentException("请先开始 GitHub 登录，取得有效的授权码。");
+        return uri;
     }
     static final String HOST = "appassets.androidplatform.net";
     private static final int PICK_FOLDER = 31, EXPORT_RECOVERY = 32, IMPORT_SKILL = 33, EXPORT_IMAGE = 34, PICK_ATTACHMENTS = 35, EXPORT_ATTACHMENT = 36, INSTALL_UPDATE = 37, PICK_CHARACTERS = 38;
@@ -489,6 +499,13 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 requestId = id;
                 JSONObject args = message.optJSONObject("args"); if (args == null) args = new JSONObject();
                 JSONObject parameters = args;
+                if (action.equals("github.openSetup") || action.equals("github.openVerification")) {
+                    Uri uri = githubBrowserUri(action.equals("github.openSetup"), engine.githubVerificationUri());
+                    runOnUiThread(() -> {
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); respond(id, obj("ok", true), null); }
+                        catch (Exception error) { respond(id, null, new IOException("无法打开浏览器，请检查默认浏览器设置。")); }
+                    }); return;
+                }
                 if (action.startsWith("reports.")) {
                     ErrorReports reports = ((MobileCodexApp) getApplication()).reports();
                     switch (action) {
