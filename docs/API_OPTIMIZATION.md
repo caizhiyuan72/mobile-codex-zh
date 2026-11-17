@@ -61,6 +61,6 @@ Codex 与 code-mode host 是包体中的主要部分，同时承担核心编程�
 - 使用实际 bundled Codex、隔离临时目录和假密钥完成 app-server `initialize` 与 `thread/start`，返回预期 `mobile_api`，未生成 `auth.json`。没有发送模型推理任务，没有使用用户密钥。
 - HTML 脚本、资源引用、Manifest 组件、CSS/JavaScript 语法、工作流 YAML 及差异格式已检查。
 
-手机缺少 JDK、Android SDK、Gradle 和 Chromium，因此 Android 编译、Java/Robolectric、lint、真实布局和真机升级尚未执行。CI 已配置这些构建/检查步骤；Chromium 脚本覆盖 320/360/412/768 宽度、深浅色、长模型名、键盘使窗口变矮、选择面板及停止按钮，并增加 GitHub 未配置、等待授权及已连接状态的布局检查。
+手机缺少 JDK、Android SDK、Gradle 和 Chromium；GitHub [构建 44071083752](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44071083752) 已执行并通过 Android 编译、Java/Robolectric、Debug/Release lint、真实布局和 APK 打包。Chromium 检查覆盖 320/360/412/768 宽度、深浅色、长模型名、键盘使窗口变矮、选择面板及停止按钮，以及 GitHub 未配置、等待授权及已连接状态。真机升级和实际 API 调用仍未验收。
 
-本轮没有完成真实 GitHub 授权或推送，也没有生成、签名、安装或发布新版 APK。下一步需要用户注册 OAuth App 并提供公开 Client ID，完成浏览器确认后再推送开发分支及检查 Actions。实际第三方模型推理、工具调用、原生子智能体、密钥迁移和动画帧率仍需在构建后使用用户服务商与真机确认。
+本轮已复用真实 GitHub 授权、推送开发分支，并生成与源码对应的未签名 APK。V5 原签名没有找到，已按[安全迁移设计](SAFE_V5_MIGRATION.md)增加[独立并行构建](PARALLEL_INSTALL.md)；并行签名、安装及实际第三方推理、工具调用、原生子智能体与动画帧率仍须分别核验。没有合并 main 或发布新 Release。

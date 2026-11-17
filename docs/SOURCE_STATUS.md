@@ -22,15 +22,17 @@
 
 根 `.github/workflows/build-android.yml` 直接编译 `upstream-source`，不再修补旧 APK。它将校验实际 APK 身份、ABI 和 Web 资源，并附上相同 Git 提交的源码归档、APK/源码 SHA-256 和 `build-info.json`。不会调用旧发布流程，也不会自动发布。
 
-开发分支 `feat/api-codex-ui` 的提交 `0b69bed429b7df5ded098ce6ac135507c827960f` 已通过 GitHub Actions 的 UI/source checks，包括 JavaScript、Python、图标校验和真实 Chromium 布局检查。对应[构建记录](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44059852791)中的 Android 作业仍然失败：旧 Pro 恢复代码引用了四个已经删除的方法，尚未执行完 Android 单元测试、lint 和 APK 构建。
+开发分支 `feat/api-codex-ui` 的提交 `ee0e1f2c6f70ecb3e47b068c2da57235a5f70d28` 已通过[完整构建](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44071083752)：JavaScript、Python、图标、真实 Chromium 布局检查，以及 Android Debug/Release 单元测试、lint、设备测试 APK 编译和未签名 Release APK 打包。
 
-当前本地工作区已移除上述旧引用，补充了历史保留、禁止旧请求重发和保存失败回滚的测试，并将运行时恢复测试迁移到独立的 API 配置。接手后本地 260 项 JavaScript 测试通过；117 个 Java 文件通过语法解析，61 处字面量 Engine 反射引用核对通过。这些检查不能代替 Java 编译或执行 Android 测试。
+本轮移除已删除的旧 Pro 方法引用，补充历史保留、禁止旧请求重发和保存失败回滚测试，并将运行时恢复测试迁移到独立 API 配置。另修正 Android 测试中的不兼容文件接口，并通过预先创建项目来验证切换后旧文件审批失效，保留待审批时不得创建项目的检查。上述修复已经实际 Android 编译和测试验证。
 
-本地 Python 全套运行 126 项，其中 4 项跳过、1 项慢 CLI 测试首次失败；该失败项单独复跑通过，未更改其代码或放宽断言。上述修复尚待 GitHub 的 JDK/SDK 环境完成验证；没有新版 APK 或真机覆盖升级的实测结论。只有这些检查完成后，才能把新版本标记为可发布。
+本机没有 JDK/SDK，本地语法检查不被视为编译；实际验证来自上面的 GitHub 构建。它已输出 APK、相同提交的源码、身份和校验和，但仍未签名，也未完成真机在线服务商验收。
+
+按照用户补充的 [V5 安全迁移方案](SAFE_V5_MIGRATION.md)，已新增独立包名 `dev.mobilecodex.app.zhcnv3.next` 和名称 `Codex CN API` 的 `parallel` 构建。其测试、lint 和身份另行检查，本地签名使用独立且固定的证书；不会用新签名冒充 V5 覆盖更新。项目可通过现有导入入口迁移，密钥需重新录入，旧聊天仍保留在 V5，详见[并行安装说明](PARALLEL_INSTALL.md)。
 
 ## 发布前仍需完成
 
-- 从本轮源码成功构建，审核 CI 输出与实际包体积。
-- 使用与已安装 V5 相同的签名完成覆盖升级，验证对话、项目及旧 API 配置迁移。
+- 完成并行版构建、独立签名和最终 APK 校验。
+- 保留 V5，在真机验证并行安装、项目导入与重新授权文件夹；不宣称旧聊天或设置已自动迁移。
 - 使用用户自己的第三方服务商测试 Responses 流式输出、工具调用、停止、重连和原生子智能体；目前没有 API 密钥，未进行这些在线调用。
 - 完成不同屏幕、输入法和系统听写的真机检查，并保留对应源码与构建记录。

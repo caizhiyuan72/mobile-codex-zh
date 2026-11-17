@@ -2,7 +2,7 @@
 
 基于 [Mobile Codex v0.3.9](https://github.com/nokryong/mobile-codex/tree/v0.3.9) 的非官方 Android 客户端。核心是 Android Java + WebView 界面，以及随 APK 分发的 Codex app-server；模型推理通过网络 API 完成。
 
-当前源码正在准备 **`0.3.9-cn.6` / versionCode `77`**，包名为 `dev.mobilecodex.app.zhcnv3`。本轮已恢复并修改原生和前端源码，**尚未编译、签名或发布新版 APK**。现有 Releases 中的 V5 是旧二进制补丁包，不应当作本轮源码构建产物。
+当前源码版本为 **`0.3.9-cn.6` / versionCode `77`**。原包名 `dev.mobilecodex.app.zhcnv3` 的源码已通过完整 CI 并生成未签名 APK，见[构建记录](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44071083752)。由于 V5 原签名尚未找到，新增独立包名 `dev.mobilecodex.app.zhcnv3.next`、名称 **Codex CN API** 的并行构建；其签名与验收进度见[迁移说明](docs/PARALLEL_INSTALL.md)。Releases 中的 V5 仍是旧二进制补丁包，本轮没有发布新 Release。
 
 ## 当前范围
 
@@ -29,7 +29,7 @@
 3. 构建未签名 ARM64 release APK，核对 APK 实际包名、版本、ABI 及每个 Web 资源与源码的一致性。
 4. 同时提供对应 Git 提交的源码归档、`build-info.json` 和 `SHA256SUMS`。
 
-该流程尚未在本轮改动上运行；产物为构建验证材料，不会自动签名或发布。设备测试只会编译，仍需在真机执行。覆盖现有安装必须使用原来的签名私钥。
+原包名构建已在 `ee0e1f2c6f70ecb3e47b068c2da57235a5f70d28` 完整通过；新增并行构建将另行执行单元测试、lint、打包和身份检查。CI 产物为未签名构建材料，不会自动发布。设备测试只会编译，仍需在真机执行。原包名覆盖安装必须使用 V5 原签名私钥；并行版使用独立的长期签名，保留旧安装和数据。
 
 本地构建需要 JDK 17、Android SDK/build-tools 35、NDK `28.2.13676358`、Python 3.12 和满足 `package.json` 要求的 Node.js，例如 `24.22.1`：
 
