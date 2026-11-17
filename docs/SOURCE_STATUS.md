@@ -14,7 +14,7 @@
 - 移除订阅/Live/WebRTC/Pro 网页/用量组件和外部 CLI 邀请的原生及前端主流程，保留文件、工具、审批、系统听写和原生子智能体配置。
 - 设置 fork 身份 `dev.mobilecodex.app.zhcnv3`、版本 `77 / 0.3.9-cn.6`、默认中文及本仓库更新源。
 - 插图生成工具、资源和哈希一同更新，原画不变。
-- 增加 GitHub 浏览器设备授权、加密凭据存储和 Git helper；旧安装可使用一次性 Python 设备授权脚本推送已提交源码。尚未进行真实授权，详见 [GitHub 登录说明](GITHUB_LOGIN.md)。
+- 增加 GitHub 浏览器设备授权、加密凭据存储和 Git helper；旧安装可使用一次性 Python 设备授权脚本推送已提交源码。已用用户自建 OAuth App 完成真实设备授权并推送开发分支，详见 [GitHub 登录说明](GITHUB_LOGIN.md)。
 
 当前目录已包含 fork 修改，不再是“未修改的上游源码”。旧的自动恢复工作流已退役，避免再次覆盖修改；保留的 provenance 工作流只检查记录的上游基线。
 
@@ -22,7 +22,11 @@
 
 根 `.github/workflows/build-android.yml` 直接编译 `upstream-source`，不再修补旧 APK。它将校验实际 APK 身份、ABI 和 Web 资源，并附上相同 Git 提交的源码归档、APK/源码 SHA-256 和 `build-info.json`。不会调用旧发布流程，也不会自动发布。
 
-本轮尚未在有 JDK/SDK 的环境中完成 Android 编译、单元测试、lint、Chromium 布局检查及真机覆盖升级；没有新版 APK 的实测结论。只有这些检查完成后，才能把新版本标记为可发布，不能用本地 JavaScript/Python 测试代替。
+开发分支 `feat/api-codex-ui` 的提交 `0b69bed429b7df5ded098ce6ac135507c827960f` 已通过 GitHub Actions 的 UI/source checks，包括 JavaScript、Python、图标校验和真实 Chromium 布局检查。对应[构建记录](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44059852791)中的 Android 作业仍然失败：旧 Pro 恢复代码引用了四个已经删除的方法，尚未执行完 Android 单元测试、lint 和 APK 构建。
+
+当前本地工作区已移除上述旧引用，补充了历史保留、禁止旧请求重发和保存失败回滚的测试，并将运行时恢复测试迁移到独立的 API 配置。接手后本地 260 项 JavaScript 测试通过；117 个 Java 文件通过语法解析，61 处字面量 Engine 反射引用核对通过。这些检查不能代替 Java 编译或执行 Android 测试。
+
+本地 Python 全套运行 126 项，其中 4 项跳过、1 项慢 CLI 测试首次失败；该失败项单独复跑通过，未更改其代码或放宽断言。上述修复尚待 GitHub 的 JDK/SDK 环境完成验证；没有新版 APK 或真机覆盖升级的实测结论。只有这些检查完成后，才能把新版本标记为可发布。
 
 ## 发布前仍需完成
 

@@ -36,6 +36,7 @@ public class EngineOfflineSessionTest {
         context.getSharedPreferences("workspace", 0).edit().clear().commit();
         context.getSharedPreferences("settings", 0).edit().clear().commit();
         context.getSharedPreferences("api-providers-v2", 0).edit().clear().commit();
+        context.getSharedPreferences("pro-web-operation", 0).edit().clear().commit();
         deleteTree(new File(context.getFilesDir(), "account-profiles"));
     }
     @After public void after() {
@@ -45,6 +46,7 @@ public class EngineOfflineSessionTest {
         context.getSharedPreferences("workspace", 0).edit().clear().commit();
         context.getSharedPreferences("settings", 0).edit().clear().commit();
         context.getSharedPreferences("api-providers-v2", 0).edit().clear().commit();
+        context.getSharedPreferences("pro-web-operation", 0).edit().clear().commit();
         deleteTree(new File(context.getFilesDir(), "account-profiles"));
     }
     private static void deleteTree(File file) {
@@ -99,6 +101,66 @@ public class EngineOfflineSessionTest {
         CompletableFuture<JSONObject> done = new CompletableFuture<>();
         engine.handle(action, args, (value, error) -> { if (error != null) done.completeExceptionally(error); else done.complete(value); });
         return done.get(5, TimeUnit.SECONDS);
+    }
+    @Test public void retiredProMigrationPreservesHistoryAndNeverRestoresRemoteJournalOrResends() throws Exception {
+        File file = new File(context.getFilesDir(), "sessions.json");
+        JSONArray messages = array(
+            obj("id", "consult", "role", "assistant", "kind", "proConsultation", "status", "pending", "text", "original consultation"),
+            obj("id", "sending", "role", "user", "status", "sending", "text", "original request", "attachments", array("kept-attachment")),
+            obj("id", "ordinary", "role", "assistant", "status", "done", "text", "existing answer"));
+        JSONObject original = obj("id", "legacy-pro", "sessionVersion", 2, "codexThreadId", "legacy-remote", "title", "History",
+            "workspace", "", "workspaceKey", "", "model", "legacy-model", "createdAt", 1234,
+            "chatConversationId", "stored-conversation", "chatProjectPath", "/stored-project", "chatConversationPath", "/stored-conversation-path",
+            "proOperation", obj("id", "operation", "messageId", "sending"), "messages", messages);
+        dev.mobilecodex.app.core.Utf8Files.write(file.toPath(), array(original).toString());
+        String journal = obj("threadId", "legacy-pro", "operationId", "operation", "chatConversationId", "journal-conversation",
+            "chatProjectPath", "/journal-project", "chatConversationPath", "/journal-conversation-path").toString();
+        context.getSharedPreferences("pro-web-operation", 0).edit().putString("value", journal).commit();
+        Engine engine = new Engine(context);
+        try {
+            engine.setTestTransport((method, params) -> { throw new AssertionError("Migration reached runtime: " + method); });
+            JSONObject state = handle(engine, "chat.resume", obj("id", "legacy-pro"));
+            assertFalse(state.getBoolean("ready"));
+            JSONArray restored = state.getJSONArray("messages"); assertEquals(3, restored.length());
+            assertEquals("original consultation", restored.getJSONObject(0).getString("text"));
+            assertEquals("failed", restored.getJSONObject(0).getString("status"));
+            assertTrue(restored.getJSONObject(0).getString("error").contains("不会自动重发"));
+            assertEquals("original request", restored.getJSONObject(1).getString("text"));
+            assertEquals("uncertain", restored.getJSONObject(1).getString("status"));
+            assertEquals("kept-attachment", restored.getJSONObject(1).getJSONArray("attachments").getString(0));
+            assertEquals(messages.getJSONObject(2).toString(), restored.getJSONObject(2).toString());
+            JSONObject stored = new JSONArray(dev.mobilecodex.app.core.Utf8Files.read(file.toPath())).getJSONObject(0);
+            assertFalse(stored.has("proOperation")); assertEquals("legacy-remote", stored.getString("codexThreadId"));
+            assertEquals("stored-conversation", stored.getString("chatConversationId"));
+            assertEquals("/stored-project", stored.getString("chatProjectPath"));
+            assertEquals("/stored-conversation-path", stored.getString("chatConversationPath"));
+            assertEquals("legacy-model", stored.getString("model")); assertEquals(1234, stored.getInt("createdAt"));
+            assertEquals(journal, context.getSharedPreferences("pro-web-operation", 0).getString("value", ""));
+        } finally { engine.io.shutdownNow(); }
+        String committed = dev.mobilecodex.app.core.Utf8Files.read(file.toPath());
+        Engine reopened = new Engine(context);
+        try { assertEquals(committed, dev.mobilecodex.app.core.Utf8Files.read(file.toPath())); }
+        finally { reopened.io.shutdownNow(); }
+    }
+    @Test public void retiredProMigrationRestoresOriginalInMemoryAndOnDiskWhenDurableSaveFails() throws Exception {
+        File file = new File(context.getFilesDir(), "sessions.json");
+        Engine engine = new Engine(context);
+        String original = array(obj("id", "legacy-pro", "sessionVersion", 2, "codexThreadId", "legacy-remote", "workspace", "", "workspaceKey", "",
+            "proOperation", obj("id", "operation", "messageId", "sending"),
+            "messages", array(obj("id", "sending", "role", "user", "text", "keep original", "status", "sending")))).toString();
+        try {
+            dev.mobilecodex.app.core.Utf8Files.write(file.toPath(), original);
+            setField(engine, "sessions", new JSONArray(original));
+            setField(engine, "sessionStore", new dev.mobilecodex.app.core.SessionStore(file) {
+                @Override public synchronized void save(JSONArray value) throws java.io.IOException { throw new java.io.IOException("fixture write failure"); }
+            });
+            Method migration = Engine.class.getDeclaredMethod("restoreSessionProjects"); migration.setAccessible(true);
+            java.lang.reflect.InvocationTargetException failure = assertThrows(java.lang.reflect.InvocationTargetException.class, () -> migration.invoke(engine));
+            assertTrue(failure.getCause() instanceof IllegalStateException);
+            assertEquals(original, dev.mobilecodex.app.core.Utf8Files.read(file.toPath()));
+            assertEquals(original, field(engine, "sessions").toString());
+            assertTrue(((JSONArray) field(engine, "sessions")).getJSONObject(0).has("proOperation"));
+        } finally { engine.io.shutdownNow(); }
     }
     private byte[] png() {
         android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(3, 2, android.graphics.Bitmap.Config.ARGB_8888);

@@ -12,6 +12,7 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import org.robolectric.*;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowBuild;
 import static dev.mobilecodex.app.core.Json.*;
 import static org.junit.Assert.*;
 
@@ -21,6 +22,8 @@ import static org.junit.Assert.*;
 public class EngineRuntimeRecoveryTest {
     private Engine engine;
     private JSONObject session;
+    private android.content.SharedPreferences preferences;
+    private File fixtureRoot;
     private static class Child extends Process {
         boolean alive;
         Child(boolean alive) { this.alive = alive; }
@@ -42,20 +45,35 @@ public class EngineRuntimeRecoveryTest {
         Application app = RuntimeEnvironment.getApplication();
         // A native Android executable is intentionally absent from this unit test.
         app.getApplicationInfo().nativeLibraryDir = new File(app.getCacheDir(), "missing-runtime-test").getAbsolutePath();
+        ShadowBuild.setSupportedAbis(new String[]{"arm64-v8a"});
         app.getSharedPreferences("projects", 0).edit().clear().commit();
         app.getSharedPreferences("workspace", 0).edit().clear().commit();
-        engine = new Engine(app);
+        java.nio.file.Files.deleteIfExists(new File(app.getFilesDir(), "sessions.json").toPath());
+        preferences = app.getSharedPreferences("runtime-recovery-providers", 0);
+        preferences.edit().clear().commit();
+        fixtureRoot = new File(app.getCacheDir(), "runtime-recovery-" + UUID.randomUUID());
+        ApiProviders providers = new ApiProviders(preferences, new ApiProvidersTest.FixtureCipher(), new File(fixtureRoot, "runtime"));
+        String provider = providers.save(obj("name", "Recovery fixture", "baseUrl", "https://example.test/v1",
+            "models", "gpt-6-astra", "apiKey", "sk-fixture-never-a-real-key", "protocol", "responses")).getString("id");
+        providers.select(provider);
+        engine = new Engine(app, providers);
         session = obj("id", "local-saved", "sessionVersion", 2, "codexThreadId", "remote-saved",
             "title", "Keep this chat", "workspace", "", "workspaceKey", "", "model", "gpt-6-astra",
+            "apiScope", providers.scope(),
             "imageHistoryVersion", 1, "phoneToolsVersion", 1, "consultToolsVersion", 1,
             "messages", array(obj("id", "old-message", "role", "user", "text", "keep history")));
         field("sessions", array(session)); field("active", session); field("threadId", "local-saved");
         field("serverThreadId", "remote-saved"); field("ready", true);
-        field("account", obj("type", "chatgpt", "email", "test@example.test"));
     }
     @After public void cleanup() throws Exception {
-        RpcClient rpc = (RpcClient) field("rpc"); if (rpc != null) rpc.close();
-        engine.io.shutdownNow();
+        if (engine != null) {
+            RpcClient rpc = (RpcClient) field("rpc"); if (rpc != null) rpc.close();
+            engine.io.shutdownNow();
+        }
+        if (preferences != null) preferences.edit().clear().commit();
+        if (fixtureRoot != null && fixtureRoot.exists()) try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(fixtureRoot.toPath())) {
+            for (java.nio.file.Path path : paths.sorted(Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList())) java.nio.file.Files.deleteIfExists(path);
+        }
     }
     private RpcClient connection() {
         return new RpcClient(InputStream.nullInputStream(), OutputStream.nullOutputStream(), new RpcClient.Listener() {

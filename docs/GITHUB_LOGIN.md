@@ -2,7 +2,7 @@
 
 本次方案使用项目自己的 **GitHub OAuth App Device Flow**：在 Android 中显示设备码，用户到 GitHub 浏览器页面登录并确认，再由应用保存授权。它不依赖 `gh`、Linux 环境或 Client Secret，也不使用 GitHub CLI 官方的 Client ID。
 
-当前新增入口仍需随源码编译、安装后才能使用。尚未取得用户提供的 Client ID、完成真实浏览器授权或生成包含此入口的新 APK；源码和模拟测试不能证明当前已经登录。
+当前新增入口需随新版源码编译、安装后使用。2026-11-17 已使用用户注册的 OAuth App 完成真实浏览器设备授权，通过 GitHub `/user` 核对账号 `caizhiyuan72`，并将开发分支 `feat/api-codex-ui` 推送到本仓库。该次授权用于本次构建进程，不表示旧 APK 已安装新登录入口或保存了应用内登录。
 
 ## 注册一次自己的 OAuth App
 
@@ -92,7 +92,7 @@ python upstream-source/tools/github_device_login.py \
 
 推送成功后，在 [Actions](https://github.com/caizhiyuan72/mobile-codex-zh/actions) 核对对应提交的构建结果；成功推送不等于构建成功。新源码生成并安装对应 APK 后，才可使用应用内登录入口。整个流程不通过启用 Linux 或绕过 Android 执行限制运行外部 `gh`。
 
-本文未宣称已经完成真实授权、推送、Actions 构建或 APK 安装。
+本轮真实授权、开发分支推送和 Actions 触发已完成。构建结果与产物关联见 [源码状态](SOURCE_STATUS.md)；尚未安装新版 APK，也未验证新版原生 Keystore 和 helper 的真机登录流程。
 
 ## 官方依据
 

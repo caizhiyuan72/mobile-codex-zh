@@ -261,11 +261,6 @@ public final class Engine {
     private void restoreSessionProjects() {
         boolean changed = false, generalized = false;
         String original = sessions.toString();
-        JSONObject proJournal = null;
-        try {
-            String saved = context.getSharedPreferences("pro-web-operation", 0).getString("value", "");
-            if (!saved.isBlank()) proJournal = new JSONObject(saved);
-        } catch (Exception ignored) { }
         for (int i = 0; i < sessions.length(); i++) {
             try {
                 JSONObject session = sessions.optJSONObject(i); if (session == null) continue;
@@ -295,28 +290,23 @@ public final class Engine {
                 }
                 if (!session.has("messages") || session.optJSONArray("messages") == null) { session.put("messages", new JSONArray()); changed = true; }
                 JSONArray restoredMessages = session.getJSONArray("messages");
+                JSONObject interruptedPro = session.optJSONObject("proOperation");
                 for (int m = 0; m < restoredMessages.length(); m++) {
                     JSONObject message = restoredMessages.optJSONObject(m);
-                    if (message != null && "proConsultation".equals(message.optString("kind")) && "pending".equals(message.optString("status"))) {
-                        message.put("status", "failed").put("text", t("앱이 종료되어 Pro 문의 결과를 원래 Codex 작업에 전달하지 못했습니다. 자동으로 다시 보내지 않습니다."));
+                    if (message == null) continue;
+                    if ("proConsultation".equals(message.optString("kind")) && "pending".equals(message.optString("status"))) {
+                        message.put("status", "failed").put("error", "Pro 网页功能已移除，待处理请求已停止，不会自动重发。");
+                        changed = true;
+                    }
+                    if (interruptedPro != null && !interruptedPro.optString("messageId").isBlank()
+                            && interruptedPro.optString("messageId").equals(message.optString("id")) && "sending".equals(message.optString("status"))) {
+                        message.put("status", "uncertain").put("error", "旧版 Pro 网页请求的发送结果无法确认，该功能已移除，不会自动重发。");
                         changed = true;
                     }
                 }
-                JSONObject interruptedPro = session.optJSONObject("proOperation");
-                if (interruptedPro != null) {
-                    if (proJournal != null && session.optString("id").equals(proJournal.optString("threadId"))
-                            && interruptedPro.optString("id").equals(proJournal.optString("operationId"))) {
-                        String recoveredConversation = boundedRemoteId(proJournal.optString("chatConversationId"));
-                        String recoveredProject = boundedProjectPath(proJournal.optString("chatProjectPath"));
-                        if (!recoveredConversation.isBlank()) session.put("chatConversationId", recoveredConversation);
-                        if (!recoveredProject.isBlank()) session.put("chatProjectPath", recoveredProject);
-                        String effectiveProject = recoveredProject.isBlank() ? session.optString("chatProjectPath") : recoveredProject;
-                        String recoveredPath = boundedConversationPath(proJournal.optString("chatConversationPath"), recoveredConversation, effectiveProject);
-                        if (!recoveredPath.isBlank()) session.put("chatConversationPath", recoveredPath);
-                    }
-                    JSONObject message = messageIn(session, interruptedPro.optString("messageId"));
-                    if (message != null && "sending".equals(message.optString("status"))) message.put("status", "uncertain")
-                        .put("error", t("앱이 종료되어 웹 전송 결과를 확인하지 못했습니다. 다시 보내기 전에 ChatGPT 웹 대화를 확인해 주세요."));
+                // Retire only the local pending marker. Existing message text and remote metadata
+                // remain historical data; the deleted Pro transport and journal are never resumed.
+                if (session.has("proOperation")) {
                     session.remove("proOperation"); changed = true;
                 }
             } catch (Exception ignored) { }
