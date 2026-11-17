@@ -1,0 +1,102 @@
+# Verification — current scope
+
+This branch's app metadata is `0.3.7` (`versionCode 72`, ARM64, Android 10+). See the [release notes](releases/0.3.7.md) for changes and the widget device-testing limits. No additional physical-device testing was performed for this release preparation. The automated records below are historical entries for the versions named in their headings; they are not evidence of current physical-device behavior. Current release checks, Android tests, lint, build and signing results are recorded in the public [Android APK workflow](https://github.com/nokryong/mobile-codex/actions/workflows/android.yml). Published release availability is tracked in the public [Releases](https://github.com/nokryong/mobile-codex/releases) page. GitHub project sync, Chat mode switching and Pro consultation are removed. Project JSON transfer and historical messages remain available. The entries below describing removed features are historical.
+
+Physical Android login, WebView behavior, SAF folder access, and device-specific performance remain outside this document's automated browser/build evidence unless an entry explicitly says otherwise. Do not treat an account-security or device-login prompt alone as a confirmed app defect; report the exact prompt and screen when opening an issue.
+
+## 0.2.6-alpha.2 private Pro consultation
+
+The composer offers Attach files and Ask Pro in its `+` menu. Ask Pro arms a removable draft flag; sending still uses the user's selected Codex model and settings. Codex prepares a focused question, invokes the Pro consultation tool once, and receives the reply as a tool result within its ongoing turn. The app also displays the review in the original local conversation. Selecting the menu item alone does not contact Pro.
+
+Native request grants enforce one consultation per explicit UI request. Pending operations stay bound to their original account, workspace, local conversation and Codex turn. Success, failure, cancellation and timeout resolve the waiting tool call once; no fresh Codex turn is started to inject the response. Existing Codex threads retain their remote IDs and history. New threads use the native dynamic tool; existing threads use an app-owned MCP bridge because the pinned runtime cannot add dynamic tools through `thread/resume`.
+
+The consultation payload is the exact prompt authored by Codex. The app does not collect AGENTS, project trees, Git diffs or local history for it, and adds no prohibition on ChatGPT-side connected tools. There is no automatic Pro file-query loop or automatic resend after an uncertain send. Consultations use dedicated web conversation metadata, so the first consultation starts fresh instead of inheriting the AGENTS and capability bans previously sent to direct Pro chats. Previously stored direct Pro messages and their web metadata remain readable and unchanged.
+
+Full checks, Android unit tests, lint, signing and build run on the private PR through [GitHub Actions](https://github.com/SeeUSoon93/mobile-codex/actions/workflows/android.yml). A successful trusted private PR build publishes a private prerelease with a raw APK and separate corresponding-source assets. The job summary links the release. Public publication remains a separate action after device approval. Real authenticated Android WebView behavior and installation require the [device checks](releases/0.2.6-alpha.2.md).
+
+Local verification on 2026-09-30: 275 JavaScript tests passed; 80 Python tests ran with 78 passing and two prepared-runtime checks skipped; all 268 Android unit tests in the initial full run passed, followed by nine MCP launcher/transport tests after the final environment fix and nine Engine consultation tests after separating legacy Pro web conversations. All six responsive browser suites passed, including actual compact-composer menu taps, keyboard dismissal, draft consumption, consultation status and the existing layout surfaces. The local Android lint task could not resolve uncached instrumentation dependencies in offline mode; the private workflow runs the complete lint and runtime packaging checks.
+
+A disposable real app-server session with a local mock Responses backend also verified that adding the MCP configuration preserves an existing remote thread ID and saved history and exposes the consultation tool to the next model request. That supplementary test used host app-server `0.154.0-alpha.3` with no real model calls; the implementation's protocol support was checked against official pinned `rust-v0.155.1` source. The MCP launch explicitly inherits only the bundled Python/runtime bootstrap variables needed on Android; it does not change the user's saved MCP configuration.
+
+## 0.2.6-alpha private candidate
+
+Local source checks for this candidate:
+
+- JavaScript/DOM and workflow checks: 258 passed (`npm test`).
+- Python packaging, signing and workflow checks: 64 tests, 62 passed and 2 conditional checks skipped because the prepared Android runtime is not present locally.
+- All six responsive browser suites passed, covering chat switching, text sizes, UI layout, character packs, project identity and spacing. The UI layout suite also checks Codex and Pro cancellation when focus leaves the composer.
+- Added Android unit regressions for stale file requests, project changes during file approval, provider-normalized rename/move paths, and completed/failed/interrupted turn notifications. Android build, unit and lint results are provided by the private PR workflow; these are separate from local mock-bridge checks.
+
+The private PR test APK is an artifact, not a published release. Installation, keyboard behavior, file-provider behavior and notification delivery still require the physical-device checklist in the [test notes](releases/0.2.6-alpha.md).
+
+# Verification — 0.1.13 alpha
+
+상단 바·입력창·바텀시트와 라이트·다크 테마를 정리했습니다. Android 시스템 바·키보드 inset 처리는 기존 네이티브 레이아웃이 계속 담당합니다. 스와이프 닫기는 시트 손잡이에서만 시작하고, 짧은 드래그·취소·미저장 지침 확인을 처리합니다. 승인 요청 창에는 드래그 닫기를 넣지 않습니다.
+
+- UI DOM 회귀 검사: 79개. 시트 닫기의 미저장 변경 보호, 취소·합성 클릭·키보드 조작, 본문 스크롤과 데스크톱 제외를 포함합니다.
+- 실제 Chromium 렌더링: 너비 320/393/800/1280px, 라이트·다크, 한국어·영어, 높이 430px로 줄인 키보드 상태, 시트 드래그, 동작 줄이기. 가로 넘침, 입력창·헤더 겹침, 입력창 버튼의 최소 44px 터치 영역과 겹침을 검사합니다.
+- 실행: `npx playwright install --with-deps chromium` 후 `npm run test:layout`. 결과·스크린샷은 `artifacts/ui-preview/`와 Actions의 `check-reports`에 보관합니다. 네이티브 bridge와 대화 내용은 테스트 데이터입니다.
+- 전체 Android 빌드·Java/Robolectric·lint·원래 서명키 검증은 해당 main 커밋의 Actions에서 확인합니다.
+- 실제 삼성 키보드의 애니메이션, TalkBack 제스처, 오래된 WebView의 블러 성능은 이 브라우저 검사로 확인하지 않았습니다. 블러 미지원 시 불투명 배경을 사용합니다.
+
+# Verification — 0.1.11 alpha
+
+Git 실행 오류: [원인·수정·검증 범위](git-runtime-fix.md). 배포 APK에서 PCRE2 파일의 누락이 아닌 ELF 버전 참조 이름 불일치를 확인했습니다. 버전 참조도 함께 변경하고, 실제 ELF 재검사·버전 라이브러리를 사용하는 호스트 실행 검사를 추가했습니다. 기기용 Git PCRE2 검사는 컴파일만 하며 실제 휴대폰 실행은 별도 확인이 필요합니다.
+
+앱 내 업데이트: [사용법·배포·검증 범위](app-updates.md). 릴리스 선택과 시험판 필터, 다운로드 크기·해시·취소, 패키지·버전·서명 호환성, 설치 직전 재검증, FileProvider 범위, UI 진행 상태·사용자 설치 동작 검사를 추가했습니다. 실제 기기의 알 수 없는 앱 설치 설정·패키지 설치·서명키 회전·데이터 유지 업데이트는 여기서 실행하지 않았습니다. 전체 빌드 결과는 해당 main 커밋의 GitHub Actions에서 확인합니다.
+
+# Verification — 0.1.10 alpha
+
+메인·플로팅 음성 입력: [사용법과 검증 범위](voice-input.md). 네이티브 인식 결과 전달·Activity 재생성·대화별 보존·휴대폰 자동 조작 대기, UI의 자동 전송 방지·선택 영역·프로젝트 전환·중복 복구 검사를 추가했습니다. 실제 음성 인식 정확도, 삼성 음성 서비스·마이크 권한 화면·외부 앱으로 복귀는 이 환경에서 검증하지 않았습니다. 빌드와 전체 검사 결과는 해당 main 커밋의 GitHub Actions를 확인합니다.
+
+# Verification — 0.1.9 alpha
+
+플로팅 대화, 현재 turn에 대한 추가 지시, 변경 비교·파일 복원: [사용법과 검증 범위](floating-and-changes.md). 전체 검사 결과는 해당 main 커밋의 GitHub Actions에서 확인합니다. 실제 삼성 기기의 오버레이·키보드·다른 앱 조작은 이 환경에서 실행하지 않았습니다. 아래 기록은 각각 이전 버전의 검증 결과입니다.
+
+# Verification — 0.1.8 alpha phone use
+
+추가 기능과 테스트: [phone-use.md](phone-use.md). 이번 변경의 최초 CI 실행에서 UI 61개와 Python 런타임·공개 소스 검사 15개가 통과했습니다. Android 빌드·Java/Robolectric·lint를 포함한 최신 커밋의 결과는 이 변경의 PR Checks에서 확인합니다. Native phone 테스트는 API 29/35의 Robolectric 환경에서 실행합니다. 아래 0.1.7의 수치는 이번 버전 재실행 결과가 아닙니다. 실제 Android 기기 조작은 아직 검증하지 않았습니다.
+
+CI debug APK는 빌드 검증용입니다. 기존 설치 위에 업데이트하려면 기존 앱과 같은 서명키로 빌드해야 합니다. 이 변경은 서명키를 저장소에 추가하거나 교체하지 않습니다.
+
+# Verification — 0.1.7 alpha
+
+검증일: 2026-09-21. 이번 버전의 자동 검사 결과와 이전 버전의 화면 검수 기록입니다.
+
+| 검사 | 결과 |
+| --- | --- |
+| Android debug / instrumentation APK | 빌드 성공; versionCode 8 / 0.1.7-alpha / ARM64 |
+| Java / Robolectric | 55개 통과, 실패·건너뛰기 0개 |
+| UI DOM | 59개 통과 |
+| 런타임·공개 소스 검사 | Python 15개 중 14개 통과, Linux 전용 C 검사 1개는 Windows에서 제외 |
+| Android lint | 오류 0개, 경고 3개 |
+
+0.1.7에는 Python·Node.js·Git 번들 준비/무결성 검사, 안전한 ZIP 해제, 프로젝트 등록 제거·대화 보존·재연결, RPC 종료 이후 재접속, 도구 목록 캐시 및 실패 복원, 계정 사용 한도 표시를 추가했습니다. 종료 진단은 알려진 오류 패턴만 고정된 문구로 분류하며 stderr 원문은 저장하거나 표시하지 않습니다. 모든 Java 소스 세트와 앱 ID는 `dev.mobilecodex.app`을 사용합니다. README와 앱 정보의 제작자는 `nokryong`입니다.
+
+0.1.3에는 빈 `@`의 실제 네이티브 목록 호출, 느린 앱 응답과 독립적인 파일 표시, 폴더 탐색, `$` 전체 스킬·설명·빈 상태·오류 표시, IME 조합 중 선택 방지, 맞춤 지침의 오프라인 편집·저장 실패·override 해제 동작 검사를 추가했습니다. 기존 홈의 이관·충돌 보존·로그아웃 이후 인증 복원 방지와 지침 저장 후 동일 대화의 서버 재개도 검사합니다.
+
+0.1.4에는 대화 아이콘 스위치의 즉시 반영·설정 복원, 생성 이미지 보존, 스트리밍 아이콘 노드 유지, 원본 20종 해시 및 고정 URL 검사를 추가했습니다. 390×844 다크 테마 대화·설정과 1280×800 라이트 테마 설정을 모의 Android bridge로 직접 확인했습니다. 아이콘을 껐을 때 캐릭터 DOM 0개, 가로 넘침 없음, 브라우저 console 오류 없음도 확인했습니다. APK 내부 모든 웹 파일 및 PNG가 소스와 일치합니다.
+
+0.1.5에는 누락된 21–32번 원본 PNG와 문구별 선택을 추가하여 총 32종을 포함했습니다. 하이픈이 들어간 이름도 WebView에서 열리도록 수정했습니다. 32종의 원본 해시, 모든 Android asset 열기, 경로 이탈 차단, 추가 12종의 선택 우선순위를 자동 검사했습니다. 화면 구조는 유지했습니다.
+
+0.1.6에는 코드 블록·표·복사·대화 관리 UI와 [검토 수정](ui-ux-review-fixes.md)을 포함합니다. 기능 수정 커밋에서 UI 51개, Java 41개 테스트 및 lint를 통과했고, 배포 버전 변경 후 지정한 서명키로 APK를 다시 빌드했습니다. 390×844 / 1280×800 모의 bridge 화면에서 표 내용 보존과 가로 스크롤을 확인했습니다.
+
+아래는 유지한 기존 회귀 항목과 서명 정책입니다.
+
+## 회귀 검증
+
+- 프로젝트 키의 저장·복원·재연결과 구버전 대화 이관, 폴더 권한을 잃은 프로젝트의 대화 유지, 서버 없이 대화 읽기.
+- 일반 대화와 프로젝트 대화의 초안·첨부·모델 설정 분리, 파일 선택 중 프로젝트 전환, 중복 선택 결과 전달, 취소 및 일부 파일 실패.
+- 첨부 원본 보존과 재개 후 접근, `localImage`·파일 경로·`skill`·`mention` 실제 `turn/start` 입력 구성, 실패한 전송에서 로컬 대화 및 초안 보존.
+- 전송 도중 추가한 첨부를 성공 응답이 지우지 않는지, 첫 전송 후 만들어진 대화에 모델 설정이 이어지는지.
+- API 29/35 컨테이너 경계 및 IME 열기/닫기, 다중 이미지 원본·갤러리·확대·저장·부분 실패·이전 이미지 기록 복원.
+
+이미지 검사는 Robolectric의 실제 네이티브 디코더를 API 29에서 실행합니다. 고정된 4.14.1의 Windows API 35 네이티브 그래픽 제약 때문에 검사 SDK를 변경했으며, 검증 항목을 생략하거나 결과를 모의하지 않았습니다. 관련 [Robolectric 변경 기록](https://github.com/robolectric/robolectric/pull/9720). 이미지 입력 fixture는 Android 인코더와 독립적으로 생성한 PNG입니다.
+
+앞선 브라우저 화면 검수에서는 Android bridge를 모의했습니다. [고정 버전 입력 프로토콜](input-protocol.md)과 [개발 도구 검사 방법](android-devtools.md)을 참고하세요.
+
+## 배포 파일과 서명
+
+APK 및 서명키는 소스 저장소에 포함하지 않습니다. 배포별 APK SHA-256과 인증서 정보는 해당 배포 파일과 함께 관리합니다. 서명에는 README에 설명한 `MOBILE_CODEX_*` 환경 변수를 사용합니다.
+
+GitHub CI는 기본 debug 키로 빌드합니다. 별도 배포키로 만든 APK와 인증서가 다를 수 있으므로 CI 산출물을 기존 앱 업데이트용이라고 단정하지 않습니다. 서명키와 비밀번호는 커밋하지 않습니다.
