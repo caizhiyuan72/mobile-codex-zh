@@ -72,6 +72,8 @@ public class EngineFileContextTest {
         assertEquals("original", handle("files.read", obj("path", source.getName())).getString("content"));
     }
     @Test public void approvingAnOldFileMutationAfterProjectSwitchDoesNotModifyTheOriginalFile() throws Exception {
+        JSONObject anotherProject = handle("projects.create", obj("name", "Another project"));
+        handle("projects.select", obj("key", ""));
         CompletableFuture<Engine.Approval> shown = new CompletableFuture<>();
         engine.attach(new Engine.Ui() {
             public void event(String name, JSONObject data) {}
@@ -81,8 +83,12 @@ public class EngineFileContextTest {
         CompletableFuture<JSONObject> mutation = request("files.mutate", obj("workspaceKey", "", "operation", "mobile_write", "arguments",
             obj("path", source.getName(), "content", "pending edit", "expectedSha256", original.getString("sha256"))));
         Engine.Approval approval = shown.get(5, TimeUnit.SECONDS);
-        handle("projects.create", obj("name", "Another project"));
-        assertFalse(handle("state", obj()).getJSONObject("workspace").getString("key").isEmpty());
+        ExecutionException blocked = assertThrows(ExecutionException.class,
+            () -> handle("projects.create", obj("name", "Blocked during approval")));
+        assertTrue(blocked.getCause() instanceof java.io.IOException);
+        assertTrue(handle("state", obj()).getJSONObject("workspace").getString("key").isEmpty());
+        handle("projects.select", obj("key", anotherProject.getString("key")));
+        assertEquals(anotherProject.getString("key"), handle("state", obj()).getJSONObject("workspace").getString("key"));
         approval.decision.complete(true);
         assertStale(mutation);
         assertEquals("original", new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8));
