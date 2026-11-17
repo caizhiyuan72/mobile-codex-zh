@@ -113,8 +113,22 @@ class NativeBuildTests(unittest.TestCase):
             harness = root / "hook-harness"
             prefix = root / "usr"
             (prefix / "bin").mkdir(parents=True)
-            os.symlink("/bin/echo", prefix / "bin" / "node")
-            os.symlink("/bin/echo", prefix / "bin" / "python3")
+            # Host echo may be a multicall utility that rejects these aliases.
+            argument_echo = root / "argument-echo"
+            argument_echo_source = root / "argument-echo.c"
+            argument_echo_source.write_text(textwrap.dedent(r"""
+                #include <stdio.h>
+                int main(int argc, char **argv) {
+                  for (int i = 1; i < argc; i++) {
+                    if (i > 1 && putchar(' ') == EOF) return 1;
+                    if (fputs(argv[i], stdout) == EOF) return 1;
+                  }
+                  return putchar('\n') == EOF ? 1 : 0;
+                }
+            """))
+            subprocess.run([cc, "-std=c11", "-Wall", "-Werror", "-o", str(argument_echo), str(argument_echo_source)], check=True)
+            os.symlink(argument_echo, prefix / "bin" / "node")
+            os.symlink(argument_echo, prefix / "bin" / "python3")
             source = root / "hook-harness.c"
             source.write_text(textwrap.dedent("""
                 #define _GNU_SOURCE
