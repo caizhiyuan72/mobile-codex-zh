@@ -49,6 +49,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         String path = uri.getPath();
         if (!"https".equals(uri.getScheme()) || !HOST.equals(uri.getHost()) || path == null
                 || !(path.equals("/index.html") || path.equals("/app.css") || path.equals("/visual-system.css") || path.equals("/spacing.css")
+                || path.equals("/model-controls.css")
                 || path.equals("/app.js") || path.equals("/ui-core.js") || path.equals("/translations.js") || path.equals("/translations-zh.js")
                 || path.equals("/locale.js") || path.equals("/api-providers.js") || path.equals("/reasoning-policy.js") || path.equals("/reports.js")
                 || path.equals("/github-auth.js") || path.equals("/github-auth.css"))) {
