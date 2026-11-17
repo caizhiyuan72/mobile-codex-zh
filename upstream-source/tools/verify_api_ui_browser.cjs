@@ -59,6 +59,60 @@ async function earlierSelection(page,width,theme){
  assert.ok(result.scrollTop<result.maxScroll,'editing an earlier line never jumps to the draft tail');
  await page.screenshot({path:path.join(output,`keyboard-selection-${width}-${theme}.png`)});
 }
+const attachmentFixtures=[
+ {id:'portrait',name:'手机长截图-'+ '很长的文件名'.repeat(20)+'.png',image:{id:'portrait',url:'/images/'+'a'.repeat(64),width:1080,height:24000}},
+ {id:'landscape',name:'超宽图片.png',image:{id:'landscape',url:'/images/'+'b'.repeat(64),width:8000,height:250}},
+ {id:'square',name:'大尺寸图片.png',image:{id:'square',url:'/images/'+'c'.repeat(64),width:4096,height:4096}},
+ {id:'document',name:'项目说明-'+ '很长的文件名'.repeat(20)+'.txt'}
+];
+async function attachmentGeometry(page,width,height){
+ const geometry=await page.evaluate(()=>{
+  const box=element=>{const r=element.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
+  const rail=document.getElementById('draft-context');
+  return {rail:{...box(rail),clientWidth:rail.clientWidth,scrollWidth:rail.scrollWidth,clientHeight:rail.clientHeight,scrollHeight:rail.scrollHeight},
+   chat:box(document.getElementById('chat-scroll')),previews:[...rail.querySelectorAll('.context-image')].map(box),
+   images:[...rail.querySelectorAll('img')].map(box),remove:[...rail.querySelectorAll('.chip-remove')].map(box)};
+ });
+ assert.ok(geometry.rail.height>0&&geometry.rail.height<=80,'attachments occupy a bounded row');
+ assert.ok(geometry.rail.scrollWidth>geometry.rail.clientWidth,'multiple attachments scroll horizontally');
+ assert.ok(geometry.rail.scrollHeight<=geometry.rail.clientHeight+1,'attachments never overflow vertically');
+ assert.ok(geometry.chat.height>=80,'conversation remains visible with attachments and keyboard');
+ for(const preview of [...geometry.previews,...geometry.images])assert.ok(preview.width<=44.5&&preview.height<=44.5,'large images stay inside thumbnails');
+ for(const control of [...geometry.previews,...geometry.remove])assert.ok(control.width>=43.5&&control.height>=43.5,'preview and remove keep 44px touch targets');
+ await toolbar(page,width,height);return geometry;
+}
+async function attachmentLayout(page,width,theme){
+ const draft='这张图片需要检查\n输入框与发送按钮应该一直可用';
+ await page.locator('#prompt').fill(draft);
+ await page.evaluate(attachments=>window.mobileCodexEvent('attachments.picked',{receiptId:'layout-images',attachments}),attachmentFixtures);
+ await page.waitForFunction(()=>[...document.querySelectorAll('#draft-context img')].length===3&&[...document.querySelectorAll('#draft-context img')].every(img=>img.complete&&img.naturalWidth>0));
+ await page.locator('#prompt').focus();await settle(page);await attachmentGeometry(page,width,820);
+ await page.screenshot({path:path.join(output,`attachments-${width}-${theme}.png`)});
+ await page.setViewportSize({width,height:420});await settle(page);await attachmentGeometry(page,width,420);
+ await page.screenshot({path:path.join(output,`attachments-keyboard-${width}-${theme}.png`)});
+ await page.locator('#draft-context .context-image').first().click();await settle(page);
+ assert.equal(await page.locator('#image-dialog').evaluate(dialog=>dialog.open),true,'thumbnail still opens the image viewer');
+ assert.ok(await page.locator('#image-dialog').evaluate(dialog=>{const r=dialog.getBoundingClientRect();return r.left>=-1&&r.right<=innerWidth+1&&r.top>=-1&&r.bottom<=innerHeight+1;}),'image viewer fits the short viewport');
+ await page.locator('#image-dialog [data-close]').click();await settle(page);
+ await page.locator('#draft-context .chip-remove').nth(2).click();await settle(page);
+ assert.equal(await page.locator('#draft-context .context-image').count(),2,'an attachment can be removed');
+ assert.equal(await page.locator('#draft-context .context-chip').count(),3,'other attachments are preserved');
+ assert.equal(await page.locator('#prompt').inputValue(),draft,'removing an attachment preserves the text');
+ await page.reload();await page.locator('[data-id="a"]').waitFor();
+ await page.waitForFunction(()=>document.querySelectorAll('#draft-context .context-image').length===2);
+ await page.locator('#prompt').focus();await settle(page);await attachmentGeometry(page,width,420);
+ assert.equal(await page.locator('#prompt').inputValue(),draft,'restored attachment drafts preserve the text');
+ await page.evaluate(attachments=>window.mobileCodexEvent('state',{...window.layoutState,messages:[...window.layoutState.messages,
+  {id:'sent-images',role:'user',text:'已经发送的图片',attachments}]}),attachmentFixtures);
+ await settle(page);
+ const sent=await page.locator('[data-id="sent-images"] .sent-attachments').evaluate(element=>({
+  fits:element.scrollWidth<=element.clientWidth+1,images:[...element.querySelectorAll('img')].map(img=>({width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height}))}));
+ assert.ok(sent.fits,'sent attachments fit the message');
+ assert.equal(sent.images.length,3);for(const image of sent.images)assert.ok(image.width<=88.5&&image.height<=88.5,'sent images remain thumbnails');
+ while(await page.locator('#draft-context .chip-remove').count())await page.locator('#draft-context .chip-remove').first().click();
+ assert.equal(await page.locator('#draft-context').isVisible(),false,'empty attachment row is hidden');
+ await page.setViewportSize({width,height:820});await settle(page);
+}
 async function githubLayout(page,width,theme){
  const states=[
   ['unconfigured',{configured:false,clientId:'',state:'idle',scopes:[]}],
@@ -106,7 +160,7 @@ async function githubLayout(page,width,theme){
   for(const width of [320,360,412,768])for(const theme of ['light','dark']){
    const page=await browser.newPage({viewport:{width,height:820},colorScheme:theme}),errors=[];
    page.on('pageerror',error=>errors.push(error.message));
-   await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!=='https://appassets.androidplatform.net')return route.abort();const file=require('./icon_asset.cjs').iconAsset(web,url.pathname);return file.startsWith(web+path.sep)&&fs.existsSync(file)?route.fulfill({path:file}):route.fulfill({status:404,body:''});});
+   await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!=='https://appassets.androidplatform.net')return route.abort();const image=attachmentFixtures.find(item=>item.image?.url===url.pathname)?.image;if(image)return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="${image.width}" height="${image.height}"><rect width="100%" height="100%" fill="#8ac5ee"/><path d="M0 0L${image.width} ${image.height}" stroke="#16344a" stroke-width="20"/></svg>`});const file=require('./icon_asset.cjs').iconAsset(web,url.pathname);return file.startsWith(web+path.sep)&&fs.existsSync(file)?route.fulfill({path:file}):route.fulfill({status:404,body:''});});
    await page.addInitScript(snapshot=>{
     localStorage.setItem('chat-icons','off');window.layoutState=snapshot;window.layoutCalls=[];
     window.Native={locale:()=>JSON.stringify({choice:'zh-CN',systemLanguage:'zh-CN'}),postMessage(raw){const message=JSON.parse(raw);window.layoutCalls.push(message);const result=message.action==='state'?window.layoutState:message.action==='github.status'?{github:window.layoutState.github}:message.action==='rpc'?{data:[],marketplaces:[]}:{};setTimeout(()=>window.mobileCodexEvent('response',{id:message.id,result}),0);}};
@@ -130,11 +184,12 @@ async function githubLayout(page,width,theme){
    await page.screenshot({path:path.join(output,`api-${width}-${theme}.png`)});
    const githubStates=[320,412].includes(width)?await githubLayout(page,width,theme):[];
    await page.locator('#settings-dialog .dialog-head > [data-close]').click();await settle(page);
+   await attachmentLayout(page,width,theme);
    await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:true,turnId:'turn'}));await page.locator('#prompt').fill('');await settle(page);
    const stop=await page.locator('#stop').boundingBox();assert.ok(stop.width>=43.5&&stop.height>=43.5,'Stop remains reachable');
    await page.locator('#stop').click();await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.stop'));
    assert.equal(await page.locator('#live-start,#account-button,#composer-invite').count(),0);
-   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,caret:width===320,selection:width===320,picker:true,apiPanel:true,githubStates,stop:true});await page.close();
+   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,caret:width===320,selection:width===320,picker:true,apiPanel:true,githubStates,attachments:true,stop:true});await page.close();
   }
   fs.writeFileSync(path.join(output,'results.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results));
  } finally {await browser.close();}
