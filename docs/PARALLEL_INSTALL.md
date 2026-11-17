@@ -13,6 +13,8 @@ bash gradlew testParallelUnitTest lintParallel assembleParallel
 
 CI 产物仍未签名。下载后使用单独、长期保存的本地签名密钥签名，并通过 apksigner 验证，再把最终 APK 交付用户。私钥不得进入源码、构建附件或公开仓库。后续并行版更新须保持 `.next` 包名和该签名。
 
+若已有同运行时的源码构建 APK，可使用 CI 的 `parallel-download-kit`，通过 `tools/apk_download_kit.py reconstruct` 复用其中逐段校验过的压缩运行时文件。重建结果必须与完整并行 APK 的 SHA-256 完全相同；该步骤只减少传输量，不修改 APK。相应源码可用固定提交的 `git archive --format=tar.gz` 取得，并核对 `build-info.json` 中的源码哈希；完整源码同时保留在完整构建附件中。
+
 并行版公开证书指纹固定在 `upstream-source/tools/parallel-release-policy.json`：`c3537a4bbf12e671868127ef3267c4806ffabed83d62208d94085ae4fe12b207`。本机私钥保存在应用私有的 `.codex/signing/codex-cn-api-next/`，没有提交或上传。在卸载存放该私钥的旧应用之前，必须将它安全备份到用户控制的私有存储；公开证书和 APK 无法恢复私钥。
 
 ## 从 V5 迁移

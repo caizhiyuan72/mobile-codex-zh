@@ -216,7 +216,9 @@ jobs:
           restored = kit / '.verification.apk'
           reconstruct(Path('../build-artifacts') / original['apk'], kit, restored)
           restored.unlink()
-          for filename in ['build-info.json', 'SHA256SUMS', info['source'], info['signer']]:
+          # The corresponding source is in the full artifact and can also be
+          # recreated with git archive of the pinned commit and the same hash.
+          for filename in ['build-info.json', 'SHA256SUMS', info['signer']]:
               shutil.copyfile(out / filename, kit / filename)
           print('Verified parallel download kit:', recipe['skeletonBytes'], 'bytes of literal APK data')
           PY
