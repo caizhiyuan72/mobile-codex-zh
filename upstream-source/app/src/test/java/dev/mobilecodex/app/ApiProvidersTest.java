@@ -105,8 +105,8 @@ public class ApiProvidersTest {
     @Test public void providerAndCredentialRevisionsUseSeparateHomesWithoutAuthJson() throws Exception {
         String one = save("First"), two = save("Second");
         File base = new File(root, "base"); base.mkdirs();
-        Files.writeString(new File(base, "config.toml").toPath(), "[features]\nmulti_agent=true\n[agents]\nmax_threads=2\n");
-        Files.writeString(new File(base, "auth.json").toPath(), "subscription-data-must-not-be-copied");
+        Files.write(new File(base, "config.toml").toPath(), "[features]\nmulti_agent=true\n[agents]\nmax_threads=2\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(base, "auth.json").toPath(), "subscription-data-must-not-be-copied".getBytes(StandardCharsets.UTF_8));
         providers.select(one); File first = providers.prepareHome(base);
         String firstScope = providers.scope();
         providers.save(obj("id", one, "name", "Renamed only", "baseUrl", "https://example.test/v1", "models", "coding-model,another-model", "defaultModel", "another-model", "apiKey", ""));
@@ -115,7 +115,7 @@ public class ApiProvidersTest {
         providers.save(obj("id", two, "name", "Changed", "baseUrl", "https://new.test/v1", "models", "new-model", "apiKey", "replacement-fixture-key"));
         File changed = providers.prepareHome(base); assertNotEquals(second, changed);
         assertFalse(new File(changed, "auth.json").exists());
-        String config = Files.readString(new File(changed, "config.toml").toPath());
+        String config = new String(Files.readAllBytes(new File(changed, "config.toml").toPath()), StandardCharsets.UTF_8);
         assertTrue(config.contains("https://new.test/v1")); assertTrue(config.contains("multi_agent=true"));
         assertFalse(config.contains(FIXTURE_KEY)); assertFalse(config.contains("replacement-fixture-key"));
     }
