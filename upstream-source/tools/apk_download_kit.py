@@ -55,7 +55,10 @@ def make_kit(apk, directory, threshold=1024 * 1024):
             raise ValueError('Duplicate APK members')
         members = sorted(archive.infolist(), key=lambda item: item.header_offset)
         for member in members:
-            if member.compress_size < threshold:
+            # DEX, resources and manifests depend on the commit/build variant.
+            # Only runtime/devtool members are eligible for reuse across builds.
+            if (member.compress_size < threshold or not member.filename.startswith(
+                    ('lib/', 'assets/runtime/', 'assets/devtools/'))):
                 continue
             offset = member_offset(source, member)
             if offset < previous or offset + member.compress_size > archive.start_dir:
