@@ -93,15 +93,7 @@
 }
 @keyframes sheet-enter { from { transform: translateY(32px); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
 
-@media (max-width: 480px) {
-  .usage-limits { grid-template-columns: 1fr; }
-  .account-profile-actions { width: 100%; }
-  .account-profile-actions button { flex: 1; }
-}
 
-@media (max-width: 420px) {
-  .composer-bottom .options-button { padding: 0 var(--s-2) 0 var(--s-3); }
-}
 
 @media (max-width: 360px) {
   :root { --gutter: var(--s-3); }
@@ -115,5 +107,6 @@
   .welcome-mark { margin-bottom: var(--s-2); }
   .suggestions { margin-top: var(--s-3); }
   .composer-wrap { padding-top: var(--s-1); padding-bottom: var(--s-2); }
+  #prompt { max-height: 88px; }
   .sheet-grip { height: 24px; min-height: 24px; }
 }

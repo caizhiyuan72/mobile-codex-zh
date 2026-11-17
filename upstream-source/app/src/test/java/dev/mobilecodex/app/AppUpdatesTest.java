@@ -27,14 +27,14 @@ public class AppUpdatesTest {
         context=RuntimeEnvironment.getApplication();PackageInfo current=context.getPackageManager().getPackageInfo(context.getPackageName(),PackageManager.GET_PROVIDERS | PackageManager.GET_META_DATA | PackageManager.GET_SIGNING_CERTIFICATES);current.versionName="0.1.11-alpha";current.setLongVersionCode(12);current.signingInfo=signing("010203");Shadows.shadowOf(context.getPackageManager()).installPackage(current);
         byte[] bytes={1,2,3,4};StringBuilder hash=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(bytes))hash.append(String.format("%02x",b&255));
         File dir=new File(context.getCacheDir(),"app-updates");dir.mkdirs();apk=new File(dir,hash+".apk");Files.write(apk.toPath(),bytes);
-        candidate=obj("versionName","0.1.12-alpha","size",bytes.length,"sha256",hash.toString(),"repository","nokryong/mobile-codex");
+        candidate=obj("versionName","0.1.12-alpha","size",bytes.length,"sha256",hash.toString(),"repository","caizhiyuan72/mobile-codex-zh");
         updates=new AppUpdates(context,s->{});set("candidate",candidate);set("ready",true);Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(apk.getAbsolutePath(),archive("010203"));
     }
     @After public void cleanup(){updates.shutdown();}
     private File prepare()throws Exception{CompletableFuture<File> result=new CompletableFuture<>();updates.prepareInstall(candidate.getString("sha256"),(file,error)->{if(error==null)result.complete(file);else result.completeExceptionally(error);});return result.get(5,TimeUnit.SECONDS);}
     private JSONObject release()throws Exception{
         String version=candidate.getString("versionName"),name="mobile-codex-"+version+"-arm64.apk";
-        return obj("tag_name","v"+version,"prerelease",true,"assets",array(obj("name",name,"state","uploaded","size",candidate.getLong("size"),"digest","sha256:"+candidate.getString("sha256"),"browser_download_url","https://github.com/nokryong/mobile-codex/releases/download/v"+version+"/"+name)));
+        return obj("tag_name","v"+version,"prerelease",true,"assets",array(obj("name",name,"state","uploaded","size",candidate.getLong("size"),"digest","sha256:"+candidate.getString("sha256"),"browser_download_url","https://github.com/caizhiyuan72/mobile-codex-zh/releases/download/v"+version+"/"+name)));
     }
     private JSONObject recheck(JSONObject release)throws Exception{
         updates.shutdown();

@@ -46,6 +46,9 @@ public class ChatIconAssetTest {
                 "https://appassets.androidplatform.net/visual-system.css/extra",
                 "https://appassets.androidplatform.net/../visual-system.css",
                 "https://appassets.androidplatform.net/chat-web-custom.js",
+                "https://appassets.androidplatform.net/live.js",
+                "https://appassets.androidplatform.net/live.css",
+                "https://appassets.androidplatform.net/pro-web-transport.js",
                 "https://appassets.androidplatform.net/legal/LICENSE",
                 "http://appassets.androidplatform.net/visual-system.css",
                 "https://evil.example/visual-system.css"}) {

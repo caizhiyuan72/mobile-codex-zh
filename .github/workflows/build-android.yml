@@ -1,0 +1,167 @@
+name: Build API edition from source
+
+on:
+  push:
+    paths: ['upstream-source/**', '.github/workflows/build-android.yml']
+  pull_request:
+    paths: ['upstream-source/**', '.github/workflows/build-android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-android-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: upstream-source
+
+jobs:
+  checks:
+    name: UI and source checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: upstream-source/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Verify icon source, dimensions, alpha and hashes
+        run: node tools/optimize_chat_icons.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install -r tools/requirements-devtools.txt
+      - name: Test packaging and tooling logic
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Check API edition layouts in Chromium
+        run: |
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+          node tools/verify_api_ui_browser.cjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: api-ui-diagnostics
+          path: upstream-source/artifacts/api-ui-preview/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android:
+    name: Android unit tests, lint and unsigned APK
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            upstream-source/**/*.gradle
+            upstream-source/gradle.properties
+            upstream-source/gradle/wrapper/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install -r tools/requirements-devtools.txt
+      - uses: actions/cache@v4
+        id: prepared
+        with:
+          path: |
+            upstream-source/app/src/main/jniLibs/
+            upstream-source/app/src/main/assets/runtime/
+            upstream-source/app/src/main/assets/devtools/
+          key: api-runtime-v1-${{ runner.os }}-ndk28.2.13676358-${{ hashFiles('upstream-source/tools/runtime-lock.json', 'upstream-source/tools/devtools-lock.json', 'upstream-source/tools/requirements-devtools.txt', 'upstream-source/tools/prepare_runtime.py', 'upstream-source/tools/prepare_devtools.py', 'upstream-source/tools/build_native.py', 'upstream-source/tools/native/**') }}
+      - uses: actions/cache@v4
+        if: steps.prepared.outputs.cache-hit != 'true'
+        with:
+          path: upstream-source/.runtime-cache/
+          key: api-runtime-downloads-${{ runner.os }}-${{ hashFiles('upstream-source/tools/runtime-lock.json', 'upstream-source/tools/devtools-lock.json') }}
+          restore-keys: api-runtime-downloads-${{ runner.os }}-
+      - name: Prepare hash-pinned ARM64 runtime and tools
+        if: steps.prepared.outputs.cache-hit != 'true'
+        run: |
+          sdkmanager 'ndk;28.2.13676358'
+          python3 tools/prepare_runtime.py
+          python3 tools/build_native.py --ndk "$ANDROID_HOME/ndk/28.2.13676358"
+          python3 tools/prepare_devtools.py
+      - name: Verify prepared files including cache hits
+        run: |
+          python3 tools/prepare_devtools.py --verify
+          PYTHONPATH=tests python3 -m unittest test_devtools.DevtoolsPackagingTests.test_real_prepared_runtime_contract
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          manifest = json.loads(Path('app/src/main/assets/runtime/manifest.json').read_text())
+          for name, expected in manifest['files'].items():
+              path = Path('app/src/main/jniLibs/arm64-v8a') / name
+              if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                  raise ValueError('Codex runtime checksum mismatch: ' + name)
+          PY
+      - name: Compile, run Android unit suites and lint both variants
+        run: bash gradlew --no-daemon --build-cache testDebugUnitTest lintDebug assembleDebugAndroidTest assembleRelease testReleaseUnitTest lintRelease
+      - name: Attach exact source and APK identity
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, shutil, subprocess, zipfile
+          from pathlib import Path
+          gradle = Path('app/build.gradle').read_text()
+          version = re.search(r"versionName '([^']+)'", gradle).group(1)
+          code = int(re.search(r'versionCode (\d+)', gradle).group(1))
+          package = re.search(r"applicationId '([^']+)'", gradle).group(1)
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if commit != os.environ['BUILD_COMMIT']:
+              raise ValueError('Checkout and build commit differ')
+          out = Path('../build-artifacts'); out.mkdir(exist_ok=True)
+          apk = out / f'mobile-codex-{version}-arm64-unsigned.apk'
+          shutil.copyfile('app/build/outputs/apk/release/app-release-unsigned.apk', apk)
+          aapt = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0/aapt'
+          badging = subprocess.check_output([str(aapt), 'dump', 'badging', str(apk)], text=True)
+          identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
+          if not identity or (identity.group(1), int(identity.group(2)), identity.group(3)) != (package, code, version):
+              raise ValueError('Built APK identity differs from Gradle source')
+          abis = re.search(r'^native-code: (.+)$', badging, re.M)
+          if not abis or re.findall(r"'([^']+)'", abis.group(1)) != ['arm64-v8a']:
+              raise ValueError('Built APK must contain only ARM64 native libraries')
+          with zipfile.ZipFile(apk) as archive:
+              for asset in Path('app/src/main/assets/web').rglob('*'):
+                  if asset.is_file() and archive.read('assets/web/' + asset.relative_to('app/src/main/assets/web').as_posix()) != asset.read_bytes():
+                      raise ValueError('APK web asset differs from source: ' + asset.name)
+          source = out / f'mobile-codex-{version}-source.tar.gz'
+          subprocess.run(['git', '-C', '..', 'archive', '--format=tar.gz', '--output', str(source.resolve()), 'HEAD'], check=True)
+          info = {'commit':commit, 'versionName':version, 'versionCode':code, 'package':package,
+                  'apk':apk.name, 'apkBytes':apk.stat().st_size,
+                  'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(), 'signed':False,
+                  'source':source.name, 'sourceSha256':hashlib.sha256(source.read_bytes()).hexdigest()}
+          (out / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
+          (out / 'SHA256SUMS').write_text(info['apkSha256'] + '  ' + apk.name + '\n'
+              + info['sourceSha256'] + '  ' + source.name + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-source-build-${{ github.sha }}
+          path: build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-check-reports
+          path: upstream-source/app/build/reports/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,9 +1,16 @@
-# Update channel setup
+# 更新与构建产物
 
-1. Publish a **public** GitHub Release with a version tag and ARM64 APK asset under `caizhiyuan72/mobile-codex-zh`.
-2. In Codex CN, open **Settings > Updates**, enter the repository name exactly as above, and save/check for updates.
-3. For future versions, increase Android `versionCode` above 76, keep package ID `dev.mobilecodex.app.zhcnv3`, and use the *same signing key* as the user's currently installed APK.
-4. Never uninstall the existing app to update. Back up configuration separately before major upgrades; Android Keystore-protected API keys may be non-exportable.
-5. Signing private keys and API keys must stay out of this public repository and release attachments.
+本轮源码版本为 `0.3.9-cn.6`、versionCode `77`，应用 ID 为 `dev.mobilecodex.app.zhcnv3`。原生更新源现在默认使用 `caizhiyuan72/mobile-codex-zh`，已补齐 `cn.N` 版本比较。
 
-The current application's updater defaults to `nokryong/mobile-codex` until reconfigured. This preparation kit does not change that setting on an installed phone.
+现有安装的更新源不会因本地源码修改而自动改变。V5 可以在“设置 → 更新”中手动填写仓库名称。
+
+根 `build-android.yml` 只生成未签名构建验证产物，并附上源码与哈希，不创建 GitHub Release。未经签名的 APK 不能直接安装，也不能覆盖现有应用。
+
+准备可安装更新时，需要：
+
+1. 完成 Android 构建、单元测试、lint 和真机验证。
+2. 使用已安装 V5 的原签名私钥，保持相同应用 ID，版本号递增。
+3. 从签名后的实际 APK 提取包名、版本、ABI、大小和 SHA-256，再生成更新信息。
+4. 将 APK 和对应源码关联到同一 Git 提交后发布。
+
+旧 `patches/build_codex_cn_v*.py` 与工程里的上游发布脚本是历史参考；后者的身份规则针对原上游，尚未作为本 fork 的签名发布流程接通。不要把它的测试通过当成已发布新版。

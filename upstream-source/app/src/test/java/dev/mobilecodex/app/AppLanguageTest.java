@@ -14,9 +14,14 @@ public class AppLanguageTest {
     @After public void cleanup(){Texts.configure(true,java.util.Map.of());}
     @Test public void deviceDefaultAndExplicitChoiceAreAppliedAndPersisted()throws Exception{
         var context=RuntimeEnvironment.getApplication();AppLanguage.initialize(context);
-        assertEquals("Settings",Texts.t("설정"));AppLanguage.set(context,"ko");assertEquals("설정",Texts.t("설정"));
+        assertEquals("zh-CN",AppLanguage.choice(context));assertEquals("设置",Texts.t("설정"));
+        AppLanguage.set(context,"system");assertEquals("Settings",Texts.t("설정"));
+        AppLanguage.set(context,"ko");assertEquals("설정",Texts.t("설정"));
         AppLanguage.initialize(context);assertEquals("ko",AppLanguage.choice(context));
         AppLanguage.set(context,"en");assertEquals("Settings",Texts.t("설정"));assertEquals("user content",Texts.t("user content"));
+        AppLanguage.set(context,"zh-CN");assertEquals("设置",Texts.t("설정"));assertEquals("设置",Texts.t("Settings"));
+        AppLanguage.initialize(context);assertEquals("zh-CN",AppLanguage.choice(context));
+        assertEquals("user content",Texts.t("user content"));
         assertThrows(IllegalArgumentException.class,()->AppLanguage.set(context,"unsupported"));
     }
 }

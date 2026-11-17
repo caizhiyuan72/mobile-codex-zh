@@ -25,7 +25,7 @@ async function fixture(){
    const page=await browser.newPage({viewport:{width,height:844}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
    await page.goto('http://127.0.0.1:'+server.address().port+'/app?language='+language+'&theme='+theme);await page.waitForFunction(()=>window.__uiReviewReady);
    await page.evaluate(fixture);
-   const hiddenLaunchers=()=>page.evaluate(()=>['report-open','report-login-open','report-error-open'].every(id=>document.getElementById(id).hidden));
+   const hiddenLaunchers=()=>page.evaluate(()=>['report-open','report-error-open'].every(id=>document.getElementById(id).hidden));
    assert.equal(await hiddenLaunchers(),true);
    assert.ok(await page.evaluate(()=>window.__uiReviewCalls.some(call=>call.action==='reports.status')));
    await page.evaluate(()=>{window.__reportFx.available=true;window.mobileCodexEvent('reports.available',{available:true});});

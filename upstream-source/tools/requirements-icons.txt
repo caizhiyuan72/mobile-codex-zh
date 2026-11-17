@@ -1,1 +1,2 @@
-Pillow==13.0.0
+# Icon tooling now uses pinned npm devDependencies. Run npm ci --ignore-scripts.
+# Python entry point tools/optimize_chat_icons.py delegates to the Node/WASM tool.

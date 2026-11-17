@@ -24,7 +24,6 @@ import java.io.File;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
-import java.util.Set;
 import static dev.mobilecodex.app.core.Json.*;
 
 public final class MainActivity extends Activity implements Engine.Ui {
@@ -49,7 +48,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
         String path = uri.getPath();
         if (!"https".equals(uri.getScheme()) || !HOST.equals(uri.getHost()) || path == null
                 || !(path.equals("/index.html") || path.equals("/app.css") || path.equals("/visual-system.css") || path.equals("/spacing.css")
-                || path.equals("/app.js") || path.equals("/ui-core.js") || path.equals("/translations.js") || path.equals("/locale.js") || path.equals("/agents-ui.js") || path.equals("/agents.css") || path.equals("/live.js") || path.equals("/live.css") || path.equals("/reports.js"))) {
+                || path.equals("/app.js") || path.equals("/ui-core.js") || path.equals("/translations.js") || path.equals("/translations-zh.js")
+                || path.equals("/locale.js") || path.equals("/api-providers.js") || path.equals("/reasoning-policy.js") || path.equals("/reports.js"))) {
             return deniedResponse();
         }
         String mime = path.endsWith(".css") ? "text/css" : path.endsWith(".js") ? "application/javascript" : "text/html";
@@ -67,7 +67,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
     static final String HOST = "appassets.androidplatform.net";
     private static final int PICK_FOLDER = 31, EXPORT_RECOVERY = 32, IMPORT_SKILL = 33, EXPORT_IMAGE = 34, PICK_ATTACHMENTS = 35, EXPORT_ATTACHMENT = 36, INSTALL_UPDATE = 37, PICK_CHARACTERS = 38;
     private WebView web;
-    private final ConsultationDispatch proConsultations = new ConsultationDispatch();
     private SafeWebViewLayout root;
     private boolean keyboardVisible;
     private String theme = "system";
@@ -75,14 +74,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
     private CharacterPacks characterPacks;
     private InlineDictation dictation;
     private static final int MICROPHONE_PERMISSION = 82;
-    private static final int LIVE_MICROPHONE_PERMISSION = 83;
-    private volatile boolean liveMicrophoneAllowed;
-    private String livePermissionRequest;
-    private boolean livePermissionReady;
-    private volatile String liveAudioKey = "";
-    private LiveAudioService liveAudioService;
-    private ServiceConnection liveAudioConnection;
-    private String liveAudioRequest;
     private boolean loaded, foreground;
     private AppUpdates updates;
     private AlertDialog approvalDialog;
@@ -93,21 +84,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
     private String pendingImageId;
     private String reconnectProjectKey = "", pendingAttachmentRequest, attachmentDraftKey, exportAttachmentId;
     private final java.util.ArrayDeque<String> pendingUiEvents = new java.util.ArrayDeque<>();
-
-    /** Repeated native snapshots and callbacks refer to one web attempt. */
-    static final class ConsultationDispatch {
-        private final java.util.Set<String> seen = new java.util.HashSet<>();
-        private String active = "";
-        boolean begin(String operationId) {
-            if (operationId == null || operationId.isBlank() || !active.isBlank() || !seen.add(operationId)) return false;
-            active = operationId; return true;
-        }
-        boolean isActive(String operationId) { return !active.isBlank() && active.equals(operationId); }
-        boolean complete(String operationId) {
-            if (!isActive(operationId)) return false;
-            active = ""; return true;
-        }
-    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -139,7 +115,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setSupportMultipleWindows(false);
-        s.setMediaPlaybackRequiresUserGesture(false);
         applyTextSize();
         web.addJavascriptInterface(new Bridge(), "Native");
         web.setWebViewClient(new WebViewClient() {
@@ -171,7 +146,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     loaded = true;
                     while (!pendingUiEvents.isEmpty()) web.evaluateJavascript(pendingUiEvents.removeFirst(), null);
                     engine.attach(MainActivity.this);
-                    syncLiveAudio();
                     if (foreground) engine.restoreAccount();
                     handleNotificationIntent(getIntent());
                     event("viewport", obj("keyboardVisible", keyboardVisible));
@@ -180,11 +154,11 @@ public final class MainActivity extends Activity implements Engine.Ui {
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public void onPermissionRequest(PermissionRequest request) {
-                // Live capture belongs to the native service, never to web content.
+                // Speech recognition is native; web content never receives capture permissions.
                 runOnUiThread(request::deny);
             }
             @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
-                new AlertDialog.Builder(MainActivity.this).setTitle("Mobile Codex").setMessage(message)
+                new AlertDialog.Builder(MainActivity.this).setTitle("Codex CN").setMessage(message)
                     .setPositiveButton(t("확인"), (dialog, which) -> result.confirm())
                     .setNegativeButton(t("취소"), (dialog, which) -> result.cancel())
                     .setOnCancelListener(dialog -> result.cancel()).show();
@@ -211,18 +185,11 @@ public final class MainActivity extends Activity implements Engine.Ui {
     private static WebResourceResponse deniedResponse() {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", Map.of(), new ByteArrayInputStream(new byte[0]));
     }
-    @Override protected void onStart() { super.onStart(); syncLiveAudio(); if (loaded) engine.attach(this); engine.unobserve(this); }
-    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; getSharedPreferences("notifications", 0).edit().putBoolean("foreground", true).commit(); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) { engine.attach(this); engine.restoreAccount(); } event("voice.changed", obj()); resumeLivePermission(); }
+    @Override protected void onStart() { super.onStart(); if (loaded) engine.attach(this); engine.unobserve(this); }
+    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; getSharedPreferences("notifications", 0).edit().putBoolean("foreground", true).commit(); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) { engine.attach(this); engine.restoreAccount(); } event("voice.changed", obj()); }
     @Override protected void onPause() { foreground = false; getSharedPreferences("notifications", 0).edit().putBoolean("foreground", false).commit(); if (dictation != null && !dictation.waitingPermission()) dictation.cancel(); super.onPause(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleNotificationIntent(intent); }
     private void handleNotificationIntent(Intent intent) {
-        if (intent != null && UsageWidgetProvider.OPEN.equals(intent.getAction())) {
-            if (loaded) {
-                event("widget.open", obj("provider", intent.getStringExtra("provider")));
-                intent.setAction(null);
-            }
-            return;
-        }
         if (intent == null || !CodexNotificationReceiver.ACTION.equals(intent.getAction())) return;
         String thread = intent.getStringExtra("threadId"); if (thread == null) thread = "";
         final String target = thread;
@@ -230,8 +197,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
     }
     @Override protected void onStop() {
         if (dictation != null) dictation.cancel();
-        // The service receives signaling without executing JavaScript in a hidden WebView.
-        if (!liveMicrophoneAllowed) interruptLiveAudio();
         engine.unobserve(this);
         engine.detach(this);
         super.onStop();
@@ -246,10 +211,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
     }
     @Override protected void onDestroy() {
         if (dictation != null) dictation.cancel();
-        if (!liveMicrophoneAllowed) interruptLiveAudio();
-        // A started service owns the call across Activity/WebView recreation.
-        if (liveAudioConnection != null) { unbindService(liveAudioConnection); liveAudioConnection = null; }
-        liveAudioService = null;
         engine.unobserve(this);
         engine.detach(this);
         if (approvalDialog != null) approvalDialog.dismiss();
@@ -269,83 +230,9 @@ public final class MainActivity extends Activity implements Engine.Ui {
     }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(code, permissions, grants);
-        if (code == LIVE_MICROPHONE_PERMISSION) {
-            String id = livePermissionRequest;
-            if (id != null) {
-                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                    // Android can deliver the result before resuming the permission-covered Activity.
-                    livePermissionReady = true; resumeLivePermission();
-                } else { livePermissionRequest = null; respond(id, null, new IllegalStateException(t("마이크 권한이 필요합니다."))); }
-            }
-        } else if (code == MICROPHONE_PERMISSION) {
+        if (code == MICROPHONE_PERMISSION) {
             if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) dictation.start(); else dictation.denied();
         } else if (code == 41) event("notifications.changed", obj());
-    }
-    private void resumeLivePermission() {
-        if (!foreground || !livePermissionReady || livePermissionRequest == null) return;
-        String id = livePermissionRequest; livePermissionRequest = null; livePermissionReady = false;
-        beginLiveAudio(id);
-    }
-    private void beginLiveAudio(String id) {
-        try {
-            if (!foreground || liveAudioKey.isBlank()) throw new IllegalStateException(t("음성 연결을 시작할 수 없습니다."));
-            if (dictation != null) dictation.cancel();
-            String key = liveAudioKey;
-            liveAudioRequest = id;
-            ServiceConnection connection = new ServiceConnection() {
-                @Override public void onServiceConnected(ComponentName name, IBinder binder) {
-                    if (liveAudioConnection != this) return;
-                    try {
-                        if (!foreground || !key.equals(liveAudioKey)) throw new IllegalStateException(t("음성 연결이 취소되었습니다."));
-                        liveAudioService = ((LiveAudioService.LocalBinder) binder).service();
-                        liveAudioService.begin(key, () -> {});
-                        liveMicrophoneAllowed = true;
-                        liveAudioRequest = null;
-                        respond(id, obj("ok", true), null);
-                    } catch (Exception error) { liveAudioRequest = null; endLiveAudio(); respond(id, null, error); }
-                }
-                @Override public void onServiceDisconnected(ComponentName name) { if (liveAudioConnection == this) interruptLiveAudio(); }
-                @Override public void onNullBinding(ComponentName name) { if (liveAudioConnection == this) interruptLiveAudio(); }
-                @Override public void onBindingDied(ComponentName name) { if (liveAudioConnection == this) interruptLiveAudio(); }
-            };
-            liveAudioConnection = connection;
-            if (!bindService(new Intent(this, LiveAudioService.class), connection, BIND_AUTO_CREATE)) {
-                liveAudioConnection = null;
-                throw new IllegalStateException(t("음성 연결을 시작할 수 없습니다."));
-            }
-        } catch (Exception error) { liveAudioRequest = null; endLiveAudio(); respond(id, null, error); }
-    }
-    private void interruptLiveAudio() {
-        String key = liveAudioKey;
-        endLiveAudio();
-        if (key.isBlank()) return;
-        event("live.interrupted", obj("key", key));
-        engine.handle("live.stop", obj("key", key), (result, error) -> {});
-    }
-    private void syncLiveAudio() {
-        LiveAudioService service = LiveAudioService.active();
-        if (service == null) {
-            if (liveMicrophoneAllowed) {
-                String endedKey = liveAudioKey;
-                endLiveAudio();
-                event("live.audio", obj("key", endedKey, "phase", "ended"));
-            }
-            return;
-        }
-        liveAudioService = service; liveMicrophoneAllowed = true;
-        liveAudioKey = service.snapshot().optString("key");
-        if (loaded) event("live.audio", service.snapshot());
-    }
-    private void endLiveAudio() {
-        String key = liveAudioKey;
-        liveMicrophoneAllowed = false;
-        livePermissionReady = false;
-        liveAudioKey = "";
-        if (livePermissionRequest != null) { respond(livePermissionRequest, null, new IllegalStateException(t("음성 연결이 취소되었습니다."))); livePermissionRequest = null; }
-        if (liveAudioRequest != null) { respond(liveAudioRequest, null, new IllegalStateException(t("음성 연결이 취소되었습니다."))); liveAudioRequest = null; }
-        if (liveAudioService != null) { LiveAudioService service = liveAudioService; liveAudioService = null; service.stop(key); }
-        if (liveAudioConnection != null) { ServiceConnection connection = liveAudioConnection; liveAudioConnection = null; unbindService(connection); }
-        if (!foreground) engine.unobserve(this);
     }
     private void requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < 33) return;
@@ -389,9 +276,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
         }
         runOnUiThread(() -> {
             if (isDestroyed()) return;
-            if ("live.audio".equals(name) && "ended".equals(data.optString("phase")) && liveAudioKey.equals(data.optString("key"))) endLiveAudio();
-            if ("live.event".equals(name) && liveAudioKey.equals(data.optString("key"))
-                && Set.of("thread/realtime/closed", "thread/realtime/error").contains(data.optString("method"))) endLiveAudio();
             if ("state".equals(name)) getSharedPreferences("notifications", 0).edit().putString("visibleThread", data.optString("threadId", "")).commit();
             String script = "window.mobileCodexEvent(" + JSONObject.quote(name) + "," + data + ");";
             if (loaded) web.evaluateJavascript(script, null); else pendingUiEvents.addLast(script);
@@ -619,42 +503,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     }
                     return;
                 }
-                if (action.equals("live.microphone")) {
-                    runOnUiThread(() -> {
-                        if (!foreground || livePermissionRequest != null || liveAudioConnection != null || liveMicrophoneAllowed || LiveAudioService.active() != null) { respond(id, null, new IllegalStateException(t("음성 연결을 시작할 수 없습니다."))); return; }
-                        liveAudioKey = parameters.optString("key");
-                        boolean microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-                        boolean bluetooth = Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
-                        if (microphone && bluetooth) beginLiveAudio(id);
-                        else {
-                            livePermissionRequest = id;
-                            requestPermissions(Build.VERSION.SDK_INT >= 31
-                                ? new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.BLUETOOTH_CONNECT}
-                                : new String[]{Manifest.permission.RECORD_AUDIO}, LIVE_MICROPHONE_PERMISSION);
-                        }
-                    }); return;
-                }
-                if (Set.of("live.start", "live.stop", "live.status", "live.mute").contains(action)) {
-                    runOnUiThread(() -> {
-                        try {
-                            LiveAudioService service = LiveAudioService.active();
-                            String key = parameters.optString("key");
-                            if (action.equals("live.status")) respond(id, service == null ? obj("key", "") : service.snapshot(), null);
-                            else if (action.equals("live.stop")) {
-                                if (service != null) service.stop(key);
-                                if (key.equals(liveAudioKey)) endLiveAudio();
-                                engine.handle("live.stop", parameters, (result, error) -> respond(id, result, error));
-                            } else if (service == null || !key.equals(service.snapshot().optString("key"))) {
-                                respond(id, null, new IllegalStateException(t("음성 연결이 종료되었습니다.")));
-                            } else if (action.equals("live.mute")) {
-                                service.mute(key, parameters.optBoolean("muted")); respond(id, service.snapshot(), null);
-                            } else service.connect(parameters, (result, error) -> respond(id, result, error));
-                        } catch (Exception error) { respond(id, null, error); }
-                    }); return;
-                }
-                if (action.startsWith("chat.pro.") || action.equals("ui.chatLogin") || action.equals("ui.chat.open")) {
-                    respond(id, null, new IllegalStateException(t("제거된 기능입니다."))); return;
-                }
                 if (action.equals("attachments.recover")) {
                     String saved = getSharedPreferences("attachment-result", 0).getString("pending", "");
                     respond(id, saved.isEmpty() ? obj("attachments", new org.json.JSONArray()) : new JSONObject(saved), null); return;
@@ -826,25 +674,6 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     dev.mobilecodex.app.core.sync.PortableProjects.parse(content, true);
                     runOnUiThread(() -> chooseProjectFile(id, content)); return;
                 }
-                if (action.equals("ui.loginBrowser")) {
-                    Uri uri = Uri.parse(args.getString("url"));
-                    if (!"https".equals(uri.getScheme()) || !("auth.openai.com".equals(uri.getHost()) || "chatgpt.com".equals(uri.getHost())))
-                        throw new IllegalArgumentException(t("잘못된 로그인 주소입니다."));
-                    runOnUiThread(() -> { startActivity(new Intent(Intent.ACTION_VIEW, uri)); respond(id, obj("ok", true), null); }); return;
-                }
-                if (action.equals("ui.providerLoginBrowser")) {
-                    Uri uri = Uri.parse(args.getString("url"));
-                    if (!"https".equals(uri.getScheme()) || !Set.of("claude.ai", "claude.com", "www.claude.com", "console.anthropic.com", "platform.claude.com", "auth.anthropic.com", "accounts.google.com", "antigravity.google", "antigravity.google.com").contains(uri.getHost()))
-                        throw new IllegalArgumentException(t("공식 공급자의 로그인 주소만 열 수 있습니다."));
-                    runOnUiThread(() -> { startActivity(new Intent(Intent.ACTION_VIEW, uri)); respond(id, obj("ok", true), null); }); return;
-                }
-                if (action.equals("ui.copyCode")) {
-                    String code = args.getString("code");
-                    runOnUiThread(() -> {
-                        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-                        clipboard.setPrimaryClip(ClipData.newPlainText(t("로그인 코드"), code)); respond(id, obj("ok", true), null);
-                    }); return;
-                }
                 if (action.equals("recovery.export")) {
                     exportId = args.getString("id"); String name = args.getString("name");
                     runOnUiThread(() -> {
@@ -853,7 +682,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                         respond(id, obj("ok", true), null);
                     }); return;
                 }
-                if (action.equals("runtime.start") || action.equals("auth.login")) {
+                if (action.equals("runtime.start")) {
                     runOnUiThread(() -> {
                         if (Build.VERSION.SDK_INT >= 33 && getSharedPreferences("notifications", 0).getBoolean("enabled", true)
                             && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)

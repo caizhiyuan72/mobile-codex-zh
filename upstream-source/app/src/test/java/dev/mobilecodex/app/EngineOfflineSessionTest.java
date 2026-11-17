@@ -35,6 +35,7 @@ public class EngineOfflineSessionTest {
         context.getSharedPreferences("projects", 0).edit().clear().commit();
         context.getSharedPreferences("workspace", 0).edit().clear().commit();
         context.getSharedPreferences("settings", 0).edit().clear().commit();
+        context.getSharedPreferences("api-providers-v2", 0).edit().clear().commit();
         deleteTree(new File(context.getFilesDir(), "account-profiles"));
     }
     @After public void after() {
@@ -43,6 +44,7 @@ public class EngineOfflineSessionTest {
         context.getSharedPreferences("projects", 0).edit().clear().commit();
         context.getSharedPreferences("workspace", 0).edit().clear().commit();
         context.getSharedPreferences("settings", 0).edit().clear().commit();
+        context.getSharedPreferences("api-providers-v2", 0).edit().clear().commit();
         deleteTree(new File(context.getFilesDir(), "account-profiles"));
     }
     private static void deleteTree(File file) {
@@ -54,27 +56,6 @@ public class EngineOfflineSessionTest {
     private void deleteSessionMigrationBackups() {
         File[] files = context.getFilesDir().listFiles((directory, name) -> name.startsWith("sessions-before-"));
         if (files != null) for (File file : files) deleteTree(file);
-    }
-    @Test public void modelPickerRefreshReadsCurrentServerAndPreservesChoicesOnFailure() throws Exception {
-        Engine engine = new Engine(context);
-        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
-        engine.setTestTransport((method, params) -> {
-            assertEquals("model/list", method);
-            assertEquals(100, params.getInt("limit"));
-            assertFalse(params.getBoolean("includeHidden"));
-            int read = reads.incrementAndGet();
-            if (read == 3) throw new java.io.IOException("offline");
-            JSONArray choices = new JSONArray().put(obj("model", "gpt-6-astra"));
-            if (read >= 2) choices.put(obj("model", "gpt-6-sol"));
-            return obj("data", choices);
-        });
-        assertEquals(1, handle(engine, "models.refresh", obj()).getJSONArray("models").length());
-        assertEquals(2, handle(engine, "models.refresh", obj()).getJSONArray("models").length());
-        try { handle(engine, "models.refresh", obj()); fail("refresh failure must be visible"); }
-        catch (ExecutionException expected) { assertEquals("offline", expected.getCause().getMessage()); }
-        assertEquals(2, handle(engine, "state", obj()).getJSONArray("models").length());
-        assertEquals(3, reads.get());
-        engine.io.shutdownNow();
     }
     @Test public void approvalReviewModesStaySeparateFromFileAccess() throws Exception {
         Engine engine = new Engine(context);
@@ -92,189 +73,6 @@ public class EngineOfflineSessionTest {
         assertEquals("read-only", allow.getString("sandbox"));
         assertEquals("never", allow.getString("approvalPolicy")); assertEquals("user", allow.getString("approvalsReviewer"));
         engine.io.shutdownNow();
-    }
-    @Test public void accountReadDoesNotForceRotationAndRateLimitRevocationIsNotSilenced() throws Exception {
-        File auth = new File(new File(context.getFilesDir(), ".codex"), "auth.json"); auth.getParentFile().mkdirs();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "opaque-test-token")).toString().getBytes(StandardCharsets.UTF_8));
-        Engine engine = new Engine(context); java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
-        engine.setTestTransport((method, params) -> {
-            calls.add(obj("method", method, "params", new JSONObject(params.toString())));
-            if (method.equals("account/read")) return obj("account", obj("type", "chatgpt", "email", "test@example.test", "planType", "plus"));
-            if (method.equals("account/rateLimits/read")) throw new java.io.IOException("401 token_revoked");
-            throw new AssertionError(method);
-        });
-        Method readAccount = Engine.class.getDeclaredMethod("readAccount"); readAccount.setAccessible(true); readAccount.invoke(engine);
-        assertFalse(calls.get(0).getJSONObject("params").getBoolean("refreshToken"));
-        Method readRateLimits = Engine.class.getDeclaredMethod("readRateLimits"); readRateLimits.setAccessible(true);
-        try { readRateLimits.invoke(engine); fail("revoked credentials must not be treated as a usable account"); }
-        catch (java.lang.reflect.InvocationTargetException expected) { assertTrue(expected.getCause().getMessage().contains("다시 로그인")); }
-        engine.io.shutdownNow(); deleteTree(new File(context.getFilesDir(), "account-profiles")); Files.deleteIfExists(auth.toPath());
-    }
-    @Test public void revokedAccountSwitchRestoresThePreviousActiveProfile() throws Exception {
-        File auth = new File(new File(context.getFilesDir(), ".codex"), "auth.json"); auth.getParentFile().mkdirs();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "opaque-one")).toString().getBytes(StandardCharsets.UTF_8));
-        Engine engine = new Engine(context);
-        engine.setTestTransport((method, params) -> obj("account", obj("type", "chatgpt", "email", "one@example.test", "planType", "plus")));
-        Method readAccount = Engine.class.getDeclaredMethod("readAccount"); readAccount.setAccessible(true); readAccount.invoke(engine);
-        AccountProfiles profiles = (AccountProfiles) field(engine, "accountProfiles"); String previous = profiles.activeKey();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "opaque-two")).toString().getBytes(StandardCharsets.UTF_8));
-        engine.setTestTransport((method, params) -> obj("account", obj("type", "chatgpt", "email", "two@example.test", "planType", "pro")));
-        readAccount.invoke(engine); String target = profiles.activeKey(); assertNotEquals(previous, target);
-        profiles.switchTo(previous);
-        engine.setTestTransport((method, params) -> {
-            if (method.equals("account/read")) {
-                // The active marker remains on the previous profile until
-                // validation commits. Identify the staged account from the
-                // live credential that stageSwitch copied instead.
-                String raw = new String(Files.readAllBytes(auth.toPath()), StandardCharsets.UTF_8);
-                return obj("account", raw.contains("opaque-two")
-                    ? obj("type", "chatgpt", "email", "two@example.test", "planType", "pro")
-                    : obj("type", "chatgpt", "email", "one@example.test", "planType", "plus"));
-            }
-            if (method.equals("account/rateLimits/read")) {
-                // The staged target is intentionally not active yet. Validate
-                // the credential that was copied into live auth.json rather
-                // than observing the old active marker.
-                String raw = new String(Files.readAllBytes(auth.toPath()), StandardCharsets.UTF_8);
-                if (raw.contains("opaque-two")) throw new java.io.IOException("401 token_revoked");
-                return obj("rateLimits", obj("primary", obj("usedPercent", 1)));
-            }
-            throw new AssertionError(method);
-        });
-        engine.setTestAccountValidation(true); setField(engine, "account", obj("type", "chatgpt", "email", "one@example.test"));
-        Method switchAccount = Engine.class.getDeclaredMethod("switchAccount", String.class); switchAccount.setAccessible(true);
-        try { switchAccount.invoke(engine, target); fail("a failed target startup must not report a successful switch"); }
-        catch (java.lang.reflect.InvocationTargetException expected) { assertTrue(expected.getCause().getMessage().contains("다시 로그인")); }
-        assertEquals(previous, profiles.activeKey());
-        engine.io.shutdownNow(); deleteTree(new File(context.getFilesDir(), "account-profiles")); Files.deleteIfExists(auth.toPath());
-    }
-
-    @Test public void revokedActiveAccountCanReachAddLoginWithoutLogoutAndCancelRestoresAuth() throws Exception {
-        File auth = new File(new File(context.getFilesDir(), ".codex"), "auth.json"); auth.getParentFile().mkdirs();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "revoked-token")).toString().getBytes(StandardCharsets.UTF_8));
-        byte[] previousAuth = Files.readAllBytes(auth.toPath());
-        Engine engine = new Engine(context);
-        AccountProfiles profiles = (AccountProfiles) field(engine, "accountProfiles");
-        String previous = profiles.saveCurrent(obj("email", "revoked@example.test", "planType", "plus")).getString("key");
-        profiles.markNeedsLogin(previous);
-        java.util.ArrayList<String> calls = new java.util.ArrayList<>();
-        engine.setTestTransport((method, params) -> {
-            calls.add(method);
-            if (method.equals("account/login/start")) {
-                assertTrue("active auth must remain isolated from device login", auth.isFile());
-                File pending = profiles.pendingLoginHome();
-                assertNotNull("device login must use a pending CODEX_HOME", pending);
-                assertEquals(pending.getAbsolutePath(), engine.processHomeForTest().getAbsolutePath());
-                assertFalse("pending home must start without active credentials", new File(pending, "auth.json").isFile());
-                return obj("loginId", "login-test", "userCode", "ABC", "verificationUrl", "https://auth.openai.com/codex/device");
-            }
-            throw new AssertionError(method);
-        });
-        Method beginLogin = Engine.class.getDeclaredMethod("beginLogin", boolean.class); beginLogin.setAccessible(true);
-        beginLogin.invoke(engine, true);
-        assertEquals(java.util.List.of("account/login/start"), calls);
-        assertEquals(previous, profiles.activeKey());
-        Method restore = Engine.class.getDeclaredMethod("restoreAccountAfterCancelledLogin"); restore.setAccessible(true);
-        restore.invoke(engine);
-        assertTrue(auth.isFile());
-        assertEquals(previous, profiles.activeKey());
-        assertArrayEquals(previousAuth, Files.readAllBytes(auth.toPath()));
-        engine.io.shutdownNow(); deleteTree(new File(context.getFilesDir(), "account-profiles")); Files.deleteIfExists(auth.toPath());
-    }
-
-    @Test public void threeSequentialAddLoginsStayUsableAfterRotatingAndReturningToOlderProfiles() throws Exception {
-        File auth = new File(new File(context.getFilesDir(), ".codex"), "auth.json"); auth.getParentFile().mkdirs();
-        writeNamedAuth(auth, "a@example.test", "token-a-0");
-        Engine engine = new Engine(context); AccountProfiles profiles = (AccountProfiles) field(engine, "accountProfiles");
-        Method readAccount = Engine.class.getDeclaredMethod("readAccount"); readAccount.setAccessible(true);
-        Method beginLogin = Engine.class.getDeclaredMethod("beginLogin", boolean.class); beginLogin.setAccessible(true);
-        Method notification = Engine.class.getDeclaredMethod("onNotification", String.class, JSONObject.class); notification.setAccessible(true);
-        final String[] login = {"a"};
-        engine.setTestTransport((method, params) -> {
-            if (method.equals("account/read")) {
-                File currentHome = engine.processHomeForTest();
-                String raw = new String(Files.readAllBytes(new File(currentHome, "auth.json").toPath()), StandardCharsets.UTF_8);
-                String name = raw.contains("token-a") ? "a" : raw.contains("token-b") ? "b" : "c";
-                return obj("account", accountFor(name));
-            }
-            if (method.equals("account/rateLimits/read")) {
-                File currentHome = engine.processHomeForTest();
-                File currentAuth = new File(currentHome, "auth.json");
-                if (currentAuth.isFile()) {
-                    String raw = new String(Files.readAllBytes(currentAuth.toPath()), StandardCharsets.UTF_8);
-                    String name = raw.contains("token-a") ? "a" : raw.contains("token-b") ? "b" : "c";
-                    writeNamedAuth(currentAuth, name + "@example.test", "token-" + name + "-rotated");
-                }
-                return obj("rateLimits", obj("primary", obj("usedPercent", 1)));
-            }
-            if (method.equals("account/login/start")) return obj("loginId", "login-" + login[0], "userCode", "ABC", "verificationUrl", "https://auth.openai.com/codex/device");
-            if (method.equals("model/list")) return obj("data", new JSONArray());
-            throw new AssertionError(method);
-        });
-        readAccount.invoke(engine);
-        String a = profiles.activeKey();
-        assertFalse("initial login must create a profile", a.isBlank());
-        login[0] = "b"; beginLogin.invoke(engine, true);
-        File pendingB = engine.processHomeForTest(); assertNotEquals(auth.getParentFile().getAbsolutePath(), pendingB.getAbsolutePath());
-        writeNamedAuth(new File(pendingB, "auth.json"), "b@example.test", "token-b-0");
-        notification.invoke(engine, "account/login/completed", obj("success", true));
-        String b = profiles.activeKey(); assertNotEquals(a, b);
-        assertFalse("second login must create a profile", b.isBlank());
-        login[0] = "c"; beginLogin.invoke(engine, true);
-        File pendingC = engine.processHomeForTest();
-        writeNamedAuth(new File(pendingC, "auth.json"), "c@example.test", "token-c-0");
-        notification.invoke(engine, "account/login/completed", obj("success", true));
-        String c = profiles.activeKey(); assertNotEquals(b, c);
-        assertFalse("third login must create a profile", c.isBlank());
-
-        engine.setTestAccountValidation(true);
-        for (String key : new String[]{a, b, c, a, b}) {
-            Method switchAccount = Engine.class.getDeclaredMethod("switchAccount", String.class); switchAccount.setAccessible(true);
-            switchAccount.invoke(engine, key);
-            assertEquals(key, profiles.activeKey());
-            assertTrue(auth.isFile());
-        }
-        engine.io.shutdownNow(); deleteTree(new File(context.getFilesDir(), "account-profiles")); Files.deleteIfExists(auth.toPath());
-    }
-    @Test public void sessionsAreSharedAcrossProfilesAndAccountSwitchKeepsTheOpenConversation() throws Exception {
-        File auth = new File(new File(context.getFilesDir(), ".codex"), "auth.json"); auth.getParentFile().mkdirs();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "opaque-one")).toString().getBytes(StandardCharsets.UTF_8));
-        Engine engine = new Engine(context);
-        Method readAccount = Engine.class.getDeclaredMethod("readAccount"); readAccount.setAccessible(true);
-        engine.setTestTransport((method, params) -> obj("account", obj("type", "chatgpt", "email", "one@example.test", "planType", "plus")));
-        readAccount.invoke(engine);
-        AccountProfiles profiles = (AccountProfiles) field(engine, "accountProfiles"); String first = profiles.activeKey();
-        Files.write(auth.toPath(), obj("tokens", obj("access_token", "opaque-two")).toString().getBytes(StandardCharsets.UTF_8));
-        engine.setTestTransport((method, params) -> obj("account", obj("type", "chatgpt", "email", "two@example.test", "planType", "pro")));
-        readAccount.invoke(engine); String second = profiles.activeKey(); assertNotEquals(first, second);
-        profiles.switchTo(first);
-
-        setField(engine, "sessions", array(obj("id", "shared-thread", "title", "Shared", "workspace", "", "workspaceKey", "",
-            "accountProfileKey", first, "messages", array(obj("id", "m1", "role", "user", "text", "keep me")),
-            "imageHistoryVersion", 1, "phoneToolsVersion", 1)));
-        JSONObject before = handle(engine, "chat.resume", obj("id", "shared-thread"));
-        assertEquals("shared-thread", before.getString("threadId"));
-        assertEquals(1, before.getJSONArray("sessions").length());
-
-        java.util.ArrayList<String> calls = new java.util.ArrayList<>();
-        engine.setTestTransport((method, params) -> {
-            calls.add(method);
-            if (method.equals("account/read")) return obj("account", obj("type", "chatgpt", "email", "two@example.test", "planType", "pro"));
-            if (method.equals("account/rateLimits/read")) return obj("rateLimits", new JSONObject());
-            if (method.equals("thread/resume")) return new JSONObject();
-            throw new AssertionError(method);
-        });
-        engine.setTestAccountValidation(true); setField(engine, "account", obj("type", "chatgpt", "email", "one@example.test"));
-        Method switchAccount = Engine.class.getDeclaredMethod("switchAccount", String.class); switchAccount.setAccessible(true);
-        switchAccount.invoke(engine, second);
-
-        JSONObject after = handle(engine, "state", new JSONObject());
-        assertEquals(second, profiles.activeKey());
-        assertEquals("shared-thread", after.getString("threadId"));
-        assertEquals("keep me", after.getJSONArray("messages").getJSONObject(0).getString("text"));
-        assertEquals(1, after.getJSONArray("sessions").length());
-        assertTrue(calls.contains("thread/resume"));
-        engine.io.shutdownNow(); deleteTree(new File(context.getFilesDir(), "account-profiles")); Files.deleteIfExists(auth.toPath());
     }
     @Test public void legacySessionOwnershipIsRemovedAndNeverHidesConversations() throws Exception {
         JSONArray initial = array(
@@ -297,24 +95,10 @@ public class EngineOfflineSessionTest {
     }
     private static Object field(Engine engine, String name) throws Exception { java.lang.reflect.Field value = Engine.class.getDeclaredField(name); value.setAccessible(true); return value.get(engine); }
     private static void setField(Engine engine, String name, Object value) throws Exception { java.lang.reflect.Field field = Engine.class.getDeclaredField(name); field.setAccessible(true); field.set(engine, value); }
-    private static JSONObject accountFor(String name) { return obj("type", "chatgpt", "email", name + "@example.test", "planType", "plus"); }
-    private static void writeNamedAuth(File file, String email, String token) throws Exception {
-        File parent = file.getParentFile(); if (parent != null) parent.mkdirs();
-        JSONObject claims = obj("email", email, "sub", "subject-" + email,
-            "https://api.openai.com/auth", obj("chatgpt_account_id", "account-" + email,
-                "chatgpt_plan_type", "plus"));
-        String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(claims.toString().getBytes(StandardCharsets.UTF_8));
-        JSONObject auth = obj("tokens", obj("id_token", "x." + payload + ".id-signature",
-            "access_token", "x." + payload + "." + token, "account_id", "account-" + email));
-        Files.write(file.toPath(), auth.toString().getBytes(StandardCharsets.UTF_8));
-    }
     private JSONObject handle(Engine engine, String action, JSONObject args) throws Exception {
         CompletableFuture<JSONObject> done = new CompletableFuture<>();
         engine.handle(action, args, (value, error) -> { if (error != null) done.completeExceptionally(error); else done.complete(value); });
         return done.get(5, TimeUnit.SECONDS);
-    }
-    private void loggedIn(Engine engine) throws Exception {
-        java.lang.reflect.Field account = Engine.class.getDeclaredField("account"); account.setAccessible(true); account.set(engine, obj("type", "chatgpt"));
     }
     private byte[] png() {
         android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(3, 2, android.graphics.Bitmap.Config.ARGB_8888);
@@ -395,7 +179,7 @@ public class EngineOfflineSessionTest {
         engine.io.shutdownNow();
     }
     @Test public void attachmentOnlyTurnUsesProtocolInputsAndFailedTurnDoesNotCreateLocalThread() throws Exception {
-        Engine engine = new Engine(context); loggedIn(engine);
+        Engine engine = new Engine(context);
         JSONObject image = engine.attachments.store(new java.io.ByteArrayInputStream(png()), "picture.png", "image/png");
         JSONObject text = engine.attachments.store(new java.io.ByteArrayInputStream("notes".getBytes(StandardCharsets.UTF_8)), "notes.txt", "text/plain");
         java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
@@ -420,7 +204,7 @@ public class EngineOfflineSessionTest {
         assertEquals("Calendar", accepted.getJSONArray("messages").getJSONObject(0).getJSONArray("mentions").getJSONObject(0).getString("name"));
         engine.io.shutdownNow();
 
-        Engine reopened = new Engine(context); loggedIn(reopened);
+        Engine reopened = new Engine(context);
         java.util.ArrayList<JSONObject> resumedCalls = new java.util.ArrayList<>();
         reopened.setTestTransport((method, params) -> {
             resumedCalls.add(obj("method", method, "params", new JSONObject(params.toString())));
@@ -435,7 +219,7 @@ public class EngineOfflineSessionTest {
         assertEquals(context.getFilesDir().toPath().resolve("workspace").toString(), resume.getString("cwd"));
         reopened.io.shutdownNow();
 
-        Engine failed = new Engine(context); loggedIn(failed);
+        Engine failed = new Engine(context);
         failed.setTestTransport((method, params) -> {
             if (method.equals("thread/start")) return obj("thread", obj("id", "orphaned-server-thread"));
             if (method.equals("turn/start")) throw new java.io.IOException("network failed");
@@ -453,24 +237,17 @@ public class EngineOfflineSessionTest {
         engine.setTestTransport((method, params) -> { throw new AssertionError("Retired Pro reached " + method); });
         JSONObject before = handle(engine, "state", obj());
         try {
-            handle(engine, "chat.pro.prepare", obj("text", "review this", "model", ProContextBuilder.MODEL_ID));
+            handle(engine, "chat.pro.prepare", obj("text", "review this", "model", "gpt-6-pro"));
             fail("Removed feature must reject");
-        } catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("제거된 기능")); }
+        } catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("已从 API 专用版本移除")); }
         JSONObject after = handle(engine, "state", obj());
         assertEquals(before.getJSONArray("sessions").toString(), after.getJSONArray("sessions").toString());
         assertEquals(before.getJSONArray("messages").toString(), after.getJSONArray("messages").toString());
-        assertFalse(after.getBoolean("proBusy"));
-        engine.io.shutdownNow();
-    }
-    @Test public void syntheticProModelIsRejectedByOrdinaryCodexSend() throws Exception {
-        Engine engine = new Engine(context); loggedIn(engine);
-        engine.setTestTransport((method, params) -> { throw new AssertionError("synthetic model reached " + method); });
-        try { handle(engine, "chat.send", obj("text", "wrong route", "model", ProContextBuilder.MODEL_ID)); fail("must reject"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("전용 전송 경로")); }
+        assertFalse(after.has("proBusy"));
         engine.io.shutdownNow();
     }
     @Test public void exactRequestedModelIsVisibleInThreadInstructionsAndUpdatesOnChange() throws Exception {
-        Engine engine = new Engine(context); loggedIn(engine);
+        Engine engine = new Engine(context);
         java.lang.reflect.Field models = Engine.class.getDeclaredField("models"); models.setAccessible(true);
         models.set(engine, array(obj("model", "gpt-5.6-sol", "isDefault", true), obj("model", "gpt-6-astra")));
         java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
@@ -494,7 +271,7 @@ public class EngineOfflineSessionTest {
         engine.io.shutdownNow();
     }
     @Test public void iconPreferenceChangesInstructionsForTheNextTurnInTheSameThread() throws Exception {
-        Engine engine = new Engine(context); loggedIn(engine);
+        Engine engine = new Engine(context);
         java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
         engine.setTestTransport((method, params) -> {
             calls.add(obj("method", method, "params", new JSONObject(params.toString())));
@@ -579,7 +356,7 @@ public class EngineOfflineSessionTest {
         handle(engine, "chat.resume", obj("id", "s1"));
         assertEquals("s1", handle(engine, "state", new JSONObject()).getString("threadId"));
         JSONObject deleted = handle(engine, "chat.delete", obj("id", "s1"));
-        assertTrue(deleted.getBoolean("deletionPending"));
+        assertFalse(deleted.getBoolean("deletionPending"));
         assertEquals(1, deleted.getJSONArray("sessions").length());
         assertEquals("s2", deleted.getJSONArray("sessions").getJSONObject(0).getString("id"));
         assertEquals("", deleted.getString("threadId"));
@@ -619,6 +396,7 @@ public class EngineOfflineSessionTest {
         JSONArray initial = array(obj("id", "s1", "title", "Delete me", "workspace", "", "workspaceKey", "", "messages", new JSONArray()));
         dev.mobilecodex.app.core.Utf8Files.write(new File(context.getFilesDir(), "sessions.json").toPath(), initial.toString());
         Engine offline = new Engine(context);
+        offline.setTestTransport((method, params) -> { throw new AssertionError("An offline delete must not send an RPC"); });
         JSONObject queued = handle(offline, "chat.delete", obj("id", "s1"));
         assertTrue(queued.getBoolean("deletionPending"));
         assertEquals(0, queued.getJSONArray("sessions").length());
@@ -749,7 +527,7 @@ public class EngineOfflineSessionTest {
         legacy.io.shutdownNow();
     }
     @Test public void fastModeUsesCatalogTierAndPersistsOnlyWhenSupplied() throws Exception {
-        Engine engine = new Engine(context); loggedIn(engine);
+        Engine engine = new Engine(context);
         setField(engine, "models", array(obj("id", "test-model", "model", "test-model", "serviceTiers", array(
             obj("id", "priority", "name", "Fast", "description", "faster")))));
         java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
@@ -769,7 +547,7 @@ public class EngineOfflineSessionTest {
         engine.io.shutdownNow();
     }
     @Test public void fastModeOffAndOmittedRespectTurnTierContractAndUnsupportedFailsBeforeRpc() throws Exception {
-        Engine off = new Engine(context); loggedIn(off);
+        Engine off = new Engine(context);
         setField(off, "models", array(obj("id", "test-model", "model", "test-model", "serviceTiers", array(obj("id", "fast", "name", "Fast", "description", "faster")))));
         java.util.ArrayList<JSONObject> offCalls = new java.util.ArrayList<>();
         off.setTestTransport((method, params) -> {
@@ -784,7 +562,7 @@ public class EngineOfflineSessionTest {
         off.io.shutdownNow();
 
         before();
-        Engine legacy = new Engine(context); loggedIn(legacy); setField(legacy, "models", array(obj("id", "test-model", "model", "test-model")));
+        Engine legacy = new Engine(context); setField(legacy, "models", array(obj("id", "test-model", "model", "test-model")));
         java.util.ArrayList<JSONObject> legacyCalls = new java.util.ArrayList<>();
         legacy.setTestTransport((method, params) -> {
             legacyCalls.add(obj("method", method, "params", new JSONObject(params.toString())));
@@ -798,7 +576,7 @@ public class EngineOfflineSessionTest {
         legacy.io.shutdownNow();
 
         before();
-        Engine unsupported = new Engine(context); loggedIn(unsupported); setField(unsupported, "models", array(obj("id", "test-model", "model", "test-model")));
+        Engine unsupported = new Engine(context); setField(unsupported, "models", array(obj("id", "test-model", "model", "test-model")));
         unsupported.setTestTransport((method, params) -> { throw new AssertionError("Fast rejection must happen before an RPC: " + method); });
         try { handle(unsupported, "chat.send", obj("text", "no fast", "model", "test-model", "fastMode", true)); fail("unsupported Fast must fail"); }
         catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("Fast")); }

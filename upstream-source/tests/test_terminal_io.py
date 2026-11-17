@@ -106,7 +106,12 @@ class TerminalBackpressureTests(unittest.TestCase):
             try: process.wait(timeout=4)
             except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=2)
         for stream in (process.stdin, process.stdout, process.stderr):
-            if stream: stream.close()
+            if stream:
+                try:
+                    stream.close()
+                except BrokenPipeError:
+                    # A killed child cannot drain buffered stdin during close.
+                    pass
 
     def alive(self, pid):
         try:

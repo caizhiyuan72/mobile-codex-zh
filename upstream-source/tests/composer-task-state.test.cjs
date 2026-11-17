@@ -35,7 +35,7 @@ function setup(task = {}) {
       }));
     }
   };
-  for (const file of ['translations.js', 'locale.js', 'ui-core.js', 'app.js']) w.eval(fs.readFileSync(path.join(webRoot, file), 'utf8'));
+  for (const file of ['translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(path.join(webRoot, file), 'utf8'));
   return {w, calls, snapshot};
 }
 
@@ -46,8 +46,8 @@ function assertStopReachable(w) {
   assert.equal(stop.disabled, false, 'Stop stays actionable');
 }
 
-test('Codex and Pro tasks expose Stop on initial restore without input focus', async () => {
-  for (const task of [{busy:true}, {proBusy:true}]) {
+test('Codex tasks expose Stop on initial restore without input focus', async () => {
+  for (const task of [{busy:true}]) {
     const {w} = setup(task); await tick();
     assert.equal(w.document.activeElement, w.document.body);
     assertStopReachable(w);
@@ -55,7 +55,7 @@ test('Codex and Pro tasks expose Stop on initial restore without input focus', a
 });
 
 test('reading a message after leaving the composer keeps Stop visible and routes cancellation', async () => {
-  for (const [task, action] of [[{busy:true}, 'chat.stop'], [{proBusy:true}, 'chat.stop']]) {
+  for (const [task, action] of [[{busy:true}, 'chat.stop']]) {
     const {w, calls} = setup(task); await tick();
     w.document.getElementById('prompt').focus();
     w.document.querySelector('.msg-copy-btn').focus();
@@ -66,16 +66,16 @@ test('reading a message after leaving the composer keeps Stop visible and routes
   }
 });
 
-test('task transitions use the newest restored conversation state and return idle input to compact', async () => {
+test('task transitions use the newest restored conversation state and keep the idle toolbar stable', async () => {
   const {w, snapshot} = setup({busy:true}); await tick();
   w.document.querySelector('.msg-copy-btn').focus();
   await tick();
   w.mobileCodexEvent('state', {...snapshot,busy:false,threadId:'idle'});
   assert.equal(w.document.getElementById('stop').hidden, true);
-  assert.equal(w.document.getElementById('composer').classList.contains('composer-expanded'), false);
-  w.mobileCodexEvent('state', {...snapshot,busy:false,proBusy:true,threadId:'pro-task'});
+  assert.equal(w.document.getElementById('composer').classList.contains('composer-expanded'), true);
+  w.mobileCodexEvent('state', {...snapshot,busy:true,threadId:'next-task'});
   assertStopReachable(w);
   w.mobileCodexEvent('state', {...snapshot,busy:false,proBusy:false,threadId:'done'});
   assert.equal(w.document.getElementById('stop').hidden, true);
-  assert.equal(w.document.getElementById('composer').classList.contains('composer-expanded'), false);
+  assert.equal(w.document.getElementById('composer').classList.contains('composer-expanded'), true);
 });

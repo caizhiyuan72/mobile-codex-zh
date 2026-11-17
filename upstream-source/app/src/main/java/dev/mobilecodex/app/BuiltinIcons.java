@@ -7,7 +7,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/** Stable logical PNG URLs backed by verified lossless WebP deployment assets. */
+/** Stable logical PNG URLs backed by verified WebP deployment assets. */
 final class BuiltinIcons {
     private static volatile Map<String,String> entries;
     static Map<String,String> files(AssetManager assets) throws IOException {
@@ -22,7 +22,7 @@ final class BuiltinIcons {
                 Map<String,String> mapping = new HashMap<>();
                 for (Iterator<String> names = icons.keys(); names.hasNext();) {
                     String name = names.next(), asset = icons.getJSONObject(name).getString("asset");
-                    if (!ChatIconStore.imageName(name) || !asset.equals(name.replace(".png", ".webp"))) throw new IOException("Invalid bundled icon mapping");
+                    if (!name.matches("[0-9]{2}-[a-z]+(?:-[a-z]+)*\\.png") || !asset.equals(name.replace(".png", ".webp"))) throw new IOException("Invalid bundled icon mapping");
                     mapping.put(name, asset);
                 }
                 if (mapping.size() != 32) throw new IOException("Incomplete bundled icon pack");

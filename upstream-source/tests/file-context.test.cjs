@@ -24,7 +24,7 @@ function setup(overrides = {}) {
       } catch (error) { w.mobileCodexEvent('response', {id:message.id, error:error.message}); }
     });
   }};
-  for (const name of ['translations.js', 'locale.js', 'ui-core.js', 'app.js']) w.eval(fs.readFileSync(root + name, 'utf8'));
+  for (const name of ['translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(root + name, 'utf8'));
   return {w, d:w.document, calls, snapshot, switchTo(key, extra = {}) { w.mobileCodexEvent('state', {...snapshot, workspace:{selected:true, key, name:'Project ' + key, available:true}, cwd:'/' + key, threadId:key + '-thread', ...extra}); }};
 }
 async function showFile(ui, path = 'test.md') {

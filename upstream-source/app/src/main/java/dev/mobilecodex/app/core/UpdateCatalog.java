@@ -10,7 +10,7 @@ import static dev.mobilecodex.app.core.Json.*;
 
 /** Public GitHub release metadata. Downloaded APK identity is independently checked before installation. */
 public final class UpdateCatalog {
-    private static final Pattern VERSION = Pattern.compile("^(\\d{1,9})\\.(\\d{1,9})\\.(\\d{1,9})(?:-(alpha|beta|rc)(?:[.-]?(\\d{1,9}))?)?(?:\\+[A-Za-z0-9.-]+)?$");
+    private static final Pattern VERSION = Pattern.compile("^(\\d{1,9})\\.(\\d{1,9})\\.(\\d{1,9})(?:-(alpha|beta|rc|cn)(?:[.-]?(\\d{1,9}))?)?(?:\\+[A-Za-z0-9.-]+)?$");
     private static final Pattern APK = Pattern.compile("^mobile-codex-(.+)-arm64\\.apk$");
     public static String repository(String value) throws IOException {
         String repo = value.trim();
@@ -20,7 +20,9 @@ public final class UpdateCatalog {
     private static long[] version(String value) throws IOException {
         Matcher m = VERSION.matcher(value);
         if (!m.matches()) throw new IOException(t("지원하지 않는 버전 형식입니다: ") + value);
-        int rank = m.group(4) == null ? 3 : List.of("alpha", "beta", "rc").indexOf(m.group(4));
+        // cn.N identifies a stable fork revision after the upstream base release.
+        if ("cn".equals(m.group(4)) && m.group(5) == null) throw new IOException(t("지원하지 않는 버전 형식입니다: ") + value);
+        int rank = m.group(4) == null ? 3 : "cn".equals(m.group(4)) ? 4 : List.of("alpha", "beta", "rc").indexOf(m.group(4));
         return new long[]{Long.parseLong(m.group(1)), Long.parseLong(m.group(2)), Long.parseLong(m.group(3)), rank, m.group(5) == null ? 0 : Long.parseLong(m.group(5))};
     }
     public static int compare(String left, String right) throws IOException {

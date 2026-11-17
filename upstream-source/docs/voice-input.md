@@ -1,38 +1,13 @@
-# Voice input
+# 语音输入 · API 版
 
-## Codex Live
+本版已移除 Codex Live 实时语音对话、WebRTC、音色选择、通话后台服务和相应通知。没有为第三方 API 模拟实时语音能力。
 
-The Live button next to dictation opens a voice conversation in the current Codex chat. The central orb follows actual input and output audio levels. Microphone mute, text input, voice/language settings, and end-call controls are available. A call started while the app is visible continues when switching apps or locking the screen. The Codex Live notification opens the call or ends voice without interrupting an existing Codex task. On Android 12 and later it uses the system ongoing-call notification with elapsed time. Losing audio focus, changing chats, or removing the task ends capture; returning never restarts an ended call automatically. Activity recreation retains the current native call.
+保留的“系统听写”位于输入框“+”菜单。它使用 Android `SpeechRecognizer` 将语音转成草稿文字，与模型 API 协议无关。点击完成后等待最终识别结果；取消会丢弃本次结果。文字不会自动发送。
 
-`LiveAudioService` owns the native WebRTC peer, microphone capture, speaker playback, engine signaling, connection timeout, and PCM playback watchdog. It holds microphone/media-playback foreground service eligibility, communication audio mode, audio focus, and a partial wake lock only for the current call. Wired and Bluetooth communication devices take precedence over the built-in speaker. Bluetooth access is optional. WebView only displays captions and audio levels and sends controls; it does not capture, decode, or play audio. A stalled playback callback triggers at most two local playback restarts before an explicit error; silence alone does not trigger recovery. Capture is never started from the background. Pending task approvals retain their existing flow. Device battery management or process termination can end a call.
+首次使用仍需 Android 麦克风权限。切到后台或锁屏会结束当前识别，回到界面不会自动恢复录音。识别服务可能联网，准确率、支持语言和离线能力取决于设备上的系统服务。界面语言用于请求相应识别语言。
 
-The app uses the bundled Codex app-server's experimental v3 WebRTC protocol and existing account. Audio is carried by WebRTC; native signaling and delegated work use the existing engine, task model, permissions, and approval handling. There is no API-key fallback or alternate model. Unsupported account access and connection errors remain visible.
+浮动聊天使用 Android 独立识别界面。两种入口都沿用已有的结果回执：结果属于原对话和项目；保留识别期间用户编辑过的草稿；进程恢复不会重复追加识别文字。识别期间仍暂停新的手机自动化动作。
 
-Voices come from `thread/realtime/listVoices`: use its `v3` catalog when present, otherwise retain the older runtime's `v1` catalog. The app does not add names missing from the engine's response. The bundled runtime includes the expanded [voice catalog patch](../tools/runtime-patches/README.md). Confirmed Korean, American English, and German voices are grouped; unclassified voices remain under Other. Korean voice names are shown as 한울 and 햇살. This runtime does not expose a language catalog: Auto, Korean, and English select conversation instructions. Changing voice or language starts a fresh voice connection in the same Codex thread. Canonical transcript segments are stored once in the existing chat history, including final segments arriving after stop.
+JavaScript 交互检查覆盖状态、取消、草稿与回执恢复。麦克风权限、实际识别、输入法、旋转、网络中断和浮动聊天返回仍需真机验证。
 
-For work requests, use speech or the normal chat composer. In device testing, text entered inside Live produced spoken acknowledgements without starting the requested Codex task; spoken requests successfully delegated work. Project-file reads and writes through spoken instructions were also confirmed by the user.
-
-`node tools/verify_live_browser.cjs` exercises the native bridge contract at 320/390/1280px with WebView audio APIs disabled. It checks connection state, settings/reconnection, mute, text, denied/cancelled permissions, and cleanup. Audio transport itself is covered by Android/device checks; browser fixtures are not evidence of native or OpenAI audio.
-
-Device acceptance: install the test APK over the existing app with the original signing certificate; retain login and history. Verify login remains, Live connects, both speakers are audible, the orb follows both audio levels, Korean speech, mute, text, voice changes, interruption, delegated work/approval, and persisted transcripts after restart. During a call, switch to another app and then lock the screen; verify speech and spoken work results continue in both states. Return and confirm the same call and transcript remain. End using the notification and verify the microphone indicator, Live notification, and wake lock are released while an existing Codex task continues. Also check focus loss, task removal, network failure, and immediate cancellation during startup. Check Android logs for each failure. Do not publish until physical-device testing and user acceptance are complete.
-
-## Dictation
-
-In the main chat, the microphone starts **inline dictation**. The composer displays microphone permission/preparation, listening, and transcription states. It shows actual microphone level and interim text when supplied by the device service. Choose **Done** to stop recording and wait for final transcription, or **Cancel** to discard it. Final text goes into the draft and is never sent automatically.
-
-The first use requests Android microphone permission. Backgrounding/locking the main activity cancels an active recording; returning does not automatically restart it. A permission dialog is allowed to complete without being treated as a recording interruption. Provider silence detection may finish recognition before Done is pressed. Startup and final-result waits have timeouts; the app does not impose its own listening-duration limit. Late results after cancellation cannot be inserted into a new session.
-
-Floating chat currently retains Android’s separate recognition screen. Both paths use the same durable result receipts:
-
-- If the draft is unchanged, insert at the original cursor or replace the selected range. If it changed, preserve the edit and append the recognized text.
-- Results belong to the original conversation/project even if the user switches chats.
-- Persist the native receipt before acknowledging it. A recovered receipt must not append twice after process recreation.
-- Recognition blocks new phone automation actions. Cancelling or an error keeps the original draft intact.
-
-Recognition uses Android `SpeechRecognizer` in the main composer and `ACTION_RECOGNIZE_SPEECH` for floating chat. This is not the ChatGPT app’s speech backend. The selected app language is requested for inline recognition; System uses the device locale. The service may send audio to its servers and may require internet access. Accuracy, supported languages, silence handling, and offline availability depend on that provider. Mobile Codex does not save an audio file or send audio to a developer-operated server. Dictation is separate from Codex Live.
-
-## Verification
-
-Automated checks cover language requests, result parsing, recording states, cancellation/late callbacks, scope-bound receipt recovery, preserving edits, and preventing automatic sends. Physical-device checks remain necessary for microphone permissions, Korean/English recognition, Samsung speech services, silence detection, network loss, rotation, screen lock, and floating chat return behavior.
-
-References: [SpeechRecognizer](https://developer.android.com/reference/android/speech/SpeechRecognizer) · [RecognizerIntent](https://developer.android.com/reference/android/speech/RecognizerIntent).
+参考：[SpeechRecognizer](https://developer.android.com/reference/android/speech/SpeechRecognizer) · [RecognizerIntent](https://developer.android.com/reference/android/speech/RecognizerIntent)。

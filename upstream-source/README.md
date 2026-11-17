@@ -1,3 +1,5 @@
+> 本目录已包含 Codex CN API 版修改。原上游说明保留供追溯；当前功能、构建入口与验证状态请先阅读 [仓库首页](../README.md) 和 [优化记录](../docs/API_OPTIMIZATION.md)。
+
 # Mobile Codex
 
 ## Before installing

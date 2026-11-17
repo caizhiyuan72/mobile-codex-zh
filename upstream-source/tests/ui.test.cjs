@@ -20,7 +20,7 @@ function setup(overrides = {}, options = {}) {
   w.HTMLDialogElement.prototype.showModal = function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close = function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   w.confirm = options.confirm || (() => true);
-  const snapshot = {ready:true,busy:false,permissions:'workspace-write',models:[{id:'fixture-model',displayName:'Fixture model',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high'}],messages:[],sessions:[],account:{type:'chatgpt',email:'me@example.test'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'};
+  const snapshot = {ready:true,busy:false,permissions:'workspace-write',models:[{id:'fixture-model',displayName:'Fixture model',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high'}],messages:[],sessions:[],account:{},apiActive:'fixture-api',apiProviders:[{id:'fixture-api',hasKey:true}],workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'};
   w.Native = {postMessage(raw){ const m=JSON.parse(raw); calls.push(m); queueMicrotask(async () => {
     if(m.action==='rpc.respond') responses.push(m.args);
     try {
@@ -31,27 +31,10 @@ function setup(overrides = {}, options = {}) {
   });}};
   w.Native.locale = () => JSON.stringify({choice:options.language || 'ko',systemLanguage:options.systemLanguage || 'ko'});
   w.Native.textSize = () => JSON.stringify({percent:options.textSize ?? 100});
-  w.eval(fs.readFileSync(root+'translations.js','utf8')); w.eval(fs.readFileSync(root+'locale.js','utf8'));
-  w.eval(fs.readFileSync(root+'ui-core.js','utf8')); w.eval(fs.readFileSync(root+'app.js','utf8'));
+  w.eval(fs.readFileSync(root+'translations.js','utf8')); w.eval(fs.readFileSync(root+'translations-zh.js','utf8')); w.eval(fs.readFileSync(root+'locale.js','utf8'));
+  w.eval(fs.readFileSync(root+'ui-core.js','utf8')); w.eval(fs.readFileSync(root+'reasoning-policy.js','utf8')); w.eval(fs.readFileSync(root+'app.js','utf8'));
   return {w,calls,responses,snapshot,frames};
 }
-test('a Codex widget opens usage settings and keeps the existing chat draft',async()=>{
- const {w,calls}=setup();await tick();
- w.document.getElementById('prompt').value='unsent draft';calls.length=0;
- w.mobileCodexEvent('widget.open',{provider:'codex'});await tick();
- assert.equal(w.document.getElementById('settings-dialog').open,true);
- assert.equal(w.document.getElementById('prompt').value,'unsent draft');
- assert.ok(calls.some(c=>c.action==='rpc'&&c.args.method==='account/rateLimits/read'));
- assert.equal(calls.some(c=>c.action==='chat.resume'||c.action==='chat.new'),false);
-});
-test('an invited-provider widget opens account settings without fetching Codex quota',async()=>{
- for(const provider of ['claude','agy']) {
-  const {w,calls}=setup();await tick();calls.length=0;
-  w.mobileCodexEvent('widget.open',{provider});await tick();
-  assert.equal(w.document.getElementById('settings-dialog').open,true);
-  assert.equal(calls.some(c=>c.action==='auth.refresh'||c.action==='rpc'),false);
- }
-});
 test('text size restores natively, saves explicitly and preserves the conversation and draft',async()=>{
  let saved=130;
  const {w,calls,snapshot}=setup({'ui.textSize':m=>({percent:saved=m.args.percent})},{textSize:saved});await tick();
@@ -87,38 +70,6 @@ test('text size rolls back failed saves and rejects an invalid native value',asy
  assert.equal(select.value,'130');assert.equal(select.disabled,false);assert.equal(w.document.documentElement.dataset.textSize,'130');
  assert.match(w.document.getElementById('toast').textContent,/storage failed/);
  const invalid=setup({}, {textSize:999});await tick();assert.equal(invalid.w.document.getElementById('text-size').value,'100');
-});
-test('Fast is an explicit per-draft lightning toggle next to the model picker',async()=>{
- const {w,calls,snapshot}=setup();await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel]});
- const toggle=d.getElementById('fast-mode');
- assert.equal(toggle.previousElementSibling,d.getElementById('composer-options'));
- assert.equal(toggle.querySelector('use').getAttribute('href'),'#i-bolt');
- assert.equal(toggle.disabled,false);assert.equal(toggle.getAttribute('aria-pressed'),'false');
- toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- assert.equal(calls.some(c=>c.action==='chat.send'),false,'toggling never sends a paid request');
- d.getElementById('prompt').value='test';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(calls.find(c=>c.action==='chat.send').args.fastMode,true);
- toggle.click();await tick();d.getElementById('prompt').value='normal';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(calls.filter(c=>c.action==='chat.send').at(-1).args.fastMode,false);
- assert.equal(calls.some(c=>c.action==='config.write'||c.action==='permissions.set'),false);
-});
-test('Fast stays unavailable for unsupported models and sends only the selected Codex request',async()=>{
- const {w,calls,snapshot}=setup();await tick();const d=w.document,toggle=d.getElementById('fast-mode');
- assert.equal(toggle.disabled,true);
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel],busy:true});assert.equal(toggle.disabled,true);
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel]});assert.equal(toggle.disabled,false);
- assert.equal(toggle.disabled,false);toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- d.getElementById('prompt').value='Pro test';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- const sent=calls.find(c=>c.action==='chat.send');assert.equal(sent.args.fastMode,true);assert.equal(sent.args.consultPro,undefined);
- assert.equal(calls.some(c=>c.action==='chat.pro.send'),false);
-});
-test('Fast choices are isolated between conversation drafts',async()=>{
- const {w,snapshot}=setup();await tick();const toggle=w.document.getElementById('fast-mode');
- const first={...snapshot,models:[fastModel]};w.mobileCodexEvent('state',first);
- toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- w.mobileCodexEvent('state',{...first,threadId:'second',fastMode:false});assert.equal(toggle.getAttribute('aria-pressed'),'false');
- w.mobileCodexEvent('state',first);assert.equal(toggle.getAttribute('aria-pressed'),'true');
 });
 test('user bubbles show small dates only when a real timestamp exists',async()=>{
  const {w,snapshot}=setup();await tick();const now=Date.UTC(2026,8,29,12,34);
@@ -197,46 +148,6 @@ test('history preserves the live tail while a page is pending and errors retry o
  resolveHistory({threadId:'t',messages:historyMessages(21,60),messageHistory:historyMeta(21,100)});await tick();
  assert.equal(list.children.length,81);assert.equal(list.firstElementChild.dataset.id,'m21');assert.equal(list.lastElementChild.dataset.id,'m101');
  assert.equal(calls.filter(c=>c.action==='chat.history').length,2);assert.equal(w.document.getElementById('history-status').hidden,true);
-});
-test('cold startup keeps the normal screen while the account is restored silently',async()=>{
- let resolveState;
- const {w}=setup({state:()=>new Promise(resolve=>{resolveState=resolve;})});
- const d=w.document;
- assert.equal(d.getElementById('onboarding').hidden,true);
- assert.doesNotMatch(d.getElementById('quota-caption').textContent,/로그인/);
- await tick();
- resolveState({ready:false,account:{},authState:'unknown',accounts:[{active:true,email:'saved@example.test',planType:'Pro'}],messages:[],sessions:[],workspace:{},models:[]});
- await tick();
- assert.equal(d.getElementById('onboarding').hidden,true);
- assert.equal(d.getElementById('suggestions').hidden,false);
- assert.equal(d.getElementById('quota-percent').textContent,'saved@example.test');
- assert.equal(d.getElementById('prompt').disabled,false);
- assert.equal(d.querySelector('dialog[open]'),null);
-});
-test('account checks and temporary failures do not flash a login invitation',async()=>{
- const {w,snapshot}=setup();await tick();const d=w.document;
- for(const authState of ['unknown','checking','error']){
-   w.mobileCodexEvent('state',{...snapshot,ready:false,account:{},authState,authError:authState==='error'?'계정 정보를 불러오지 못했습니다. 다시 시도해 주세요.':''});
-   assert.equal(d.getElementById('onboarding').hidden,true);
-   assert.doesNotMatch(d.getElementById('quota-caption').textContent,/로그인/);
-   assert.equal(d.getElementById('toast').textContent,'');
- }
- w.mobileCodexEvent('state',{...snapshot,account:{},authState:'signed_out'});
- assert.equal(d.getElementById('onboarding').hidden,false);
- assert.match(d.getElementById('quota-caption').textContent,/로그인/);
- w.mobileCodexEvent('state',{...snapshot,authState:'signed_in'});
- assert.equal(d.getElementById('onboarding').hidden,true);
-});
-test('opening account settings retries an unconfirmed account without starting login',async()=>{
- let restored;
- const {w,calls,snapshot}=setup({'auth.refresh':()=>restored});await tick();
- restored={...snapshot,authState:'signed_in',rateLimits:{rateLimits:{primary:{usedPercent:12,windowDurationMins:300}}}};
- w.mobileCodexEvent('state',{...snapshot,account:{},authState:'error'});
- w.document.getElementById('account-button').click();await tick();await tick();
- assert.equal(calls.filter(c=>c.action==='auth.refresh').length,1);
- assert.equal(calls.some(c=>c.action==='auth.login'||c.action==='auth.add'),false);
- assert.equal(w.document.getElementById('login-dialog').open,false);
- assert.equal(w.document.getElementById('quota-percent').textContent,'88%');
 });
 test('login URLs reject non-OpenAI hosts and embedded credentials',()=>{
  assert.equal(C.safeLoginUrl('https://auth.openai.com/codex/device'),true);
@@ -317,32 +228,15 @@ test('submit is cancelled synchronously and calls native with chosen model and e
  assert.equal(e.defaultPrevented,true);await tick();
  assert.equal(calls.find(m=>m.action==='chat.send').args.text,'실제 파일 수정');
 });
-test('retired Pro transport is not started and legacy resources do not expose credentials',()=>{
+test('retired subscription and Live resources have no UI or transport entry',()=>{
  const main=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/MainActivity.java','utf8');
  const app=fs.readFileSync(root+'app.js','utf8');
- const web=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/ChatWebActivity.java','utf8');
- const transport=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/ProWebTransport.java','utf8');
- const adapter=fs.readFileSync('app/src/main/assets/pro-web-transport.js','utf8');
- assert.equal(fs.existsSync('app/src/main/java/dev/mobilecodex/app/ChatWebTransport.java'),false);
+ const html=fs.readFileSync(root+'index.html','utf8');
  assert.doesNotMatch(main,/new ProWebTransport/);
- assert.match(app,/consultPro/);assert.doesNotMatch(app,/chat\.pro\.send/);
- assert.doesNotMatch(app,/chat\.web\.|chat-web-messages|chat-web-draft/);
- assert.doesNotMatch(web,/addJavascriptInterface|backend-api\/f\/conversation/);
- assert.doesNotMatch(transport,/addJavascriptInterface|getCookie|accessToken|Authorization|backend-api/);
- assert.match(transport,/onPermissionRequest\(PermissionRequest request\)[\s\S]*?request\.deny\(\)/);
- assert.doesNotMatch(adapter,/document\.cookie|localStorage|sessionStorage|accessToken|Authorization|backend-api|window\.fetch\s*=/);
- for(const name of ['chat-web-custom.js','chat-icon-renderer.js']) {
-   const script=fs.readFileSync('app/src/main/assets/'+name,'utf8');
-   assert.doesNotMatch(script,/window\.fetch\s*=|XMLHttpRequest|backend-api\/f\/conversation/);
- }
-});
-test('ChatGPT Pro message metadata is visible and uncertain sends warn against retry',async()=>{
- const {w,snapshot}=setup();await tick();
- w.mobileCodexEvent('state',{...snapshot,messages:[
-  {id:'u',role:'user',text:'검토',backend:'chatgpt-web',source:'ChatGPT Pro',displayModel:'GPT-6-Pro',status:'uncertain'},
-  {id:'a',role:'assistant',text:'답변',backend:'chatgpt-web',source:'ChatGPT Pro',status:'completed'}
- ]});
- const text=w.document.getElementById('messages').textContent;assert.match(text,/GPT-6-Pro/);assert.match(text,/ChatGPT Pro/);assert.match(text,/다시 보내기 전에/);
+ assert.doesNotMatch(app,/chat\.pro\.send|auth\.(?:login|add|refresh|switch|logout)|account\/rateLimits/);
+ assert.doesNotMatch(html,/id="(?:login-dialog|live-dialog|account-button|usage-limits|live-start)"/);
+ for(const name of ['pro-web-transport.js','chat-web-custom.js','chat-icon-renderer.js','pro-consult-mcp.py']) assert.equal(fs.existsSync('app/src/main/assets/'+name),false);
+ for(const name of ['live.js','live.css','agents-ui.js','agents.css']) assert.equal(fs.existsSync(root+name),false);
 });
 test('sidebar sections collapse independently and restore their state',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
@@ -359,7 +253,7 @@ test('sidebar sections collapse independently and restore their state',async()=>
  assert.equal(d.querySelector('.topbar .sidebar-toggle use').getAttribute('href'),'#i-menu');
  assert.equal(d.querySelector('#files-toggle use').getAttribute('href'),'#i-panel');
  for(const id of ['new-chat','projects','sessions']) assert.ok(d.getElementById(id).closest('.sidebar-scroll'));
- for(const id of ['show-tools','settings','account-button']) assert.equal(d.getElementById(id).closest('.sidebar-bottom'),d.querySelector('.sidebar-bottom'));
+ for(const id of ['show-tools','settings']) assert.equal(d.getElementById(id).closest('.sidebar-bottom'),d.querySelector('.sidebar-bottom'));
  assert.equal(d.querySelector('.sidebar-bottom').parentElement,d.getElementById('sidebar'));
  assert.equal(d.querySelector('.sidebar-bottom').closest('.sidebar-scroll'),null);
  const restored=setup({}, {drafts:{'sidebar-section-sessions':'collapsed'}});await tick();
@@ -425,182 +319,6 @@ test('tool recovery action keeps protocol failures handled after menu relocation
  w.document.getElementById('show-tools').click();await tick();w.document.getElementById('show-recovery').click();await tick();await tick();
  assert.match(w.document.getElementById('toast').textContent,/recovery offline/);assert.equal(unhandled,0);
 });
-test('account usage reads the app-server snapshot and prefers multi-bucket limits',async()=>{
- const {w,calls}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?{rateLimits:{primary:{usedPercent:1}},rateLimitsByLimitId:{codex:{limitName:'Codex',primary:{usedPercent:42,windowDurationMins:300,resetsAt:2000000000}}}}:{data:[]}});await tick();
- w.document.querySelector('[data-settings-tab="account"]').click();await tick();await tick();
- assert.equal(calls.filter(c=>c.action==='rpc'&&c.args.method==='account/rateLimits/read').length,1);
- const text=w.document.getElementById('usage-limits').textContent;
- assert.match(text,/Codex/);assert.match(text,/남은 58%/);assert.match(text,/5시간/);
-});
-
-test('reset credits show available count and consume one after confirmation',async()=>{
- let reads=0, consumed=[];
- const {w,calls}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') { reads++; return {rateLimits:{primary:{usedPercent:40}},rateLimitResetCredits:{availableCount:2,credits:[resetCredit('late',2100000000),resetCredit('early',2000000000)]}}; }
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumed.push(m.args.params); return {outcome:'reset'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- const d=w.document; assert.match(d.getElementById('reset-credits').textContent,/2개 사용 가능/);
- const use=d.getElementById('reset-credit-use'); assert.ok(use); use.click(); for(let i=0;i<5;i++) await tick();
- assert.equal(consumed.length,1); assert.equal(consumed[0].creditId,'early'); assert.ok(consumed[0].idempotencyKey);
- assert.equal(reads,2); assert.match(d.getElementById('reset-credits').textContent,/사용 한도를 초기화했습니다/);
-});
-
-test('completed reset cannot spend another credit when the follow-up usage read fails',async()=>{
- let reads=0, consumed=0;
- const {w}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') { if(++reads>1) throw new Error('offline'); return {rateLimits:{},rateLimitResetCredits:{availableCount:2,credits:[resetCredit('first',2000000000),resetCredit('second',2100000000)]}}; }
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumed++; return {outcome:'alreadyRedeemed'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); for(let i=0;i<5;i++) await tick();
- assert.equal(consumed,1); assert.equal(reads,2);
- assert.equal(w.document.getElementById('reset-credit-use'),null);
- assert.match(w.document.getElementById('reset-credits').textContent,/사용 한도를 초기화했습니다/);
-});
-
-test('reset credits omit the action when count is unavailable or zero',async()=>{
- let count=0;
- const {w}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?{rateLimits:{},rateLimitResetCredits:count++?{availableCount:0}:{credits:null}}:{data:[]}}); await tick();
- w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/정보를 사용할 수 없습니다/); assert.equal(w.document.getElementById('reset-credit-use'),null);
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/사용 가능한 초기화권이 없습니다/); assert.equal(w.document.getElementById('reset-credit-use'),null);
-});
-
-test('reset credit retry reuses key, while account change drops stale response',async()=>{
- let rejectConsume, consumeCalls=0, attempts=[], reads=0;
- const {w,snapshot}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') return {rateLimits:{},rateLimitResetCredits:{availableCount:2,credits:++reads===1?[resetCredit('first',2000000000),resetCredit('second',2100000000)]:[resetCredit('first',2200000000),resetCredit('second',2100000000)]}};
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumeCalls++; attempts.push(m.args.params); return new Promise((resolve,reject)=>{rejectConsume=reject;}); }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- const use=w.document.getElementById('reset-credit-use'); use.click(); await tick();
- const first=w.document.querySelector('#reset-credit-use'); assert.equal(first.disabled,true); rejectConsume(new Error('offline')); for(let i=0;i<3;i++) await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/다시 시도/);
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); await tick(); assert.equal(consumeCalls,2); assert.equal(attempts[1].idempotencyKey,attempts[0].idempotencyKey); assert.equal(attempts[1].creditId,'first');
- const calls=w.document.querySelector('#reset-credits'); w.mobileCodexEvent('state',{...snapshot,account:{type:'chatgpt',email:'other@example.test'}}); await tick();
- assert.match(calls.textContent,/정보를 사용할 수 없습니다/); assert.doesNotMatch(calls.textContent,/사용 중/);
-});
-
-test('reset credit selection waits for complete expiry details and treats no expiry as last',async()=>{
- let snapshot={availableCount:2,credits:[resetCredit('never',null),resetCredit('soon',2000000000)]};
- const attempts=[];
- const {w}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') return {rateLimits:{},rateLimitResetCredits:snapshot};
-   if(m.args.method==='account/rateLimitResetCredit/consume') { attempts.push(m.args.params); return {outcome:'reset'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,false);
- assert.match(w.document.getElementById('reset-credits').textContent,/가장 먼저 만료/);
- snapshot={availableCount:2,credits:[resetCredit('soon',2000000000)]};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,true);
- assert.match(w.document.getElementById('reset-credits').textContent,/만료일 전체를 확인할 수 없어/);
- w.document.getElementById('reset-credit-use').click(); await tick(); assert.equal(attempts.length,0);
- snapshot={availableCount:2,credits:null};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,true);
- snapshot={availableCount:2,credits:[resetCredit('never',null),resetCredit('soon',2000000000)]};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); for(let i=0;i<5;i++) await tick();
- assert.equal(attempts[0].creditId,'soon');
-});
-
-test('usage never turns missing limits into zero and drops a response from a previous account',async()=>{
- let finish, delayed=false;
- const {w,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?(delayed?new Promise(r=>finish=r):{rateLimits:{primary:{usedPercent:null}}}):{data:[]}});await tick();
- w.document.getElementById('usage-refresh').click();await tick();await tick();
- assert.equal(w.document.getElementById('usage-limits').textContent,'');
- assert.match(w.document.getElementById('usage-status').textContent,/제공/);
- delayed=true;w.document.getElementById('usage-refresh').click();await tick();
- w.mobileCodexEvent('state',{...snapshot,account:{}});
- finish({rateLimits:{primary:{usedPercent:42}}});await tick();await tick();
- assert.equal(w.document.getElementById('usage-limits').textContent,'');
- assert.match(w.document.getElementById('usage-status').textContent,/계정이 바뀌/);
-});
-
-test('sidebar quota shows remaining percent and opens graphed account details',async()=>{
- const limits={rateLimits:{primary:{usedPercent:37,windowDurationMins:300,resetsAt:2000000000}}};
- const {w,snapshot}=setup({'rpc':message=>message.args.method==='account/rateLimits/read'?limits:{data:[]}});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits,accounts:[{key:'one',email:'me@example.test',planType:'pro',active:true}]});
- const d=w.document, ring=d.getElementById('quota-ring');
- assert.equal(d.getElementById('quota-percent').textContent,'63%');assert.equal(ring.style.getPropertyValue('--remaining'),'63');assert.match(ring.getAttribute('aria-label'),/63%/);
- d.getElementById('account-button').click();await tick();await tick();
- assert.equal(d.querySelector('[data-settings-panel="account"]').hidden,false);assert.match(d.getElementById('usage-limits').textContent,/남은 63%/);assert.equal(d.querySelectorAll('.usage-gauge .quota-ring').length,1);
-});
-
-test('quota captions use the API reset time while settings keep human window labels',async()=>{
- const now=new Date(), resetDate=new Date(now.getFullYear(),9,2,15,20,0), resetsAt=Math.floor(resetDate.getTime()/1000);
- const expected=resetDate.toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
- const limits={rateLimitsByLimitId:{codex:{limitName:'Codex',primary:{usedPercent:37,windowDurationMins:10080,resetsAt},secondary:{usedPercent:20,windowDurationMins:300,resetsAt}},other:{limitName:'Other',primary:{usedPercent:10,windowDurationMins:60,resetsAt}}}};
- const {w,calls,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?limits:{data:[]}});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits});const d=w.document;
- assert.equal(d.getElementById('quota-percent').textContent,'63%');
- assert.equal(d.getElementById('quota-caption').textContent,expected+' 초기화');
- assert.doesNotMatch(d.getElementById('quota-caption').textContent,/168시간|5시간/);
- assert.equal(calls.filter(call=>call.action==='rpc').length,0,'rendering quota never makes another request');
- d.getElementById('account-button').click();await tick();await tick();
- const text=d.getElementById('usage-limits').textContent;
- assert.match(text,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.match(text,/주간 한도/);assert.match(text,/5시간 한도/);assert.match(text,/사용 한도/);assert.doesNotMatch(text,/168시간|1시간/);
- assert.equal(calls.filter(call=>call.action==='rpc'&&call.args.method==='account/rateLimits/read').length,1);
-});
-
-test('quota never infers a reset time from a duration when resetsAt is invalid',async()=>{
- let current={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt:0}}};
- const {w,calls,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?current:{data:[]}});await tick();const d=w.document;
- for(const resetsAt of [0,null,NaN,8640000000001]) {
-   current={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt}}};
-   w.mobileCodexEvent('state',{...snapshot,rateLimits:current});
-   assert.equal(d.getElementById('quota-percent').textContent,'63%');
-   assert.equal(d.getElementById('quota-caption').textContent,'초기화 시각 확인 불가');
- }
- assert.equal(calls.filter(call=>call.action==='rpc').length,0);
- d.getElementById('account-button').click();await tick();await tick();
- assert.match(d.getElementById('usage-limits').textContent,/초기화 시각 확인 불가/);
- assert.doesNotMatch(d.getElementById('usage-limits').textContent,/168시간/);
- assert.equal(calls.filter(call=>call.action==='rpc'&&call.args.method==='account\/rateLimits\/read').length,1);
-});
-
-test('quota reset captions localize English without changing the percentage',async()=>{
- const resetDate=new Date(new Date().getFullYear(),9,2,15,20,0), resetsAt=Math.floor(resetDate.getTime()/1000);
- const limits={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt}}};
- const {w,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?limits:{data:[]}}, {language:'en'});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits});const d=w.document;
- assert.equal(d.getElementById('quota-percent').textContent,'63%');assert.match(d.getElementById('quota-caption').textContent,/^Resets /);
- d.getElementById('account-button').click();await tick();await tick();
- assert.match(d.getElementById('usage-limits').textContent,/Resets [\s\S]*Weekly limit/);
-});
-
-test('account profiles can add, switch and remove without exposing credentials',async()=>{
- const {w,calls,snapshot}=setup({
-   'auth.add':()=>({loginId:'new',verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD'}),
-   'auth.switch':()=>({}),'auth.remove':()=>({})
- });await tick();
- w.mobileCodexEvent('state',{...snapshot,accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false}],rateLimits:{}});
- const d=w.document;d.getElementById('account-button').click();await tick();
- assert.doesNotMatch(d.getElementById('accounts-list').textContent,/access_token|refresh_token/);
- [...d.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='전환').click();await tick();
- assert.deepEqual(calls.filter(call=>call.action==='auth.switch').at(-1).args,{key:'other'});
- [...d.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='삭제').click();await tick();
- assert.deepEqual(calls.filter(call=>call.action==='auth.remove').at(-1).args,{key:'other'});
- d.getElementById('account-add').click();await tick();assert.ok(calls.some(call=>call.action==='auth.add'));assert.equal(d.getElementById('device-code').textContent,'ABCD');
-});
-
-test('account switch failures remain visible inside the settings dialog',async()=>{
- const initial={ready:true,busy:false,permissions:'workspace-write',models:[],messages:[],sessions:[],account:{type:'chatgpt',email:'one@example.test'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨',accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false,needsLogin:false}],rateLimits:{}};
- const latest={...initial,accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false,needsLogin:true}]};
- const {w,calls}=setup({'auth.switch':()=>{throw new Error('target unavailable');},state:()=>latest});await tick();
- w.mobileCodexEvent('state',initial);w.document.getElementById('account-button').click();await tick();
- [...w.document.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='전환').click();await tick();await tick();
- assert.equal(calls.filter(call=>call.action==='auth.switch').length,1);
- assert.equal(w.document.getElementById('accounts-status').getAttribute('role'),'status');
- assert.match(w.document.getElementById('accounts-status').textContent,/계정 전환에 실패했습니다.*target unavailable/);
- assert.match(w.document.getElementById('accounts-list').textContent,/다시 로그인이 필요합니다/);
- assert.equal(w.document.getElementById('toast').hidden,true);
-});
-
 test('a different project cannot inherit the previous project tool cache after a failure',async()=>{
  let offline=false;
  const {w,snapshot}=setup({'rpc':m=>{if(offline)throw new Error('offline');return m.args.method==='skills/list'?{data:[{skills:[{name:'project-only-skill',description:'local',path:'/first/SKILL.md'}]}]}:{data:[],marketplaces:[]};}});await tick();
@@ -621,14 +339,16 @@ test('MCP forms collect typed answers without asking users to write JSON',async(
 });
 
 test('composer survives keyboard resize, grows with content and preserves input focus',async()=>{
- const {w}=setup();await tick();const d=w.document,prompt=d.getElementById('prompt');
+ const {w,frames}=setup({}, {manualFrames:true});await tick();
+ const flushFrame=()=>frames.splice(0).forEach(callback=>callback());flushFrame();
+ const d=w.document,prompt=d.getElementById('prompt');
  Object.defineProperty(prompt,'scrollHeight',{configurable:true,get:()=>300});
  prompt.value='긴 요청\n두 번째 줄';prompt.focus();prompt.dispatchEvent(new w.Event('input'));
- assert.equal(prompt.style.height,'160px');
- Object.defineProperty(w,'innerHeight',{value:320,configurable:true});w.dispatchEvent(new w.Event('resize'));await tick();
+ flushFrame();assert.equal(prompt.style.height,'100px');
+ Object.defineProperty(w,'innerHeight',{value:320,configurable:true});w.dispatchEvent(new w.Event('resize'));flushFrame();
  assert.equal(d.documentElement.style.getPropertyValue('--app-height'),'320px');
- assert.equal(prompt.style.height,'76.8px');assert.equal(d.activeElement,prompt);assert.equal(prompt.value,'긴 요청\n두 번째 줄');
- Object.defineProperty(w,'innerHeight',{value:800});w.dispatchEvent(new w.Event('resize'));
+ assert.equal(prompt.style.height,'86.4px');assert.equal(d.activeElement,prompt);assert.equal(prompt.value,'긴 요청\n두 번째 줄');
+ Object.defineProperty(w,'innerHeight',{value:800});w.dispatchEvent(new w.Event('resize'));flushFrame();
  assert.equal(d.documentElement.style.getPropertyValue('--app-height'),'800px');
 });
 test('drafts restore separately for each thread and remain after sending fails',async()=>{
@@ -711,13 +431,12 @@ test('model picker sends actual catalog values and reselecting the active model 
  assert.equal(d.getElementById('model-panel').inert,false);
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
  assert.equal(d.getElementById('model').value,'catalog-b');
- assert.equal(d.getElementById('effort').value,'ultra');
- assert.equal(d.getElementById('effort-heading').textContent,'Ultra');
+ assert.equal(d.getElementById('effort').value,'');
+ assert.equal(d.getElementById('effort-heading').textContent,'自动');
  assert.equal(d.getElementById('reasoning-panel').inert,false);
- const slider=d.getElementById('effort-slider');assert.equal(slider.max,'1');
- slider.value='0';slider.dispatchEvent(new w.Event('input'));slider.dispatchEvent(new w.Event('change'));await tick();
+ d.querySelector('.effort-preset-button[data-effort="medium"]').click();await tick();
  assert.equal(d.getElementById('effort').value,'medium');
- assert.equal(d.getElementById('effort-heading').textContent,'Medium');
+ assert.equal(d.getElementById('effort-heading').textContent,'中');
  assert.equal(d.getElementById('effort-summary').textContent,d.getElementById('effort-heading').textContent);
  d.getElementById('model-picker-model').click();await tick();
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
@@ -836,13 +555,13 @@ test('a removed project keeps its same-thread draft when the conversation become
  w.mobileCodexEvent('attachments.picked',{receiptId:'gone-attachment',draftKey:C.draftKey('gone','moved'),attachments:[{id:'keep',name:'keep.txt'}],errors:[]});await tick();
  p.value='@';p.setSelectionRange(1,1);p.click();await tick();d.querySelector('.autocomplete-item').click();await tick();
  p.value='$re';p.setSelectionRange(p.value.length,p.value.length);p.click();await tick();d.querySelector('.autocomplete-item').click();await tick();
- p.value='keep this draft';p.dispatchEvent(new w.Event('input'));d.getElementById('fast-mode').click();await tick();
+ p.value='keep this draft';p.dispatchEvent(new w.Event('input'));d.getElementById('effort').value='high';d.getElementById('effort').dispatchEvent(new w.Event('change'));await tick();
  const source='draft:'+C.draftKey('gone','moved'), target='draft:'+C.draftKey('','moved');
  w.mobileCodexEvent('state',{...project,workspace:{selected:false,key:'',projectId:'',name:'Codex',hasLocalFolder:true,available:true,defaultWorkspace:true},projects:[],sessions:[{id:'moved',title:'Moved chat'}]});await tick();
  assert.equal(p.value,'keep this draft');assert.equal(w.localStorage.getItem(source),'keep this draft');assert.equal(w.localStorage.getItem(target),'keep this draft');
  const oldContext=JSON.parse(w.localStorage.getItem(source+':context')), movedContext=JSON.parse(w.localStorage.getItem(target+':context'));
  assert.deepEqual(movedContext.attachments,[{id:'keep',name:'keep.txt'}]);assert.deepEqual(movedContext.skills,[{name:'review',path:'/skills/review'}]);assert.deepEqual(movedContext.mentions,[]);
- assert.deepEqual(oldContext.mentions,[{name:'old.md',path:'old.md'}]);assert.equal(JSON.parse(w.localStorage.getItem(target+':options')).fastMode,true);
+ assert.deepEqual(oldContext.mentions,[{name:'old.md',path:'old.md'}]);assert.equal(JSON.parse(w.localStorage.getItem(target+':options')).model, 'fast-model');
  assert.match(d.getElementById('toast').textContent,/원래 초안/);
 });
 
@@ -1025,6 +744,8 @@ test('live status uses local thinking and working icons without adding transcrip
 test('all character URLs resolve to bundled source bytes and cannot be arbitrary file paths',()=>{
  const dir=root+'chat-icons/',manifest=JSON.parse(fs.readFileSync(dir+'manifest.json','utf8')),hashes=JSON.parse(fs.readFileSync('tests/chat-icons-derived.sha256.json','utf8')),originals=JSON.parse(fs.readFileSync('tests/chat-icons.sha256.json','utf8'));
  const entries=Object.entries(manifest.icons);assert.equal(entries.length,32);assert.equal(fs.readdirSync(dir).filter(f=>f.endsWith('.png')).length,0);
+ assert.equal(manifest.format,'webp-thumbnail');assert.equal(manifest.transform.maxDimension,384);
+ let totalBytes=0;for(const entry of Object.values(manifest.icons)){assert.equal(entry.width,384);assert.equal(entry.height,384);totalBytes+=fs.statSync(dir+entry.asset).size;}assert.ok(totalBytes<2_000_000,'Bundled characters stay within the 2 MB budget');
  for(const [file,entry] of entries){const name=file.replace(/^\d+-/,'').replace(/\.png$/,'');assert.equal(C.chatIconUrl(name),'/chat-icons/'+file);assert.equal(entry.asset,file.replace(/\.png$/,'.webp'));assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync(dir+entry.asset)).digest('hex'),hashes[file]);assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync('icon-pack/gptchan/'+file)).digest('hex'),originals[file]);}
  for(const bad of ['../auth.json','https://example.test/icon.png','toString',''])assert.equal(C.chatIconUrl(bad),null);
 });
@@ -1214,7 +935,7 @@ test('general Codex workspace uses its default folder and orphan conversations f
  const {w,calls,snapshot}=setup({'projects.remove':()=>({...snapshot,workspace:{selected:false},projects:[]})});await tick();const d=w.document;
  const project={key:'kept',name:'Keep this project',selected:false,available:false,hasLocalFolder:true};
  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:false,key:'',projectId:'',name:'Codex',hasLocalFolder:true,available:true,defaultWorkspace:true},projects:[project],sessions:[{id:'old',title:'보존 대화',workspaceKey:'gone'}]});
- assert.equal(d.getElementById('context-folder').textContent,'Codex');assert.equal(d.getElementById('header-project').textContent,'일반 대화');
+ assert.equal(d.getElementById('project-label').textContent,'Codex');assert.equal(d.getElementById('header-project').textContent,'일반 대화');
  assert.equal(d.querySelectorAll('.detached-projects').length,0);assert.equal(d.querySelectorAll('#projects .session').length,0);assert.equal(d.querySelectorAll('#sessions .session').length,1);
  assert.equal(d.querySelector('#projects .new-thread').textContent,'폴더 다시 연결');
  d.getElementById('files-toggle').click();await tick();assert.equal(calls.some(c=>c.action==='files.list'),true);
@@ -1229,7 +950,7 @@ test('project menus remain available while global import controls wait for runni
  const project={key:'a',projectId:'pa',name:'A',available:false,hasLocalFolder:false,bindings:[{key:'a',name:'A'}]};
  w.mobileCodexEvent('state',{...snapshot,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:false}]});
  d.getElementById('add-project').click();await tick();assert.equal(d.querySelectorAll('#project-link-choices button').length,3);
- w.mobileCodexEvent('state',{...snapshot,proBusy:true,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:false}]});
+ w.mobileCodexEvent('state',{...snapshot,busy:true,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:false}]});
  assert.equal(d.getElementById('add-project').disabled,true);assert.ok([...d.querySelectorAll('#project-link-choices button')].every(button=>button.disabled));assert.equal(d.querySelector('.project-more').disabled,false);assert.equal(d.querySelector('.project-new').disabled,true);assert.equal(d.querySelector('#projects .new-thread').disabled,true);
  d.getElementById('add-project').click();await tick();assert.equal(calls.some(c=>/^projects\.(create|import|merge|prefer|rename|remove)$/.test(c.action)||c.action==='files.pick'),false);
  w.mobileCodexEvent('state',{...snapshot,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:true}]});
@@ -1474,9 +1195,9 @@ test('language switch preserves drafts, model content and editor values',async()
  d.getElementById('language').value='ko';d.getElementById('language').dispatchEvent(new w.Event('change'));await tick();await tick();
  assert.equal(d.getElementById('prompt').value,'기존 초안');assert.match(d.getElementById('settings').textContent,/설정/);
 });
-test('system locale defaults to English outside Korean and catalog copies match',async()=>{
+test('system locale uses Chinese fallback and catalog copies match',async()=>{
  const {w}=setup({}, {language:'system',systemLanguage:'ja-JP'});await tick();
- assert.equal(w.document.documentElement.lang,'en');assert.match(w.document.getElementById('prompt').placeholder,/Ask Codex/);
+ assert.equal(w.document.documentElement.lang,'zh-CN');assert.match(w.document.getElementById('prompt').placeholder,/Codex/);
  assert.deepEqual(JSON.parse(JSON.stringify(w.MobileCodexEnglish)), JSON.parse(fs.readFileSync('app/src/main/assets/translations-en.json','utf8')));
 });
 test('inline dictation displays partial text, supports done and cancel, and cannot auto-send',async()=>{
@@ -1560,10 +1281,10 @@ test('dragging content or a desktop dialog never dismisses it and approvals have
   assert.equal(sheet.open,true);assert.equal(d.querySelector('#request-dialog .sheet-grip'),null);
  }
 });
-test('composer stays compact until focus and expands without losing the draft',async()=>{
+test('composer keeps a stable toolbar through focus changes without losing the draft',async()=>{
  const {w}=setup();await tick();const d=w.document,composer=d.getElementById('composer'),prompt=d.getElementById('prompt');
- assert.equal(composer.classList.contains('composer-expanded'),false);prompt.value='보존할 초안';prompt.focus();assert.equal(composer.classList.contains('composer-expanded'),true);
- prompt.blur();await tick();assert.equal(prompt.value,'보존할 초안');assert.equal(composer.classList.contains('composer-expanded'),false);
+ assert.equal(composer.classList.contains('composer-expanded'),true);prompt.value='보존할 초안';prompt.focus();assert.equal(composer.classList.contains('composer-expanded'),true);
+ prompt.blur();await tick();assert.equal(prompt.value,'보존할 초안');assert.equal(composer.classList.contains('composer-expanded'),true);
 });
 test('project tree has one project plus and no duplicate general-chat row',async()=>{
  const {w,snapshot}=setup();await tick();w.mobileCodexEvent('state',{...snapshot,projects:[{key:'p',name:'Project',selected:true,available:true}],sessions:[{id:'s',title:'Existing',workspaceKey:'p'}]});
@@ -1794,8 +1515,8 @@ test('terminal ignores failure events after stopping and restores failed state o
  assert.equal(d.getElementById('terminal-submit').textContent,'Run');w.close();
 });
 
-test('deleting unrelated projects and conversations remains available during Codex or Pro work',async()=>{
- for (const mode of ['busy','proBusy','background']) {
+test('deleting unrelated projects and conversations remains available during Codex work',async()=>{
+ for (const mode of ['busy','background']) {
   const {w,calls,snapshot}=setup();await tick();const d=w.document;
   const projects=[{key:'a',name:'A',available:true},{key:'b',name:'B',available:true}];
   const sessions=[{id:'a-chat',title:'A chat',workspaceKey:'a',busy:true},{id:'b-chat',title:'B chat',workspaceKey:'b',busy:false}];

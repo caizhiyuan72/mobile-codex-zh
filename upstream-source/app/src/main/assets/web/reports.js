@@ -10,7 +10,7 @@
   const status = text => { $('report-status').textContent = text; };
   function controls() { $('report-send').disabled = sending || !reportId; $('report-send').textContent = t(sending ? '전송 중…' : '공개 GitHub에 전송'); }
   function launchers(available) {
-    for (const id of ['report-open', 'report-login-open', 'report-error-open']) $(id).hidden = !available;
+    for (const id of ['report-open', 'report-error-open']) $(id).hidden = !available;
   }
   function clearPreview() {
     ++epoch; reportId = '';
@@ -78,7 +78,6 @@
   }
   $('report-send').addEventListener('click', send);
   $('report-open').addEventListener('click', open);
-  $('report-login-open').addEventListener('click', open);
   $('report-error-open').addEventListener('click', open);
   $('report-result').addEventListener('click', () => call('ui.externalBrowser', {url:$('report-result').dataset.url}).catch(() => status(t('링크를 열지 못했습니다. 다시 시도해 주세요.'))));
   return {open, send, cancel, available, refresh, isSending:() => sending};

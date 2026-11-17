@@ -2,29 +2,28 @@
 (() => {
   'use strict';
   const L = window.MobileCodexLocale, t = L.t;
-  const LEGACY_PRO_MODEL = 'chatgpt-web:gpt-6-pro', LEGACY_PRO_LABEL = 'GPT-6-Pro';
+  const LEGACY_PRO_MODEL = 'chatgpt-web:gpt-6-pro';
   const $ = id => document.getElementById(id), C = window.UiCore;
   const pending = new Map(), requestQueue = new Map();
   let agentUi = null;
-  let liveUi = null;
+  let apiProvidersUi = window.MobileCodexApiProviders;
   let reportsUi = null;
   let terminalState = {id:'', revision:-1, running:false, stopping:false}, terminalSending = false;
   const dialogs = [], frame = fn => (window.requestAnimationFrame || (cb => setTimeout(cb, 0)))(fn);
-  let following = true, draftScope = '', draftConsultAccount = '', sending = null, configOriginal = '', sidebarFocus = null, openedImage = null;
+  let following = true, draftScope = '', draftProvider = '', sending = null, configOriginal = '', sidebarFocus = null, openedImage = null;
   let historyView = {threadId:'', hasMore:false, beforeId:'', total:0, loading:false, loaded:false, top:0};
   const imageReads = new Map();
   let viewerImages = [], viewerIndex = 0, viewerGroup = null;
-  let seq = 0, state = {messages: [], sessions: [], projects: [], models: [], accounts: [], account: {}, authState:'unknown', rateLimits: {}, workspace: {}}, folder = '', openedFile = null, login = null, inputResolve = null, toastTimer, fileSeq = 0, modelKey = '', modelRefreshGeneration = 0, displayedRequest = null, projectMenuFocus = null, projectMenuActionClosing = false;
+  let seq = 0, state = {messages: [], sessions: [], projects: [], models: [], accounts: [], account: {}, authState:'unknown', rateLimits: {}, workspace: {}}, folder = '', openedFile = null, inputResolve = null, toastTimer, fileSeq = 0, modelKey = '', modelRefreshGeneration = 0, displayedRequest = null, projectMenuFocus = null, projectMenuActionClosing = false;
   let fileContextGeneration = 0, fileReadSeq = 0, fileInputContext = null, searchTimer;
   const fileDrafts = new Map();
-  let draftContext = {attachments: [], mentions: [], skills: [], consultPro:false}, draftOptions = {model:'', effort:''}, autocomplete = {items: [], index: -1, token: '', type: '', version: 0};
+  let draftContext = {attachments: [], mentions: [], skills: []}, draftOptions = {model:'', effort:''}, autocomplete = {items: [], index: -1, token: '', type: '', version: 0};
   const handledReceipts = new Set(), handledVoiceReceipts = new Set();
   let dictationState = {phase:'idle'}, dictationTimer = null;
   let voiceStarting = false, voiceActive = false, voiceRecoveryGeneration = 0;
   let chatIconsEnabled = localStorage.getItem('chat-icons') !== 'off', activityIcon = 'thinking';
   let characterState = {folderName:'', folderConfigured:false, selectedPackId:'builtin', packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}}]};
-  let instructionsOriginal = '', instructionsLoaded = false, instructionsSaving = false, devtoolsCheckResult = null, devtoolsCheckSummary = '', devtoolsChecking = false, usageLoading = false, accountActionStatus = {text:'', error:false};
-  let resetCredits = null, resetCreditBusy = false, resetCreditScope = '', resetCreditIdempotencyKey = '', resetCreditSelectedId = '', usageGeneration = 0;
+  let instructionsOriginal = '', instructionsLoaded = false, instructionsSaving = false, devtoolsCheckResult = null, devtoolsCheckSummary = '', devtoolsChecking = false;
   const toolCache = [null, null, null];
   let updateState = {}, updateSourceDirty = false, updateRequestPending = false;
   let linuxStatusError = '', linuxRequestPending = false;
@@ -33,7 +32,7 @@
     return new Promise((resolve, reject) => {
       if (!window.Native) return reject(new Error(t('Android 앱에서 실행해 주세요.')));
       const id = String(++seq);
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error(t('요청 시간이 초과되었습니다. 상태를 확인하고 다시 시도해 주세요.'))); }, ['files.mutate','recovery.restore','updates.install','agents.providers.check'].includes(action) ? 610000 : 150000);
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(t('요청 시간이 초과되었습니다. 상태를 확인하고 다시 시도해 주세요.'))); }, ['files.mutate','recovery.restore','updates.install'].includes(action) ? 610000 : 150000);
       pending.set(id, {resolve, reject, timer});
       window.Native.postMessage(JSON.stringify({id, action, args}));
     });
@@ -242,8 +241,7 @@
   function contextScope(scope = draftScope) { return scope ? scope + ':context' : ''; }
   function optionsScope(scope = draftScope) { return scope ? scope + ':options' : ''; }
   function restoreOptions(scope) { try { const value = JSON.parse(localStorage.getItem(optionsScope(scope)) || '{}'); if (value.model === LEGACY_PRO_MODEL) { value.model = ''; value.effort = ''; localStorage.setItem(optionsScope(scope), JSON.stringify(value)); } return {model:value.model || '', effort:value.effort || '', fastMode:typeof value.fastMode === 'boolean' ? value.fastMode : undefined}; } catch { return {model:'', effort:''}; } }
-  function consultAccountScope(snapshot = state) { return (snapshot.accounts || []).find(account => account.active)?.key || snapshot.account?.id || snapshot.account?.email || accountScope(snapshot.account); }
-  function consultScope(scope = draftScope, account = draftConsultAccount) { return contextScope(scope) + ':consult-pro:' + JSON.stringify(account); }
+  function providerScope(snapshot = state) { return snapshot.apiActive || ''; }
   function saveOptions() { if (!draftScope) return; draftOptions = {model:$('model').value, effort:$('effort').value, fastMode:draftOptions.fastMode === true}; try { localStorage.setItem(optionsScope(), JSON.stringify(draftOptions)); } catch {} }
   function saveDraft() {
     if (!draftScope) return;
@@ -251,12 +249,11 @@
       if ($('prompt').value) localStorage.setItem(draftScope, $('prompt').value); else localStorage.removeItem(draftScope);
       const context = {attachments:draftContext.attachments || [], mentions:draftContext.mentions || [], skills:draftContext.skills || []};
       if (context.attachments.length || context.mentions.length || context.skills.length) localStorage.setItem(contextScope(), JSON.stringify(context)); else localStorage.removeItem(contextScope());
-      if (draftContext.consultPro) localStorage.setItem(consultScope(), 'true'); else localStorage.removeItem(consultScope());
     } catch {}
   }
-  function restoreContext(scope, account = draftConsultAccount) {
-    try { const value = JSON.parse(localStorage.getItem(contextScope(scope)) || '{}'); return {attachments:Array.isArray(value.attachments) ? value.attachments : [], mentions:Array.isArray(value.mentions) ? value.mentions : [], skills:Array.isArray(value.skills) ? value.skills : [], consultPro:false}; }
-    catch { return {attachments:[], mentions:[], skills:[], consultPro:false}; }
+  function restoreContext(scope, account = draftProvider) {
+    try { const value = JSON.parse(localStorage.getItem(contextScope(scope)) || '{}'); return {attachments:Array.isArray(value.attachments) ? value.attachments : [], mentions:Array.isArray(value.mentions) ? value.mentions : [], skills:Array.isArray(value.skills) ? value.skills : []}; }
+    catch { return {attachments:[], mentions:[], skills:[]}; }
   }
   function migrateDraftToGeneral(sourceScope, targetScope) {
     try {
@@ -274,7 +271,6 @@
         if (safe.attachments.length || safe.skills.length) localStorage.setItem(contextScope(targetScope), JSON.stringify(safe));
         if (context.mentions.length) toast(t('프로젝트 파일 멘션은 원래 초안에 남겨 두었습니다.'));
       }
-      if (!targetHasContent && localStorage.getItem(consultScope(targetScope)) === null && localStorage.getItem(consultScope(sourceScope)) === 'true') localStorage.setItem(consultScope(targetScope), 'true');
     } catch {}
   }
   function draftKeyFor(scope = draftScope) { return scope.replace(/^draft:/, ''); }
@@ -299,13 +295,13 @@
   function setDraftScope(next) {
     const workspaceKey = Object.prototype.hasOwnProperty.call(next.workspace || {}, 'key') ? next.workspace.key : (next.cwd || '');
     const scope = 'draft:' + C.draftKey(workspaceKey || '', next.threadId || 'new');
-    const consultAccount = consultAccountScope(next);
-    if (scope === draftScope && consultAccount === draftConsultAccount) return;
+    const provider = providerScope(next);
+    if (scope === draftScope && provider === draftProvider) return;
     const previousScope = draftScope, previousWorkspaceKey = state.workspace?.key || '';
     saveDraft();
-    if (consultAccount === draftConsultAccount && !workspaceKey && next.workspace?.selected === false && state.threadId && state.threadId === next.threadId && previousWorkspaceKey && previousScope) migrateDraftToGeneral(previousScope, scope);
-    const createdBySend = sending && consultAccount === sending.consultAccount && consultAccount === draftConsultAccount && !state.threadId && next.threadId && state.cwd === next.cwd && state.workspace?.key === next.workspace?.key;
-    draftScope = scope; draftConsultAccount = consultAccount; hideAutocomplete(); closeComposerAddMenu(false);
+    if (provider === draftProvider && !workspaceKey && next.workspace?.selected === false && state.threadId && state.threadId === next.threadId && previousWorkspaceKey && previousScope) migrateDraftToGeneral(previousScope, scope);
+    const createdBySend = sending && provider === sending.provider && provider === draftProvider && !state.threadId && next.threadId && state.cwd === next.cwd && state.workspace?.key === next.workspace?.key;
+    draftScope = scope; draftProvider = provider; hideAutocomplete(); closeComposerAddMenu(false);
     if (createdBySend) { sending.scopes.add(scope); saveDraft(); saveOptions(); }
     else { try { $('prompt').value = localStorage.getItem(scope) || ''; } catch { $('prompt').value = ''; } draftContext = restoreContext(scope); renderDraftContext(); }
     if (!createdBySend) draftOptions = restoreOptions(scope);
@@ -315,33 +311,18 @@
     efforts(); if ([...$('effort').options].some(o => o.value === draftOptions.effort)) $('effort').value = draftOptions.effort;
     sizeComposer();
   }
-  const projectWorkBusy = () => !!state.busy || !!state.proBusy || (state.sessions || []).some(session => !!session.busy);
+  const projectWorkBusy = () => !!state.busy || (state.sessions || []).some(session => !!session.busy);
   const generalFolderAvailable = (workspace = state.workspace) => !workspace?.selected && (workspace?.hasLocalFolder === true || workspace?.available === true);
   const workspaceFilesAvailable = (workspace = state.workspace) => workspace?.selected ? workspace.available !== false : generalFolderAvailable(workspace);
   const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('작업 폴더 선택')) : (workspace.name || 'Codex');
-  function fastTier() {
-    const selected = $('model').value;
-    const model = selected ? state.models.find(m => (m.model || m.id) === selected) : state.models.find(m => m.isDefault);
-    const tiers = model?.serviceTiers?.length ? model.serviceTiers : (model?.additionalSpeedTiers || []);
-    return tiers.map(tier => typeof tier === 'string' ? tier : tier.id).find(id => id === 'fast' || id === 'priority') || '';
-  }
-  function updateFastButton() {
-    const supported = !!fastTier(), enabled = supported && draftOptions.fastMode === true, control = $('fast-mode');
-    control.disabled = !supported || !!state.busy || !!state.proBusy || !!sending;
-    control.setAttribute('aria-pressed', String(enabled));
-    const title = !supported ? t('선택한 모델은 Fast 모드를 지원하지 않습니다.')
-      : state.busy || state.proBusy ? t('Fast 모드는 다음 요청부터 변경할 수 있습니다.')
-      : enabled ? t('Fast 모드 켜짐 · 사용량·요금이 더 높을 수 있습니다.') : t('Fast 모드 켜기 · 사용량·요금이 더 높을 수 있습니다.');
-    control.title = title; control.setAttribute('aria-label', title);
-  }
   function updateSend() {
-    $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending || !!liveUi?.active();
-    liveUi?.update();
+    $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
     $('send').disabled = ((!$('prompt').value.trim() && !(draftContext.attachments || []).length) || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false));
     const steering = state.busy && !!state.turnId;
+    $('send').hidden = !!state.busy && !$('prompt').value.trim() && !(draftContext.attachments || []).length;
     $('send').setAttribute('aria-label', steering ? t('진행 중인 작업에 추가 지시') : t('메시지 보내기'));
-    $('send').title = steering ? t('추가 지시') : t('보내기'); $('composer-attach').disabled = !!sending; updateFastButton();
+    $('send').title = steering ? t('추가 지시') : t('보내기'); $('composer-attach').disabled = !!sending;
   }
   function closeComposerAddMenu(restoreFocus = true) {
     if ($('composer-add-menu').hidden) return false;
@@ -355,46 +336,62 @@
     (last ? choices.at(-1) : choices[0])?.focus();
   }
   function scrollLatest() { following = true; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight; historyView.top = $('chat-scroll').scrollTop; $('jump-latest').hidden = true; }
-  function updateComposerExpansion() {
-    const composer = $('composer');
-    // Keep task controls reachable while reading messages outside the input.
-    composer.classList.toggle('composer-expanded', !!state.busy || !!state.proBusy || !$('dictation').hidden || !$('draft-context').hidden || $('model-picker').open || composer.contains(document.activeElement));
-    sizeComposer();
-  }
-  function sizeComposer() {
-    const field = $('prompt'), cap = Math.max(60, Math.min(160, window.innerHeight * .24));
-    field.style.height = '0px';
-    field.style.height = Math.max(36, Math.min(field.scrollHeight, cap)) + 'px';
-    field.style.overflowY = field.scrollHeight > cap ? 'auto' : 'hidden';
-    updateSend();
+  let composerFramePending = false, composerMeasureKey = '', viewportFramePending = false;
+  function updateComposerExpansion() { sizeComposer(); }
+  function measureComposer() {
+    composerFramePending = false;
+    const field = $('prompt');
+    const height = window.visualViewport?.height || window.innerHeight;
+    const key = [field.value, field.clientWidth, height, textSizePercent].join('\u0000');
+    if (key === composerMeasureKey) return;
+    composerMeasureKey = key;
+    const styles = getComputedStyle(field), line = parseFloat(styles.lineHeight) || 24;
+    const padding = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
+    const cap = Math.max(line + padding, Math.min(line * 4 + padding, height * .27));
+    field.style.height = 'auto';
+    const contentHeight = field.scrollHeight;
+    field.style.height = Math.min(Math.max(line + padding, contentHeight), cap) + 'px';
+    field.style.overflowY = contentHeight > cap ? 'auto' : 'hidden';
     if (following) scrollLatest();
   }
+  function sizeComposer() {
+    updateSend();
+    if (composerFramePending) return;
+    composerFramePending = true;
+    frame(() => { if (composerFramePending) measureComposer(); });
+  }
   function viewportChanged() {
-    // Native already excludes the IME. min() also handles older visual-viewport-only resizing.
-    const visual = window.visualViewport, height = visual && visual.scale === 1 ? Math.min(window.innerHeight, visual.height) : window.innerHeight;
-    document.documentElement.style.setProperty('--app-height', height + 'px');
-    sizeComposer();
-    positionModelPicker();
-    if (following) frame(() => { if (following) scrollLatest(); });
-    if (!matchMedia('(max-width:760px)').matches) {
-      document.body.classList.remove('sidebar-open'); $('scrim').hidden = true;
-      $('sidebar').inert = false; document.querySelector('main').inert = false;
-    } else $('sidebar').inert = !document.body.classList.contains('sidebar-open');
+    if (viewportFramePending) return;
+    viewportFramePending = true;
+    frame(() => {
+      viewportFramePending = false;
+      const visual = window.visualViewport, height = visual && visual.scale === 1 ? Math.min(window.innerHeight, visual.height) : window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', height + 'px');
+      // Resize the composer in this viewport frame so the keyboard cannot leave it one frame behind.
+      updateSend(); measureComposer(); positionModelPicker();
+      if (!matchMedia('(max-width:760px)').matches) {
+        document.body.classList.remove('sidebar-open'); $('scrim').hidden = true;
+        $('sidebar').inert = false; document.querySelector('main').inert = false;
+      } else $('sidebar').inert = !document.body.classList.contains('sidebar-open');
+    });
+  }
+  function shortModelName(value) {
+    return String(value || '').replace(/^[^·]+\s*·\s*/, '').split('/').pop().trim();
   }
   function optionsSummary() {
-    updateFastButton();
+
     const model = $('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요');
     const effort = $('effort').selectedOptions[0]?.textContent || t('추론 설정 정보 없음');
     const approval = $('approval-mode').selectedOptions[0]?.textContent || t('자동 검토');
-    $('model-summary').textContent = model;
-    $('effort-summary').textContent = $('effort').value ? effort : '';
+    $('model-summary').textContent = shortModelName(model);
+    $('effort-summary').textContent = $('effort').value ? effort : (state.apiActive ? '自动' : '');
     $('composer-options').setAttribute('aria-label', t('작업 설정: ') + model + t(', 추론 ') + effort + t(', 승인 ') + approval);
     $('composer-options').title = model + ' · ' + effort;
     $('approval-mode').title = t('Codex 승인 방식') + ': ' + approval;
     $('approval-mode').setAttribute('aria-label', t('Codex 승인 방식'));
     $('permission-help').textContent = state.busy ? t('작업이 끝나면 권한을 변경할 수 있습니다.') : ({'read-only':t('파일을 읽고 검토합니다.'), 'workspace-write':t('선택한 프로젝트의 파일을 수정할 수 있습니다.'), 'danger-full-access':t('앱에 허용된 기기 파일과 명령에 접근할 수 있습니다.')}[$('permissions').value] || '');
     const current = state.models.find(m => (m.model || m.id) === $('model').value) || state.models.find(m => m.isDefault);
-    $('model-help').textContent = current?.description || (current ? t('연결된 계정에서 사용할 수 있는 모델입니다.') : t('모델 목록을 새로고침해 주세요.'));
+    $('model-help').textContent = current?.description || (current ? '服务商配置的模型，能力取决于接口实际支持。' : t('모델 목록을 새로고침해 주세요.'));
     syncReasoningPicker();
   }
   function positionModelPicker() {
@@ -427,18 +424,69 @@
   function previewReasoning() {
     const options = [...$('effort').options].filter(option => option.value), slider = $('effort-slider');
     const option = options[Number(slider.value)];
-    if (option) $('effort-heading').textContent = option.textContent;
+    if (option && $('effort').value) $('effort-heading').textContent = option.textContent;
     slider.setAttribute('aria-valuetext', option?.textContent || t('추론 강도 조절 미지원'));
     slider.style.setProperty('--effort-fill', (options.length > 1 ? Number(slider.value) / (options.length - 1) * 100 : 0) + '%');
   }
+  let reasoningSignature = '';
   function syncReasoningPicker() {
     const options = [...$('effort').options].filter(option => option.value), slider = $('effort-slider');
+    const thirdParty = !!state.apiActive;
+    const policy = window.MobileCodexReasoning;
+    const selected = state.models.find(m => (m.model || m.id) === $('model').value);
+    const offeredLevels = policy.offered();
+    const supportedLevels = policy.supported(selected,thirdParty);
+    const experimental = $('effort-experimental').checked;
+    const signature = JSON.stringify([selected, thirdParty, $('model').value, $('effort').value, experimental, L.language()]);
+    if (signature === reasoningSignature) return;
+    reasoningSignature = signature;
     $('model-heading').textContent = $('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요');
-    $('effort-heading').textContent = $('effort').value ? $('effort').selectedOptions[0].textContent : t('모델');
+    $('effort-heading').textContent = $('effort').value ? $('effort').selectedOptions[0].textContent : '自动';
     slider.max = String(Math.max(0, options.length - 1));
     slider.value = String(Math.max(0, options.findIndex(option => option.value === $('effort').value)));
     slider.disabled = options.length < 2;
-    $('reasoning-control').hidden = !options.length; $('effort-unavailable').hidden = !!options.length;
+    const auto = $('effort-auto');
+    if (auto) { auto.hidden = true; auto.disabled = !options.length; }
+    $('reasoning-control').hidden = false;
+    $('effort-unavailable').hidden = true;
+    const grid = $('effort-preset-grid');
+    grid.replaceChildren();
+    const choices = [{value:'', label:'自动'}, ...offeredLevels.map(value=>({value,label:policy.labels[value]}))];
+    for (const choice of choices) {
+      const available = policy.canSelect(choice.value,selected,thirdParty,experimental);
+      const button = node('button', choice.label, 'effort-preset-button');
+      button.type='button';button.dataset.effort=choice.value;
+      button.disabled=!available;
+      const tag=choice.value ? policy.source(selected,choice.value,thirdParty) : '模型默认';
+      button.title=choice.label+' · '+tag;
+      button.classList.toggle('is-experimental', !!choice.value && (thirdParty || !supportedLevels.includes(choice.value)));
+      button.setAttribute('aria-pressed',String($('effort').value===choice.value));
+      button.setAttribute('aria-label',choice.label+' · '+tag+(available?'':'，暂不可选'));
+      button.addEventListener('click',()=>{
+        if(!policy.canSelect(choice.value,selected,thirdParty,$('effort-experimental').checked)){
+          toast('该档位未获当前模型确认，可开启实验选项尝试。');return;
+        }
+        $('effort').value=choice.value;
+        $('effort').dispatchEvent(new Event('change',{bubbles:true}));
+      });
+      grid.append(button);
+    }
+    $('effort-experimental').closest('label').hidden = thirdParty;
+    $('effort-availability').textContent=thirdParty ? (supportedLevels.length ? '服务商报告支持：' + supportedLevels.map(x=>policy.labels[x]).join(' / ') : '服务商未报告支持档位，可手动尝试。') :
+      (supportedLevels.length ? '可用：'+supportedLevels.map(x=>policy.labels[x]).join(' / ')+'（运行时上报）' : '该模型未报告思考档位；可开启实验模式尝试。');
+    $('effort-contract').textContent = $('effort').value && !supportedLevels.includes($('effort').value) ? '所选档位尚未验证；请求失败时请调整。' : '';
+    const quick=$('api-effort-settings'),select=$('api-effort-choice');
+    if(quick && select){
+      quick.hidden=!thirdParty;
+      select.replaceChildren();
+      for(const choice of choices){
+        const option=new Option(choice.label+(choice.value?'（试验）':''),choice.value);
+        option.disabled=!policy.canSelect(choice.value,selected,thirdParty,experimental);
+        select.add(option);
+      }
+      select.value=$('effort').value;
+      $('api-effort-current').textContent='当前聊天模型：'+($('model').value||'未选择');
+    }
     previewReasoning(); sizeModelPicker();
   }
   function refreshPickerModels() {
@@ -1044,22 +1092,45 @@
     const avatar = node('span', name.slice(0, 1), 'agent-avatar'); avatar.dataset.agent = m.agent || 'codex'; avatar.setAttribute('aria-hidden', 'true');
     label.append(avatar, node('strong', name)); return label;
   }
-  function drawMessages() {
-    const messages = state.messages || [];
-    const elements = new Map(Array.from($('messages').children).map(n => [n.dataset.id, n]));
+  const dirtyMessages = new Set(), messageLookup = new Map(), renderedMessages = new Map();
+  let messagesFramePending = false, groupedMessages = false;
+  function scheduleMessageDraw(id) {
+    dirtyMessages.add(id);
+    if (messagesFramePending) return;
+    messagesFramePending = true;
+    frame(() => {
+      messagesFramePending = false;
+      if (!dirtyMessages.size) return;
+      const ids = new Set(dirtyMessages); dirtyMessages.clear();
+      drawMessages(ids);
+    });
+  }
+  function drawMessages(dirtyIds = null) {
+    const allMessages = state.messages || [];
+    if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id))) dirtyIds = null;
+    if (!dirtyIds) {
+      dirtyMessages.clear(); messageLookup.clear(); renderedMessages.clear();
+      for (const message of allMessages) messageLookup.set(message.id, message);
+      groupedMessages = !!agentUi?.grouped() || allMessages.some(message => message.agent);
+    }
+    const messages = dirtyIds ? [...dirtyIds].map(id => messageLookup.get(id)).filter(Boolean) : allMessages;
+    const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).map(n => [n.dataset.id, n]));
     const keep = new Set();
     let previous = null;
-    const grouped = !!agentUi?.grouped() || messages.some(m => m.agent);
+    const grouped = groupedMessages;
     C.groupImageMessages(messages).forEach(m => {
       keep.add(m.id); let el = elements.get(m.id);
       if (!el) { el = node('article', null, 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }
-      const position = previous ? previous.nextSibling : $('messages').firstChild;
-      if (el !== position) $('messages').insertBefore(el, position);
-      previous = el;
+      if (!dirtyIds) {
+        const position = previous ? previous.nextSibling : $('messages').firstChild;
+        if (el !== position) $('messages').insertBefore(el, position);
+        previous = el;
+      }
+      renderedMessages.set(m.id, el);
       el.classList.toggle('pro-consultation-message', m.kind === 'proConsultation');
       el.classList.toggle('agent-message', !!m.agent);
       const agentPack = m.agent ? agentCharacter(m.agent) : null;
-      const streaming = m.status === 'streaming' || (state.busy && m.id === messages[messages.length - 1]?.id);
+      const streaming = m.status === 'streaming' || (state.busy && m.id === allMessages[allMessages.length - 1]?.id);
       const signature = JSON.stringify([m.agent, m.agentName, agentPack?.id, grouped, m.text, m.kind, m.prompt, m.createdAt, m.status, m.source, m.backend, m.displayModel, m.error, m.images, m.attachments, m.imageStatus, m.imageError, L.language(), chatIconsEnabled, streaming, characterVisualKey()]);
       if (el.dataset.signature !== signature) {
         el.dataset.signature = signature;
@@ -1069,19 +1140,12 @@
           el.replaceChildren(body);
           const date = messageDate(m.createdAt); el.classList.toggle('has-date', !!date); if (date) el.append(date);
           if (m.attachments?.length) el.append(sentAttachments(m.attachments));
-          if (m.source === 'ChatGPT Pro' || m.backend === 'chatgpt-web') el.prepend(node('span', m.displayModel || LEGACY_PRO_LABEL, 'message-source-badge'));
           if (['not_sent','uncertain','failed'].includes(m.status)) el.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
         }
         else {
           const previousIcons = [...el.querySelectorAll('.chat-character[data-message-icon-key]')];
           prose(el, m.text || '');
           renderMessageIconTags(el, agentPack, previousIcons, streaming);
-          if (m.kind === 'proConsultation') {
-            const status = {completed:t('검토 완료'),failed:t('검토 실패'),cancelled:t('검토 취소됨'),timeout:t('검토 시간 초과')}[m.status];
-            el.prepend(node('span', t('Pro 검토 답변'), 'message-source-badge'));
-            if (status) { const label = node('p', status, 'message-transport-status'); label.setAttribute('role', 'status'); el.append(label); }
-            if (m.prompt?.trim()) { const detail = node('details', null, 'pro-consultation-prompt'); detail.append(node('summary', t('Pro에게 보낸 질문')), node('pre', m.prompt, 'console')); el.append(detail); }
-          } else if (m.source === 'ChatGPT Pro' || m.backend === 'chatgpt-web') el.prepend(node('span', 'ChatGPT Pro', 'message-source-badge'));
           if (grouped) el.prepend(agentSpeaker(m));
           if (m.agent && m.status === 'streaming' && !m.text) el.append(node('p', t('응답 중…'), 'agent-pending'));
           if (m.agent && ['error','interrupted'].includes(m.status)) el.append(node('p', m.status === 'interrupted' ? t('중단된 응답입니다.') + (m.error ? ' ' + m.error : '') : (m.error || t('답하지 못했습니다.')), 'message-transport-status'));
@@ -1099,20 +1163,34 @@
         }
       }
     });
-    for (const [id, el] of elements) if (!keep.has(id)) el.remove();
+    if (!dirtyIds) for (const [id, el] of elements) if (!keep.has(id)) el.remove();
     if (following) scrollLatest();
     else $('jump-latest').hidden = !messages.length;
   }
   function efforts() {
     const selected = state.models.find(m => (m.model || m.id) === $('model').value);
-    const previous = $('effort').value, values = selected?.supportedReasoningEfforts || [];
-    $('effort').replaceChildren(); $('effort').disabled = !values.length;
-    for (const e of values) $('effort').add(new Option(({none:'None',minimal:'Minimal',low:'Light',medium:'Medium',high:'High',xhigh:'Extra High',max:'Max',ultra:'Ultra'})[e.reasoningEffort] || e.reasoningEffort, e.reasoningEffort));
-    if (!values.length) $('effort').add(new Option(t('추론 설정 정보 없음'), ''));
-    $('effort').value = values.some(e => e.reasoningEffort === previous) ? previous : (values.some(e => e.reasoningEffort === selected?.defaultReasoningEffort) ? selected.defaultReasoningEffort : values[0]?.reasoningEffort || '');
+    const policy = window.MobileCodexReasoning;
+    const previous = $('effort').value;
+    const thirdParty = !!state.apiActive;
+    const supported = policy.offered();
+    const experimental = $('effort-experimental').checked;
+    $('effort').replaceChildren();
+    $('effort').add(new Option('自动（模型默认）',''));
+    for (const level of supported){
+      const option=new Option(policy.labels[level],level);
+      option.disabled=!policy.canSelect(level,selected,thirdParty,experimental);
+      $('effort').add(option);
+    }
+    $('effort').disabled = false;
+    $('effort').value = policy.choose({previous, fallback:selected?.defaultReasoningEffort,
+      model:selected, thirdParty, experimental});
     optionsSummary();
   }
+  let modelListSignature = '';
   function renderModelList() {
+    const signature = JSON.stringify([state.models, $('model').value, L.language()]);
+    if (signature === modelListSignature) return;
+    modelListSignature = signature;
     const target = $('model-list'), focused = target.contains(document.activeElement) ? document.activeElement.value : null;
     target.replaceChildren();
     const choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL).map(m => ({id:m.model || m.id, label:m.displayName || m.model || m.id, description:m.description || m.model || m.id}));
@@ -1124,7 +1202,8 @@
       label.addEventListener('click', e => { if ($('model').value === choice.id) { e.preventDefault(); showModelPanel(false); } });
       label.title = choice.description;
       const check = icon('check'); check.setAttribute('aria-hidden', 'true');
-      label.append(input, node('strong', choice.label), check); target.append(label);
+      const copy = node('span', null, 'model-choice-copy'); copy.append(node('strong', shortModelName(choice.label)), node('small', choice.id));
+      label.append(input, copy, check); target.append(label);
     }
     if (focused) [...target.querySelectorAll('input')].find(input => input.value === focused)?.focus({preventScroll:true});
     sizeModelPicker();
@@ -1268,11 +1347,11 @@
   }
   function projectKeys(project) { return project.workspaceKeys || [project.key]; }
   function sessionWorkBusy(session) {
-    return !!session.busy || (session.id === state.threadId && (!!state.busy || !!state.proBusy));
+    return !!session.busy || (session.id === state.threadId && (!!state.busy));
   }
   function projectRemovalBusy(project) {
     return (state.sessions || []).some(session => session.workspaceKey === project.key && sessionWorkBusy(session))
-      || (state.workspace?.key === project.key && (!!state.busy || !!state.proBusy));
+      || (state.workspace?.key === project.key && (!!state.busy));
   }
   let projectLinkReturnKey = '', projectLinkPending = false;
   function projectChoices(title, description, choices, returnKey = '') {
@@ -1457,37 +1536,35 @@
     await call('phone.stop');
     state.phone = {...state.phone, enabled:false, status:t('휴대폰 제어 꺼짐')}; renderPhone();
   }
-  function accountNeedsLogin() { return state.authState ? state.authState === 'signed_out' : !!state.ready && !C.isLoggedIn(state.account); }
+  function configuredApi() { return !!(state.apiActive && (state.apiProviders || []).some(p => p.id === state.apiActive && p.hasKey)); }
+  let navigationSignature = '';
   function render(next) {
-    const previousAccountScope = accountScope(state.account), nextAccountScope = accountScope(next.account);
-    if (previousAccountScope !== nextAccountScope) { usageGeneration++; resetCredits = null; resetCreditBusy = false; resetCreditIdempotencyKey = ''; resetCreditSelectedId = ''; resetCreditScope = nextAccountScope; }
     const changedThread = state.threadId !== next.threadId;
     const changedFileContext = fileWorkspaceScope(state) !== fileWorkspaceScope(next);
     if (changedFileContext) resetFileContext();
     setDraftScope(next); state = historySnapshot(next, changedThread);
+    apiProvidersUi?.render(state);
     state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {}; setCharacterState(state.characters);
-    const logged = C.isLoggedIn(state.account), selected = state.workspace.selected;
+    const logged = configuredApi(), selected = state.workspace.selected;
     const name = selected ? state.workspace.name : t('일반 대화');
-    $('project-label').textContent = workspaceFolderLabel(); $('context-folder').textContent = workspaceFolderLabel(); $('header-project').textContent = name;
+    $('project-label').textContent = workspaceFolderLabel(); $('header-project-label').textContent = name;
     $('header-title').textContent = (state.sessions || []).find(s => s.id === state.threadId)?.title || t('새 대화');
-    $('welcome').hidden = state.messages.length > 0; $('onboarding').hidden = !accountNeedsLogin(); $('suggestions').hidden = accountNeedsLogin();
-    $('logout').hidden = !logged && !accountNeedsLogin(); $('logout').textContent = logged ? t('로그아웃') : t('로그인');
+    $('welcome').hidden = state.messages.length > 0; $('onboarding').hidden = logged; $('suggestions').hidden = !logged;
     const generalPrompts = [t('작업을 계획하고 필요한 정보를 정리해줘.'),t('아이디어를 구조화하고 다음 단계를 제안해줘.'),t('무엇을 도와줄 수 있는지 알려줘.')];
     document.querySelectorAll('[data-prompt]').forEach((button, i) => { button.dataset.prompt = selected ? [t('이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘.'),t('이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘.'),t('이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘.')][i] : generalPrompts[i]; if (button.lastChild?.nodeType === Node.TEXT_NODE) button.lastChild.textContent = selected ? [t('폴더 살펴보기'),t('프로젝트 이해하기'),t('변경 사항 검토')][i] : [t('작업 계획하기'),t('아이디어 정리하기'),t('도움말 보기')][i]; });
-    $('login-step').textContent = logged ? '✓' : '1'; $('login-step').classList.toggle('done', logged);
+    $('api-step').textContent = logged ? '✓' : '1'; $('api-step').classList.toggle('done', logged);
     const folderReady = workspaceFilesAvailable();
     $('folder-step').textContent = folderReady ? '✓' : '2'; $('folder-step').classList.toggle('done', folderReady);
-    renderQuota(); renderAccounts(); renderResetCredits(resetCredits);
     $('settings-status').textContent = state.status; $('settings-indicator').textContent = state.ready ? t('연결됨') : t('연결 안 됨'); $('settings-indicator').classList.toggle('online', !!state.ready);
     const pendingDeletes = Number(state.pendingDeletionCount) || 0;
     $('pending-deletions').hidden = pendingDeletes === 0;
     $('pending-deletions').textContent = pendingDeletes ? t('원본 삭제 대기 {count}건. 아래 ‘Codex 시작 / 다시 연결’을 누르면 다시 시도합니다.', {count:pendingDeletes}) : '';
-    const anyBusy = !!state.busy || !!state.proBusy;
-    $('send').hidden = false; $('stop').hidden = !anyBusy; $('activity').hidden = !anyBusy;
+    const anyBusy = !!state.busy;
+    $('send').hidden = anyBusy; $('stop').hidden = !anyBusy; $('activity').hidden = !anyBusy;
     updateComposerExpansion();
     if (changedThread || !anyBusy)
-      $('activity-text').textContent = state.proBusy ? t('Pro 답변 중') : t('Codex 답변 기다리는 중');
-    if (state.proBusy) $('activity-text').textContent = t('Pro 답변 중');
+      $('activity-text').textContent = t('Codex 답변 기다리는 중');
+
     if (!anyBusy) activityIcon = 'thinking';
     drawStatusIcons();
     $('terminal-cwd').textContent = state.cwd || '';
@@ -1500,7 +1577,9 @@
     if (changesScope !== reviewScope()) { changesGeneration++; changesScope = reviewScope(); selectedChange = null; $('change-preview').hidden = true; $('change-restore').disabled = true; $('changes-list').replaceChildren(); if ($('changes-dialog').open) $('changes-status').textContent = t('대화 또는 프로젝트가 바뀌었습니다. 새로고침해 주세요.'); }
     $('changes-turn-diff').textContent = state.turnDiff || t('이 대화에 기록된 작업 diff가 없습니다.');
     if (selectedChange) $('change-restore').disabled = restoringChange || !selectedChange.data.canRestore || !!state.busy || state.permissions === 'read-only';
-    renderProjects();
+    const navigationKey = JSON.stringify([state.projects, state.sessions, state.workspace, state.threadId, !!state.busy, L.language()]);
+    if (navigationKey !== navigationSignature) {
+      navigationSignature = navigationKey; renderProjects();
     if ($('project-actions-dialog')?.open) $('project-actions').querySelectorAll('button').forEach(button => { button.disabled = button.projectBlocked(); });
     if ($('project-link-dialog')?.open) $('project-link-choices').querySelectorAll('button').forEach(button => { button.disabled = projectWorkBusy() || projectLinkPending; });
     $('sessions').replaceChildren();
@@ -1508,7 +1587,8 @@
     const sessionWorkspaceKey = session => session.workspaceKey || (typeof session.workspace === 'string' ? session.workspace : '');
     for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)))) $('sessions').append(sessionRow(session));
     if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
-    const key = JSON.stringify(state.models);
+    }
+    const key = JSON.stringify([state.apiActive || '', state.models]);
     if (key !== modelKey) {
       modelKey = key; const value = draftOptions.model || $('model').value, choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL);
       $('model').replaceChildren(); for (const m of choices) $('model').add(new Option(m.displayName || m.model || m.id, m.model || m.id));
@@ -1528,22 +1608,13 @@
     $('prompt').placeholder = agentUi?.grouped() ? t('모두에게 보내기 · @로 한 명만 부르기') : t('Codex에게 물어보기');
     // A request can arrive while another conversation is visible. Once the
     // selected session is restored, show only that session's pending request.
-    nextRequest();
-    if (logged && $('login-dialog').open) { login = null; close('login-dialog'); }
+    nextRequest(); syncSubagentControls();
     if (changedFileContext && !$('file-panel').hidden) listFiles().catch(error => toast(error.message));
   }
   function logEvent(title, data) {
     const detail = node('details', null, 'event-card'); detail.append(node('summary', title), node('pre', typeof data === 'string' ? data : JSON.stringify(data, null, 2), 'console'));
     $('event-log').append(detail);
     while ($('event-log').children.length > 150) $('event-log').firstChild.remove();
-  }
-  async function startLogin(add = false) {
-    if (C.isLoggedIn(state.account) && !add) return openAccountSettings();
-    if (!add && !accountNeedsLogin()) return openAccountSettings();
-    show('login-dialog'); $('device-code').textContent = t('연결 준비 중'); $('open-login').disabled = true;
-    login = await call(add ? 'auth.add' : 'auth.login');
-    if (!C.safeLoginUrl(login.verificationUrl)) throw new Error(t('잘못된 로그인 응답입니다.'));
-    $('device-code').textContent = login.userCode; $('open-login').disabled = false;
   }
   function fileWorkspaceScope(snapshot = state) {
     return JSON.stringify([accountScope(snapshot.account), snapshot.workspace?.key || '', !!snapshot.workspace?.selected, snapshot.workspace?.available !== false, snapshot.cwd || '']);
@@ -1766,161 +1837,9 @@
     if (!entries?.length) $('recovery-list').append(node('p', t('저장된 복구 사본이 없습니다.'), 'empty-note'));
   }
   let toolsScope = "", toolsGeneration = 0, toolsTab = 0, toolsQuery = "";
-  const currentToolsScope = () => JSON.stringify([state.cwd, state.threadId, state.account]);
-  function usageTime(value) {
-    if (!Number.isSafeInteger(value) || value <= 0 || value > 8640000000000) return '';
-    const date = new Date(value * 1000); if (!Number.isFinite(date.getTime())) return '';
-    const options = {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'};
-    if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric';
-    return date.toLocaleString(L.language() === 'ko' ? 'ko-KR' : 'en-US', options);
-  }
-  function usageDuration(value) {
-    if (value === 10080) return t('주간 한도');
-    if (value === 300) return t('5시간 한도');
-    return t('사용 한도');
-  }
-  function usageRows(result) {
-    const buckets = result?.rateLimitsByLimitId && Object.keys(result.rateLimitsByLimitId).length ? Object.entries(result.rateLimitsByLimitId) : [['codex', result?.rateLimits]];
-    return buckets.filter(([, value]) => value && (value.primary || value.secondary)).flatMap(([key, value]) => [[t('기본'), value.primary], [t('보조'), value.secondary]].filter(([, window]) => window && Number.isFinite(window.usedPercent)).map(([label, window]) => {
-      const remaining = Math.max(0, Math.min(100, 100 - window.usedPercent));
-      const resetTime = usageTime(window.resetsAt);
-      return {label:(value.limitName || value.normalModelSlug || key) + ' · ' + label, used:window.usedPercent, remaining,
-        duration:usageDuration(window.windowDurationMins), resetTime, reset:resetTime || t('초기화 시각 확인 불가'),
-        text:t('사용 ') + window.usedPercent + t('% · 남은 ') + remaining + '% · ' + usageDuration(window.windowDurationMins) + t(' · 재설정 ') + (resetTime || t('초기화 시각 확인 불가'))};
-    }));
-  }
-  function quotaRing(remaining, label, large = false) {
-    const ring = node('span', null, 'quota-ring'); ring.style.setProperty('--remaining', String(remaining)); ring.setAttribute('role','img'); ring.setAttribute('aria-label', label);
-    ring.append(node('span', large ? Math.round(remaining) + '%' : '')); return ring;
-  }
-  function renderQuota() {
-    const logged = C.isLoggedIn(state.account), rows = usageRows(state.rateLimits), row = rows[0];
-    const ring = $('quota-ring'), value = $('quota-ring-value'), percent = $('quota-percent'), caption = $('quota-caption');
-    if (!logged) {
-      // Saved display metadata is not authentication. Only signed_out invites login.
-      const saved = (state.accounts || []).find(profile => profile.active);
-      ring.style.setProperty('--remaining','0'); ring.setAttribute('aria-label',t('사용 한도 정보 없음')); value.textContent='';
-      percent.textContent = accountNeedsLogin() ? t('계정 연결') : (saved?.email || 'Codex');
-      caption.textContent = accountNeedsLogin() ? t('ChatGPT로 로그인') : (saved?.planType || t('계정 설정')); return;
-    }
-    if (!row) {
-      ring.style.setProperty('--remaining','0'); ring.setAttribute('aria-label',t('사용 한도 정보 없음')); value.textContent=''; percent.textContent='–%'; caption.textContent=state.account.email || state.account.planType || t('한도 조회 전'); return;
-    }
-    const remaining = Math.round(row.remaining);
-    ring.style.setProperty('--remaining',String(remaining)); ring.setAttribute('aria-label',t('남은 한도 ') + remaining + '%'); value.textContent='';
-    percent.textContent=remaining + '%'; caption.textContent=row.resetTime ? t('{time} 초기화', {time:row.resetTime}) : t('초기화 시각 확인 불가');
-  }
-  /** One usage limit as a ring gauge; shared by Codex and the invited agents' accounts. */
-  function usageGauge(row) {
-    const card = node('div', null, 'usage-gauge'), copy = node('span', null, 'usage-gauge-copy');
-    const reset = row.resetTime ? t('재설정 {time}', {time:row.resetTime}) : row.reset;
-    copy.append(node('strong', row.label), node('small', reset + '\n' + t('남은 ') + Math.round(row.remaining) + '% · ' + row.duration));
-    card.append(quotaRing(row.remaining, row.label + ' ' + t('남은 ') + Math.round(row.remaining) + '%', true), copy); return card;
-  }
-  function renderUsage(rows) { $('usage-limits').replaceChildren(...rows.map(usageGauge)); }
-  function accountScope(account = state.account) { return JSON.stringify(account || {}); }
-  function resetResetCreditRequest(scope = accountScope()) {
-    if (resetCreditScope !== scope) { resetCreditScope = scope; resetCreditIdempotencyKey = ''; resetCreditSelectedId = ''; }
-  }
-  function earliestResetCredit(data) {
-    const count = data?.availableCount, credits = data?.credits;
-    // The server can omit or cap details. In that case no client-side choice
-    // can guarantee that a hidden credit does not expire sooner.
-    if (!Number.isInteger(count) || count <= 0 || !Array.isArray(credits)) return null;
-    const available = credits.filter(credit => credit?.status === 'available' && credit.resetType === 'codexRateLimits');
-    if (available.length !== count || available.some(credit =>
-      typeof credit.id !== 'string' || !credit.id ||
-      !Object.prototype.hasOwnProperty.call(credit, 'expiresAt') ||
-      (credit.expiresAt !== null && !Number.isSafeInteger(credit.expiresAt)))) return null;
-    return available.slice().sort((a, b) =>
-      (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity) ||
-      (a.grantedAt ?? Infinity) - (b.grantedAt ?? Infinity) || a.id.localeCompare(b.id))[0];
-  }
-  function renderResetCredits(data = resetCredits, status = '') {
-    const target = $('reset-credits'); if (!target) return;
-    target.replaceChildren(); target.hidden = !C.isLoggedIn(state.account);
-    if (target.hidden) return;
-    const available = Number.isInteger(data?.availableCount) && data.availableCount >= 0 ? data.availableCount : null;
-    const head = node('div', null, 'reset-credits-head'), copy = node('span', null, 'reset-credits-copy');
-    const title = node('strong', t('사용 한도 초기화권')); title.id = 'reset-credits-title';
-    const choice = earliestResetCredit(data), canRetry = !!(resetCreditIdempotencyKey && resetCreditSelectedId);
-    copy.append(title, node('small', available === null ? t('초기화권 정보를 사용할 수 없습니다.') : (available ? t('{count}개 사용 가능', {count:available}) : t('사용 가능한 초기화권이 없습니다.'))));
-    if (available > 0 && !choice && !canRetry) copy.append(node('small', t('만료일 전체를 확인할 수 없어 사용을 보류합니다.')));
-    else if (choice?.expiresAt != null && !canRetry) copy.append(node('small', t('가장 먼저 만료: ') + (usageTime(choice.expiresAt) || t('알 수 없음'))));
-    head.append(copy);
-    if (available > 0) {
-      const use = button(t('1개 사용'), consumeResetCredit, 'secondary-button'); use.id = 'reset-credit-use'; use.disabled = resetCreditBusy || (!choice && !canRetry); head.append(use);
-    }
-    target.append(head);
-    if (status) { const message = node('p', status.text || status, 'reset-credits-status' + (status.error ? ' error' : '')); message.id = 'reset-credits-status'; message.setAttribute('role','status'); target.append(message); }
-  }
-  async function consumeResetCredit() {
-    if (resetCreditBusy || !Number.isInteger(resetCredits?.availableCount) || resetCredits.availableCount <= 0 || !C.isLoggedIn(state.account)) return;
-    const choice = earliestResetCredit(resetCredits);
-    if (!choice && !resetCreditSelectedId) return;
-    if (!confirm(t('사용 한도 초기화권 1개를 사용할까요?'))) return;
-    const scope = accountScope(); resetResetCreditRequest(scope); resetCreditBusy = true; renderResetCredits(resetCredits, {text:t('초기화권을 사용하는 중…')});
-    if (!resetCreditIdempotencyKey) {
-      resetCreditIdempotencyKey = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      resetCreditSelectedId = choice.id;
-    }
-    const key = resetCreditIdempotencyKey, creditId = resetCreditSelectedId, generation = usageGeneration;
-    try {
-      const params = {idempotencyKey:key, creditId};
-      const result = await rpc('account/rateLimitResetCredit/consume', params);
-      if (generation !== usageGeneration || scope !== accountScope()) return;
-      const outcome = result?.outcome || result?.status;
-      if (!['reset','alreadyRedeemed','noCredit','nothingToReset'].includes(outcome)) throw new Error(t('초기화권 처리 결과를 확인할 수 없습니다.'));
-      resetCreditIdempotencyKey = ''; resetCreditSelectedId = '';
-      const message = ['reset','alreadyRedeemed'].includes(outcome) ? t('사용 한도를 초기화했습니다.') : outcome === 'noCredit' ? t('사용 가능한 초기화권이 없습니다.') : t('현재 초기화할 사용 한도가 없습니다.');
-      if (['reset','alreadyRedeemed','noCredit'].includes(outcome)) resetCredits = null;
-      resetCreditBusy = false; renderResetCredits(resetCredits, {text:message});
-      if (['reset','noCredit','nothingToReset','alreadyRedeemed'].includes(outcome)) {
-        await loadUsage();
-        if (scope === accountScope()) renderResetCredits(resetCredits, {text:message});
-      }
-    } catch (error) {
-      if (generation === usageGeneration && scope === accountScope()) { resetCreditBusy = false; renderResetCredits(resetCredits, {text:t('초기화권을 사용하지 못했습니다. 다시 시도해 주세요.'), error:true}); }
-    }
-    finally { if (generation === usageGeneration && scope === accountScope()) resetCreditBusy = false; }
-  }
-  function renderAccounts() {
-    const target = $('accounts-list'); if (!target) return; target.replaceChildren();
-    const statusText = accountActionStatus.text || state.authError || '';
-    const status = node('p', statusText, 'muted account-action-status' + (accountActionStatus.error || state.authError ? ' error' : ''));
-    status.id = 'accounts-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.hidden = !statusText; target.append(status);
-    const profiles = Array.isArray(state.accounts) ? state.accounts : [];
-    for (const profile of profiles) {
-      const row = node('div', null, 'account-profile' + (profile.active ? ' active' : ''));
-      const mark = node('span', profile.active ? '✓' : (profile.email || 'C').charAt(0).toUpperCase(), 'account-profile-mark');
-      const copy = node('span', null, 'account-profile-copy'); copy.append(node('strong', profile.email || profile.label || t('ChatGPT 계정')), node('small', profile.needsLogin ? t('다시 로그인이 필요합니다') : (profile.planType || (profile.active ? t('현재 사용 중') : t('등록된 계정')))));
-      const actions = node('span', null, 'account-profile-actions');
-      if (profile.needsLogin) actions.append(button(t('다시 로그인'), () => startLogin(true), 'secondary-button'));
-      else if (profile.active) actions.append(node('span', t('사용 중'), 'status-pill online'));
-      else {
-        actions.append(button(t('전환'), async () => {
-          accountActionStatus = {text:t('계정 전환 중…'), error:false}; renderAccounts();
-          try {
-            const result = await call('auth.switch', {key:profile.key});
-            if (result && Array.isArray(result.accounts)) { state = result; render(result); }
-            const active = (state.accounts || []).find(value => value.active) || profile;
-            accountActionStatus = {text:t('계정을 전환했습니다.') + (active.email ? ' · ' + active.email : ''), error:false}; renderAccounts();
-          } catch (error) {
-            // The settings dialog is a top-layer modal; the global toast is
-            // hidden behind it. Refresh the authoritative state first so a
-            // revoked target can expose its needsLogin marker inline.
-            try { const latest = await call('state'); if (latest) { state = latest; render(latest); } } catch (_) {}
-            accountActionStatus = {text:t('계정 전환에 실패했습니다. ') + (error?.message || t('오류가 발생했습니다.')), error:true}; renderAccounts();
-          }
-        }, 'secondary-button'));
-        actions.append(button(t('삭제'), async () => { if (!confirm((profile.email || profile.label) + '\n' + t('이 기기에 저장된 계정을 삭제할까요?'))) return; await call('auth.remove',{key:profile.key}); }, 'secondary-button subtle-danger'));
-      }
-      row.append(mark,copy,actions); target.append(row);
-    }
-    if (!profiles.length) target.append(node('p',t('등록된 계정이 없습니다.'),'empty-note'));
-  }
+  const currentToolsScope = () => JSON.stringify([state.cwd, state.threadId, state.apiActive]);
+  function accountScope() { return providerScope(); }
   function selectSettingsTab(name) {
-    if (name === 'account') agentUi?.refreshProviders();
     document.querySelectorAll('[data-settings-tab]').forEach(button => {
       const selected = button.dataset.settingsTab === name;
       button.classList.toggle('active', selected);
@@ -1943,27 +1862,7 @@
     $('files-toggle').setAttribute('aria-controls', 'file-panel');
     $('files-toggle').setAttribute('aria-expanded', String(open));
   }
-  function openAccountSettings() { selectSettingsTab('account'); show('settings-dialog'); sidebar(false); loadUsage(); }
-  async function loadUsage() {
-    if (usageLoading || resetCreditBusy) return;
-    const status = $('usage-status'), target = $('usage-limits');
-    if (accountNeedsLogin()) { status.textContent = t('로그인 후 사용 한도를 조회할 수 있습니다.'); target.replaceChildren(); resetCredits = null; renderResetCredits(); return; }
-    usageLoading = true; $('usage-refresh').disabled = true; status.textContent = '';
-    try {
-      let restoredLimits;
-      if (!C.isLoggedIn(state.account)) {
-        const restored = await call('auth.refresh'); render(restored);
-        if (!C.isLoggedIn(state.account)) { status.textContent = t('로그인 후 사용 한도를 조회할 수 있습니다.'); return; }
-        restoredLimits = restored.rateLimits;
-      }
-      const scope = accountScope(), generation = ++usageGeneration; resetResetCreditRequest(scope);
-      const result = restoredLimits || await rpc('account/rateLimits/read', {}), rows = usageRows(result);
-      if (generation !== usageGeneration || accountScope() !== scope) { target.replaceChildren(); status.textContent = t('계정이 바뀌었습니다. 다시 조회해 주세요.'); return; }
-      resetCredits = result?.rateLimitResetCredits ?? null; state.rateLimits = result || {}; renderUsage(rows); renderQuota(); renderResetCredits(resetCredits);
-      status.textContent = rows.length ? t('현재 계정의 Codex 사용 한도입니다.') : t('사용 한도 정보가 제공되지 않았습니다.');
-    } catch (error) { target.replaceChildren(); status.textContent = t('사용 한도를 조회할 수 없습니다. ') + error.message; }
-    finally { usageLoading = false; $('usage-refresh').disabled = false; }
-  }
+  function openProviderSettings() { selectSettingsTab('providers'); show('settings-dialog'); sidebar(false); }
   async function loadTools(force = false) {
     show('tools-dialog'); const target = $('tools-list');
     const scope = currentToolsScope(), generation = ++toolsGeneration;
@@ -2161,13 +2060,12 @@
   reportsUi = window.MobileCodexReports?.({document, call, t, show, close});
   window.mobileCodexEvent = (name, data) => {
     if (name === 'reports.available') { reportsUi?.available(data); return; }
-    if (name.startsWith('live.')) { liveUi?.event(name, data); return; }
     if (name.startsWith('agents.')) { agentUi?.event(name, data); return; }
     if (name === 'response') { const p = pending.get(data.id); if (p) { clearTimeout(p.timer); pending.delete(data.id); data.error ? p.reject(new Error(data.error)) : p.resolve(data.result || {}); } return; }
     if (name === 'state') render(data);
     else if (name === 'error') { if (!data.threadId || data.threadId === state.threadId) toast(data.message); }
     else if (name === 'notice') toast(data.message);
-    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; C.appendDelta(state.messages, data.id, data.delta); drawMessages(); }
+    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
     else if (name === 'tool') { if (data.threadId && data.threadId !== state.threadId) return; activityIcon = /read|list|search/.test(data.name) ? 'inspecting' : 'working'; drawStatusIcons(); $('activity-text').textContent = data.name.replace('mobile_', '') + ' · ' + data.path; logEvent(data.name, data); }
     else if (name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; if (!data.method.endsWith('/delta')) logEvent(data.method, data.params); if (data.method === 'turn/diff/updated') logEvent(t('변경 사항'), data.params.diff); }
     else if (name === 'files.changed' && (!data.threadId || data.threadId === state.threadId) && !$('file-panel').hidden) listFiles().catch(e => toast(e.message));
@@ -2176,7 +2074,6 @@
     else if (name === 'voice.state') drawDictation(data);
     else if (name === 'voice.changed') recoverVoiceInput();
     else if (name === 'attachments.picked') acceptPickedAttachments(data, data.draftKey || '');
-    else if (name === 'login.completed') { if (data.success) { login = null; close('login-dialog'); toast(t('ChatGPT 계정을 연결했습니다.')); } else $('login-help').textContent = data.error || t('로그인이 취소되었습니다. 다시 연결해 주세요.'); }
     else if (name === 'terminal.state') renderTerminal(data);
     else if (name === 'terminal.inputError' && data.id === terminalState.id && data.revision > terminalState.revision && terminalState.running && !terminalState.stopping) {
       terminalState.revision = data.revision;
@@ -2193,13 +2090,7 @@
     else if (name === 'viewport') { document.body.classList.toggle('keyboard-open', !!data.keyboardVisible); viewportChanged(); }
     else if (name === 'theme') document.documentElement.dataset.theme = data.theme === 'dark' ? 'dark' : 'light';
     else if (name === 'notification.open') { const resume = data.threadId ? call('chat.resume', {id:data.threadId}) : Promise.resolve(); resume.then(() => nextRequest()).catch(error => toast(error.message)); }
-    else if (name === 'widget.open') {
-      if (data.provider === 'claude' || data.provider === 'agy') {
-        selectSettingsTab('account'); show('settings-dialog'); sidebar(false);
-        document.querySelector('.provider-account[data-provider="' + data.provider + '"]')?.scrollIntoView({block:'start'});
-        agentUi?.refreshProviders();
-      } else openAccountSettings();
-    }
+    else if (name === 'widget.open') openProviderSettings();
     else if (name === 'notifications.changed') { window.refreshNotificationSettings?.(); }
     else if (name === 'back') window.mobileCodexBack();
   };
@@ -2255,7 +2146,7 @@
     const key = 'sidebar-section-' + listId;
     const apply = expanded => {
       button.setAttribute('aria-expanded', String(expanded));
-      button.setAttribute('aria-label', (listId === 'projects' ? '프로젝트 ' : '일반 대화 ') + (expanded ? '접기' : '펼치기'));
+      button.setAttribute('aria-label', (listId === 'projects' ? '项目 ' : '普通对话 ') + (expanded ? '收起' : '展开'));
       list.hidden = !expanded;
     };
     apply(localStorage.getItem(key) !== 'collapsed');
@@ -2263,7 +2154,7 @@
   }
   on('scrim', () => sidebar(false)); on('new-chat', async () => newChat(''));
   on('add-project', addProject);
-  ['choose-folder', 'composer-folder'].forEach(id => on(id, () => pickFolder()));
+  ['choose-folder', 'header-project'].forEach(id => on(id, () => pickFolder()));
   $('project-link-dialog').addEventListener('close', () => {
     if (document.querySelector('dialog[open]')) return;
     const key = projectLinkReturnKey;
@@ -2286,17 +2177,22 @@
   $('input-dialog').addEventListener('close', () => { if (inputResolve) { const r = inputResolve; inputResolve = null; r(null); } });
   on('input-value', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) $('input-confirm').click(); }, 'keydown');
   on('composer', async () => {
+    if (!configuredApi()) { openProviderSettings(); toast('请先配置 API 服务商。'); return; }
     if (state.workspace?.selected && state.workspace.available === false) { toast(t('먼저 로컬 폴더를 연결해 주세요.')); return; }
     const value = $('prompt').value, text = value.trim();
     if ((!text && !draftContext.attachments.length) || sending || voiceStarting || voiceActive) return;
     if (!state.models.some(m => (m.model || m.id) === $('model').value)) { toast(t('모델 목록을 새로고침해 주세요.')); return; }
+    const chosenModel = state.models.find(m => (m.model || m.id) === $('model').value);
+    if (!window.MobileCodexReasoning.validSelection($('effort').value, chosenModel, !!state.apiActive, $('effort-experimental').checked)) {
+      toast('当前模型不支持所选思考强度，已阻止发送。请重新选择思考档位。'); return;
+    }
     const steer = !!state.busy && !!state.turnId, expectedTurnId = state.turnId || '', expectedThreadId = state.threadId || '', workspaceKey = state.workspace?.key || '';
-    const submitted = {value, context:JSON.parse(JSON.stringify(draftContext)), consultAccount:draftConsultAccount, scopes:new Set([draftScope])}; sending = submitted;
+    const submitted = {value, context:JSON.parse(JSON.stringify(draftContext)), provider:draftProvider, scopes:new Set([draftScope])}; sending = submitted;
     closeComposerAddMenu(false);
     saveDraft(); updateSend(); scrollLatest();
     try {
       await call(steer ? 'chat.steer' : 'chat.send', {text, expectedTurnId, expectedThreadId, workspaceKey, model:$('model').value, effort:$('effort').value, chatIconsEnabled,
-        ...(!steer ? {fastMode:!!fastTier() && draftOptions.fastMode === true} : {}),
+
         attachments:submitted.context.attachments.map(x => x.id), skills:submitted.context.skills, mentions:submitted.context.mentions});
       // Keep text typed during the request, or drafts from a different conversation.
       if (submitted.scopes.has(draftScope) && $('prompt').value === value) {
@@ -2308,9 +2204,12 @@
         renderDraftContext();
       }
       for (const scope of submitted.scopes) {
-        try { if (localStorage.getItem(scope) === value) localStorage.removeItem(scope); const submittedContext = {attachments:submitted.context.attachments, mentions:submitted.context.mentions, skills:submitted.context.skills}; if (localStorage.getItem(contextScope(scope)) === JSON.stringify(submittedContext)) localStorage.removeItem(contextScope(scope)); if (submitted.context.consultPro) localStorage.removeItem(consultScope(scope, submitted.consultAccount)); } catch {}
+        try {
+          if (localStorage.getItem(scope) === value) localStorage.removeItem(scope);
+          const submittedContext = {attachments:submitted.context.attachments, mentions:submitted.context.mentions, skills:submitted.context.skills};
+          if (localStorage.getItem(contextScope(scope)) === JSON.stringify(submittedContext)) localStorage.removeItem(contextScope(scope));
+        } catch {}
       }
-      if (submitted.context.consultPro && submitted.scopes.has(draftScope) && draftConsultAccount === submitted.consultAccount) { draftContext.consultPro = false; renderDraftContext(); }
       saveDraft();
     } finally { sending = null; sizeComposer(); }
   }, 'submit');
@@ -2327,9 +2226,7 @@
   });
   let autocompleteTimer; $('prompt').addEventListener('input', () => { saveDraft(); sizeComposer(); clearTimeout(autocompleteTimer); hideAutocomplete(); if (/[@$]$/.test($('prompt').value.slice(0, $('prompt').selectionStart))) queryAutocomplete(); else autocompleteTimer = setTimeout(queryAutocomplete, 120); });
   $('prompt').addEventListener('focus', () => { if (following) frame(() => { if (following) scrollLatest(); }); });
-  $('composer').addEventListener('focusin', updateComposerExpansion);
-  $('composer').addEventListener('focusout', () => frame(updateComposerExpansion));
-  $('composer').addEventListener('click', e => { if (! $('composer').classList.contains('composer-expanded') && e.target === $('composer')) $('prompt').focus(); });
+  $('composer').addEventListener('click', e => { if (e.target === $('composer')) $('prompt').focus(); });
   $('prompt').addEventListener('click', () => queryAutocomplete());
   $('chat-scroll').addEventListener('scroll', () => {
     const area = $('chat-scroll'), upward = area.scrollTop < historyView.top;
@@ -2338,11 +2235,7 @@
     if (upward && area.scrollTop <= 160) loadEarlierMessages();
   }, {passive:true});
   $('chat-scroll').addEventListener('wheel', e => { if (e.deltaY < 0 && $('chat-scroll').scrollTop <= 160) { following = false; loadEarlierMessages(); } }, {passive:true});
-  on('fast-mode', () => { if ($('fast-mode').disabled) return; draftOptions.fastMode = draftOptions.fastMode !== true; saveOptions(); updateFastButton(); });
-  liveUi = window.MobileCodexLive?.create({call, getState:() => state,
-    getOptions:() => ({model:$('model').value, effort:$('effort').value, fastMode:draftOptions.fastMode === true}),
-    show, close, t, errorText, changed:() => { $('voice-input').disabled = !!liveUi?.active() || voiceStarting || voiceActive; }});
-  on('voice-input', startVoiceInput);
+  on('voice-input', () => { closeComposerAddMenu(false); return startVoiceInput(); });
   on('dictation-done', () => call('voice.stop'));
   on('dictation-cancel', () => call('voice.cancel'));
   on('jump-latest', scrollLatest); on('composer-options', () => {
@@ -2354,6 +2247,17 @@
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
   on('model-picker-back', () => showModelPanel(false));
   on('model-picker-permissions', () => { close('model-picker'); show('options-dialog'); });
+  on('effort-auto', () => {
+    if (!state.apiActive) return;
+    $('effort').value = ''; $('effort').dispatchEvent(new Event('change'));
+    $('effort-heading').textContent = '自动（服务商默认）';
+    syncReasoningPicker(); saveOptions(); optionsSummary();
+  });
+  $('effort-experimental').checked = localStorage.getItem('codex-cn-effort-experimental') === 'yes';
+  on('effort-experimental',()=>{
+    try{localStorage.setItem('codex-cn-effort-experimental',$('effort-experimental').checked?'yes':'no');}catch{}
+    efforts();syncReasoningPicker();saveOptions();
+  },'change');
   on('effort-slider', previewReasoning, 'input');
   on('effort-slider', () => {
     const option = [...$('effort').options].filter(option => option.value)[Number($('effort-slider').value)];
@@ -2377,7 +2281,7 @@
     imageTouch = null;
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
-  on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy || !!state.proBusy); syncApprovalControl(!!state.busy || !!state.proBusy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
+  on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
   $('add-attachment').addEventListener('click', () => { if (!closeComposerAddMenu()) openComposerAddMenu(); });
   // Focusing the compact plus before pointerup moves it to the expanded row.
   // Keep its target still until the click opens and focuses the menu.
@@ -2397,21 +2301,135 @@
   on('approval-mode', () => setApprovalMode($('approval-mode').value), 'change');
   document.querySelectorAll('input[name="permission"]').forEach(r => r.addEventListener('change', () => setPermissionMode(r.value).catch(error => toast(error.message))));
   ensureCharacterPackUi(); ensureNotificationSettings();
+  apiProvidersUi?.init({call, refresh:()=>call('state').then(render), toast});
+  if ($('api-effort-choice')) on('api-effort-choice', () => {
+    const value = $('api-effort-choice').value;
+    if (![...$('effort').options].some(o => o.value === value)) {
+      toast('该档位不可用，请重新选择。'); return;
+    }
+    $('effort').value = value;
+    $('effort').dispatchEvent(new Event('change', {bubbles:true}));
+  }, 'change');
+/* Native Codex subagent configuration. Availability requires runtime verification. */
+  function cnSectionEntries(content,section) {
+    const lines=String(content||'').replace(/\r\n/g,'\n').split('\n');
+    let inside=false;const obj={};
+    for (const line of lines) {
+      const hdr=line.match(/^\s*\[([^\]\n]+)\]\s*(?:#.*)?$/);
+      if (hdr) {inside=hdr[1].trim()===section;continue;}
+      if (!inside)continue;
+      const m=line.match(/^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([^#\n]*?)(?:\s+#.*)?$/);
+      if (m)obj[m[1]]=m[2].trim();
+    }
+    return obj;
+  }
+  function cnSetTomlSection(content,section,entries) {
+    const lines=String(content||'').replace(/\r\n/g,'\n').split('\n');
+    const table=/^\s*\[\[?([^\]\n]+)\]\]?\s*(?:#.*)?$/;
+    let start=-1,end=lines.length;
+    for(let i=0;i<lines.length;i++){
+      const m=lines[i].match(table);
+      if(m && start>=0){end=i;break;}
+      if(m && m[1].trim()===section && start<0)start=i;
+    }
+    if(start<0){
+      let out=lines.join('\n').replace(/\s*$/,'');
+      out+='\n\n['+section+']\n'+Object.entries(entries).filter(([,value])=>value!==null).map(([key,value])=>key+' = '+value).join('\n')+'\n';
+      return out;
+    }
+    for(const [key,value] of Object.entries(entries)){
+      const re=new RegExp('^\\s*'+key+'\\s*=');
+      const hits=[];
+      for(let i=start+1;i<end;i++)if(re.test(lines[i]))hits.push(i);
+      if(value===null){ for(const index of hits.reverse()){lines.splice(index,1);end--;} continue; }
+      if(hits.length>1)throw new Error('已有重复配置键：['+section+'] '+key+'。请先在配置编辑器处理。');
+      if(hits.length)lines[hits[0]]=key+' = '+value;
+      else {lines.splice(end,0,key+' = '+value);end++;}
+    }
+    return lines.join('\n');
+  }
+  let subagentBusy=false;
+  function subagentPrerequisite() {
+    if (!configuredApi()) return '请先配置并选择 API 服务商。';
+    if (!state.ready) return '请先启动 Codex 运行时。';
+    if (state.busy) return '当前任务结束后可更改配置。';
+    const model = state.models.find(model => (model.model || model.id) === $('model').value);
+    if (!model) return '请先选择可用模型。';
+    if (state.subagentsAvailable === false || model.supportsToolCalls === false || model.supportsTools === false) return '当前运行时或模型未提供子智能体所需的工具调用。';
+    return '';
+  }
+  function syncSubagentControls() {
+    const reason = subagentPrerequisite(), blocked = subagentBusy || !!reason;
+    $('subagents-save').disabled = blocked; $('subagents-test').disabled = blocked;
+    $('subagents-enabled').disabled = subagentBusy || !!state.busy;
+    $('subagents-limit').disabled = subagentBusy || !!state.busy;
+    $('subagents-save').title = reason; $('subagents-test').title = reason;
+  }
+
+  function cnReadAgentPrefs(content) {
+    const feats=cnSectionEntries(content,'features'),agents=cnSectionEntries(content,'agents');
+    const active=feats.multi_agent==='true'||feats.multi_agent_v2==='true';
+    const n=Number(agents.max_threads||agents.max_concurrent_threads_per_session||3);
+    return {active:active&&agents.enabled!=='false',limit:[1,2,3,4].includes(n)?n:3};
+  }
+  async function cnLoadSubagents() {
+    const el=$('subagents-status');
+    el.textContent='正在读取 Codex 本地配置…';
+    try{
+      const cfg=await call('config.read');
+      const prefs=cnReadAgentPrefs(cfg?.content||'');
+      $('subagents-enabled').checked=prefs.active;
+      $('subagents-limit').value=String(prefs.limit);
+      el.textContent=prefs.active?'配置中已启用多智能体；能否成功派遣仍需实际测试。':'当前未在配置中启用多智能体。';
+    }catch(error){el.textContent='读取失败：'+errorText(error);}
+  }
+  async function cnSaveSubagents() {
+    const reason = subagentPrerequisite();
+    if (reason) { $('subagents-status').textContent = reason; return; }
+    if(subagentBusy)return;
+    subagentBusy=true; syncSubagentControls();
+    const save=$('subagents-save'),status=$('subagents-status');
+    save.disabled=true;status.textContent='正在保存本地配置…';
+    try{
+      const read=await call('config.read');
+      if(typeof read?.content!=='string')throw new Error('未能读取完整 config.toml，已中止保存。');
+      const enabled=$('subagents-enabled').checked;
+      const limit=Number($('subagents-limit').value);
+      if(![1,2,3,4].includes(limit))throw new Error('并行数无效');
+      let content=cnSetTomlSection(read.content,'features',{multi_agent:String(enabled)});
+      if(!enabled)content=cnSetTomlSection(content,'features',{multi_agent_v2:'false'});
+      content=cnSetTomlSection(content,'agents',{enabled:String(enabled),max_concurrent_threads_per_session:null,max_threads:String(limit)});
+      if(content===read.content){status.textContent='设置没有变化；仍需实际发送任务验证。';return;}
+      await call('config.save',{content});
+      status.textContent='配置已保存，正在重新连接 Codex…';
+      await call('runtime.start');
+      const check=await call('config.read');
+      const actual=cnReadAgentPrefs(check?.content||'');
+      if(actual.active!==enabled||actual.limit!==limit)throw new Error('保存后复查结果不一致');
+      status.textContent=enabled?'已启用多智能体配置（最多 '+limit+' 个）。请使用测试任务验证 spawn_agent 是否可调用。':'已停用多智能体配置。';
+    }catch(error){status.textContent='未确认启用成功：'+errorText(error)+ '。可在「Codex 设置编辑」中检查。';}
+    finally{subagentBusy=false;syncSubagentControls();}
+  }
+  on('subagents-refresh',cnLoadSubagents);
+  on('subagents-save',cnSaveSubagents);
+  on('subagents-test',()=>{
+    const reason = subagentPrerequisite(); if (reason) { $('subagents-status').textContent = reason; return; }
+    const task='请使用 Codex 原生 spawn_agent 派遣两个子智能体：一个检查当前项目的代码结构，一个只读检查潜在问题。等待它们完成并汇总结果。请报告是否真正调用了 spawn_agent；如果不可用，明确说明，不要假装创建了子智能体。';
+    $('prompt').value=task;saveDraft();sizeComposer();close('settings-dialog');$('prompt').focus();
+    toast('测试提示词已填入，确认后手动点击发送。');
+  });
+
+  on('restart', async () => { await call('runtime.stop'); await call('runtime.start'); });
+  on('engine-stop', () => call('runtime.stop'));
   selectSettingsTab('general');
-  on('connect', () => startLogin(false)); on('account-button', openAccountSettings); on('settings', () => { ensureCharacterPackUi(); ensureNotificationSettings(); show('settings-dialog'); sidebar(false); if (document.querySelector('[data-settings-tab="account"].active')) agentUi?.refreshProviders(); if (!characterState.folderConfigured && characterState.packs.length <= 1) loadCharacterPacks(); });
+  on('configure-api', openProviderSettings); on('settings', () => { ensureCharacterPackUi(); ensureNotificationSettings(); show('settings-dialog'); sidebar(false); if (!characterState.folderConfigured && characterState.packs.length <= 1) loadCharacterPacks(); });
   document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.addEventListener('click', () => {
     const selected = tab.dataset.settingsTab; selectSettingsTab(selected);
     if (selected === 'personal' && !instructionsLoaded) loadInstructions();
-    if (selected === 'account') loadUsage();
     if (selected === 'tools') refreshLinuxStatus();
     if (selected === 'updates') loadUpdates();
+    if (selected === 'advanced') cnLoadSubagents();
   }));
-  on('device-code', async () => { if (login) { await call('ui.copyCode', {code: login.userCode}); toast(t('코드를 복사했습니다.')); } });
-  on('open-login', () => login && call('ui.loginBrowser', {url: login.verificationUrl}));
-  $('login-dialog').addEventListener('close', () => { if (login?.loginId) call('auth.cancel', {loginId: login.loginId}).catch(() => {}); login = null; });
-  on('account-add', () => startLogin(true));
-  on('restart', async () => { await call('runtime.stop'); await call('runtime.start'); }); on('engine-stop', () => call('runtime.stop')); on('logout', async () => { if (!C.isLoggedIn(state.account)) return startLogin(false); if (!confirm(t('현재 계정을 이 기기에서 로그아웃할까요?'))) return; await call('auth.logout'); });
-  on('usage-refresh', loadUsage);
   ['check','download','cancel','clear','permission','install'].forEach(action => on('update-' + action, () => updateAction(action)));
   $('update-repository').addEventListener('input', () => { updateSourceDirty = true; drawUpdates(updateState); });
   $('update-prereleases').addEventListener('change', () => { updateSourceDirty = true; drawUpdates(updateState); });
@@ -2507,9 +2525,6 @@
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
-  const resetCreditPanel = $('reset-credits');
-  agentUi = window.MobileCodexAgents?.init({call, getState:()=>state, toast, show, close, closeAddMenu:()=>closeComposerAddMenu(false), closeFilePanel:()=>setFilePanelOpen(false), openAccounts:openAccountSettings, usageGauge, usageTime, getCharacters:()=>characterState, characterIcon, openLinuxSettings:()=>{ensureLinuxUi();selectSettingsTab('tools');show('settings-dialog');refreshLinuxStatus();$('linux-environment-card')?.scrollIntoView({block:'start'});}});
-  $('usage-limits').after(resetCreditPanel);
   viewportChanged();
   call('state').then(async initial => { render(initial); loadCharacterPacks(); recoverVoiceInput(); loadUpdates(); try { acceptPickedAttachments(await call('attachments.recover'), ''); } catch {} }).catch(e => toast(e.message));
 })();
