@@ -2,6 +2,18 @@
 
 找不到 V5 原签名时，按 [安全迁移方案](SAFE_V5_MIGRATION.md) 保留 V5，安装独立的 API 版。该版本的应用名称为 **Codex CN API**，包名为 `dev.mobilecodex.app.zhcnv3.next`；旧 V5 仍为 `dev.mobilecodex.app.zhcnv3`。
 
+## 已完成的构建与本地交付
+
+源码提交 `9d276e9b13f3c0ccdc84af5c9c20fa7db750b83c` 的[完整构建](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44075388855)已通过 UI、Chromium、Python、Debug/Release/parallel 单元测试、lint 和 APK 打包。并行 APK 已在用户手机本地签名，通过 Google apksigner 验证，并核对签名前后全部 ZIP 成员内容、ARM64 和 48 个 Web 资源。
+
+- 已交付本地文件：`Download/Codex-CN-API-0.3.9-cn.6-arm64.apk`
+- 大小：186,215,218 字节。
+- SHA-256：`a1e2a6a61b107590980ab7d033807f171b6d8ff5a8b06d465469a4bd2c64ed0f`。
+- 包名：`dev.mobilecodex.app.zhcnv3.next`；版本：`0.3.9-cn.6` / `77`。
+- 签名证书：`c3537a4bbf12e671868127ef3267c4806ffabed83d62208d94085ae4fe12b207`。
+
+签名后的文件已复制并复核 SHA-256，但尚未安装、启动或使用真实服务商验收，也未发布到 GitHub Release。下载目录中另一个带 `unsigned` 的原包名 APK 是构建检查材料，安装时使用上面不带 `unsigned` 的 API 版。
+
 ## 构建与签名
 
 ```sh
