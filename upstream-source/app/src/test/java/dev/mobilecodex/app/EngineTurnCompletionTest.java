@@ -123,6 +123,7 @@ public class EngineTurnCompletionTest {
         assertEquals("failed", lastTaskNotification().getStringExtra("kind"));
         assertEquals("Usage limit reached", errors.get(0).getString("message"));
 
+        runningTurns().put("local-thread", "turn-two");
         complete(obj("id", "turn-two"));
         assertEquals("completed", lastTaskNotification().getStringExtra("kind"));
     }
@@ -143,6 +144,53 @@ public class EngineTurnCompletionTest {
         assertFalse(background.getBoolean("approvalPending"));
         assertTrue(session.getBoolean("approvalPending"));
         assertTrue(errors.isEmpty());
+    }
+
+    @Test public void commentaryAndToolItemsDoNotCompleteTheTask() throws Exception {
+        notifyEvent("item/completed", obj("threadId", "remote-thread", "turnId", "turn-one",
+            "item", obj("id", "progress", "type", "agentMessage", "phase", "commentary", "text", "I will inspect the files.")));
+        assertTrue(runningTurns().containsKey("local-thread"));
+        assertEquals(0, taskNotificationCount());
+        notifyEvent("item/completed", obj("threadId", "remote-thread", "turnId", "turn-one",
+            "item", obj("id", "command", "type", "commandExecution", "status", "completed")));
+        assertTrue(runningTurns().containsKey("local-thread"));
+        assertEquals(0, taskNotificationCount());
+        complete(obj("id", "turn-one", "status", "completed"));
+        assertEquals(1, taskNotificationCount());
+    }
+
+    @Test public void duplicateAndUntrackedCompletionsDoNotNotifyAgain() throws Exception {
+        complete(obj("id", "turn-one", "status", "completed"));
+        assertEquals(1, taskNotificationCount());
+        notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "turn-one", "status", "completed")));
+        notifyEvent("turn/completed", obj("threadId", "unknown-child", "turn", obj("id", "child-turn", "status", "completed")));
+        assertEquals(1, taskNotificationCount());
+        assertFalse(state.getBoolean("busy"));
+    }
+
+    @Test public void staleCompletionCannotStopTheCurrentTurn() throws Exception {
+        notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "old-turn", "status", "completed")));
+        assertEquals("turn-one", runningTurns().get("local-thread"));
+        assertEquals(0, taskNotificationCount());
+    }
+
+    @Test public void incompleteCompletionEventsLeaveTheTrackedTaskRunning() throws Exception {
+        notifyEvent("turn/completed", obj("threadId", "remote-thread"));
+        notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("status", "completed")));
+        assertEquals("turn-one", runningTurns().get("local-thread"));
+        assertTrue(state.getBoolean("busy"));
+        assertTrue(session.getBoolean("approvalPending"));
+        assertEquals(0, taskNotificationCount());
+    }
+
+    private void notifyEvent(String name, JSONObject params) throws Exception {
+        Method notification = Engine.class.getDeclaredMethod("onNotification", String.class, JSONObject.class);
+        notification.setAccessible(true);
+        engine.io.submit(() -> { notification.invoke(engine, name, params); return null; }).get(5, TimeUnit.SECONDS);
+    }
+    private long taskNotificationCount() {
+        return shadowOf(application).getBroadcastIntents().stream()
+            .filter(intent -> CodexNotificationReceiver.ACTION.equals(intent.getAction())).count();
     }
 
     private void complete(JSONObject turn) throws Exception { notifyCompletion("remote-thread", turn); }

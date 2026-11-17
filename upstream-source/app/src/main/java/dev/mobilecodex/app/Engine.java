@@ -1327,8 +1327,11 @@ public final class Engine {
                 JSONObject completedTurn = p.optJSONObject("turn");
                 String completedId = completedTurn == null ? "" : completedTurn.optString("id");
                 String runningId = runningTurns.get(eventThreadId);
-                if (!completedId.isBlank() && runningId != null && !completedId.equals(runningId)) return;
-                if (!eventThreadId.isBlank()) runningTurns.remove(eventThreadId);
+                // Only the tracked top-level turn can finish a user task. Replayed,
+                // child-thread and stray item completions must never notify again.
+                if (target == null || eventThreadId.isBlank() || runningId == null
+                        || completedId.isBlank() || !completedId.equals(runningId)) return;
+                runningTurns.remove(eventThreadId);
                 if (target != null) target.put("approvalPending", false);
                 syncCurrentTurn();
                 JSONObject turn = p.optJSONObject("turn");
@@ -1361,8 +1364,8 @@ public final class Engine {
             } else if (method.equals("error")) {
                 JSONObject error = p.optJSONObject("error");
                 error("chat.send", obj("threadId", eventThreadId, "message", error == null ? t("Codex 요청 오류") : error.optString("message", t("Codex 요청 오류"))), new DiagnosticFailure.RpcFailure("", error));
-            } else {
-                event("agent.event", obj("method", method, "params", p));
+            } else if (target != null && currentThread) {
+                event("agent.event", obj("threadId", eventThreadId, "method", method, "params", p));
             }
         } catch (Exception e) {
             String remoteFailedThread = p.optString("threadId");

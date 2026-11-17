@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="visual-system.css">
   <link rel="stylesheet" href="spacing.css">
   <link rel="stylesheet" href="github-auth.css">
+  <link rel="stylesheet" href="model-controls.css">
   <script src="ui-core.js" defer></script>
   <script src="translations.js" defer></script>
   <script src="translations-zh.js" defer></script>
@@ -115,15 +116,9 @@
       <section id="reasoning-panel" class="model-picker-panel">
         <button id="model-picker-model" type="button" class="model-picker-heading" aria-controls="model-panel" aria-expanded="false"><strong id="effort-heading"></strong><span><span id="model-heading"></span><svg><use href="#i-down"/></svg></span></button>
         <div id="reasoning-control" class="reasoning-control">
-          <div id="effort-preset-grid" class="effort-preset-grid" role="group" aria-label="选择思考强度"></div>
-          <input id="effort-slider" type="range" min="0" max="0" step="1" value="0" aria-label="思考强度（辅助控制）" hidden>
-          <button id="effort-auto" class="secondary-button" type="button" hidden>自动</button>
-          <small id="effort-availability" class="muted" style="display:block;margin-top:8px;line-height:1.45"></small>
-          <label class="effort-experimental-label"><input id="effort-experimental" type="checkbox"> 允许试用未报告支持的思考档位</label>
-          <small class="muted" style="display:block;margin-top:8px">全部 7 个档位固定显示；不支持的档位默认置灰。第三方 API 为手动试验，实际请求失败不会自动改成低强度。</small>
-          <small id="effort-contract" class="muted" style="display:block;margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5" role="status" aria-live="polite"></small>
+          <input id="effort-slider" type="range" min="0" max="0" step="1" value="0" aria-label="思考强度" aria-describedby="effort-heading">
+          <div id="effort-levels" class="effort-levels" aria-hidden="true"></div>
         </div>
-        <p id="effort-unavailable" class="muted" hidden>추론 강도 조절 미지원</p>
       </section>
       <section id="model-panel" class="model-picker-panel" inert aria-hidden="true">
         <button id="model-picker-back" type="button" class="model-picker-back"><svg><use href="#i-back"/></svg><span>추론 강도</span></button>
@@ -134,7 +129,6 @@
     <div class="model-picker-footer"><button id="model-picker-permissions" type="button"><svg><use href="#i-settings"/></svg><span>작업 권한</span><svg><use href="#i-down"/></svg></button></div>
     <select id="model" hidden aria-hidden="true" tabindex="-1"><option value="">모델 목록 조회 필요</option></select>
     <select id="effort" hidden aria-hidden="true" tabindex="-1"><option value="">추론 설정 정보 없음</option></select>
-    <span id="model-help" hidden></span>
   </dialog>
   <dialog id="options-dialog" class="sheet-dialog options-sheet" aria-labelledby="options-title"><button type="button" class="sheet-grip" data-close="options-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button>
     <div class="dialog-head"><h2 id="options-title">작업 권한</h2><button class="icon-button" data-close="options-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div>

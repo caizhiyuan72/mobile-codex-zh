@@ -196,8 +196,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", Map.of(), new ByteArrayInputStream(new byte[0]));
     }
     @Override protected void onStart() { super.onStart(); if (loaded) engine.attach(this); engine.unobserve(this); }
-    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; getSharedPreferences("notifications", 0).edit().putBoolean("foreground", true).commit(); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) { engine.attach(this); engine.restoreAccount(); } event("voice.changed", obj()); }
-    @Override protected void onPause() { foreground = false; getSharedPreferences("notifications", 0).edit().putBoolean("foreground", false).commit(); if (dictation != null && !dictation.waitingPermission()) dictation.cancel(); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; CodexNotificationReceiver.setAppForeground(true); CodexNotificationReceiver.clearTaskNotifications(this); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) { engine.attach(this); engine.restoreAccount(); } event("voice.changed", obj()); }
+    @Override protected void onPause() { foreground = false; CodexNotificationReceiver.setAppForeground(false); if (dictation != null && !dictation.waitingPermission()) dictation.cancel(); super.onPause(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleNotificationIntent(intent); }
     private void handleNotificationIntent(Intent intent) {
         if (intent == null || !CodexNotificationReceiver.ACTION.equals(intent.getAction())) return;

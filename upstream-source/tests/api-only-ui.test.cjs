@@ -47,7 +47,7 @@ test('long provider names stay outside the composer and Stop stays reachable dur
  assert.equal(d.getElementById('model-summary').textContent,'gpt-6.1-sol');
  assert.equal(d.getElementById('stop').hidden,false);assert.equal(d.getElementById('send').hidden,true);
  const prompt=d.getElementById('prompt');prompt.value='再检查测试';prompt.dispatchEvent(new w.Event('input'));flush();
- assert.equal(d.getElementById('stop').hidden,false);assert.equal(d.getElementById('send').hidden,false);
+ assert.equal(d.getElementById('stop').hidden,false);assert.equal(d.getElementById('send').hidden,true);
  w.mobileCodexEvent('state',{...state,busy:false});flush();assert.equal(d.getElementById('stop').hidden,true);
  assert.equal(d.getElementById('send').hidden,false);assert.equal(prompt.value,'再检查测试');
 });
@@ -66,4 +66,51 @@ test('subagent changes wait until a running task is complete',async()=>{
  const {w,calls,flush}=setup({busy:true});await tick();flush();const d=w.document;
  assert.equal(d.getElementById('subagents-save').disabled,true);assert.equal(d.getElementById('subagents-test').disabled,true);
  d.getElementById('subagents-save').click();await tick();assert.equal(calls.some(call=>call.action==='config.save'),false);
+});
+
+
+test('latest-message shortcut waits for whole task completion and stays centered',async()=>{
+ const {w,state,flush}=setup({busy:true,turnId:'one',messages:[{id:'progress',role:'assistant',text:'正在检查文件'}]});await tick();flush();
+ const d=w.document,area=d.getElementById('chat-scroll'),jump=d.getElementById('jump-latest');
+ Object.defineProperties(area,{scrollHeight:{configurable:true,value:1400},clientHeight:{configurable:true,value:400}});
+ area.scrollTop=0;area.dispatchEvent(new w.Event('scroll'));assert.equal(jump.hidden,true);
+ w.mobileCodexEvent('message.delta',{threadId:'test',id:'progress',delta:'，接着运行测试'});flush();assert.equal(jump.hidden,true);
+ w.mobileCodexEvent('state',{...state,busy:false,turnId:''});flush();assert.equal(jump.hidden,false);
+ jump.click();await tick();assert.equal(jump.hidden,true);
+ const css=fs.readFileSync(path.join(web,'app.css'),'utf8');
+ assert.match(css,/left: 50%; transform: translateX\(-50%\)/);
+ assert.match(css,/@keyframes latest-enter \{ from \{ opacity: 0; \} to \{ opacity: 1; \} \}/);
+});
+
+
+test('snapshot and streaming changes above the reader keep the same visible message offset',async()=>{
+ for(const mode of ['snapshot','stream']) {
+  const {w,state,flush}=setup({busy:true,turnId:'turn',messages:[{id:'head',role:'assistant',text:'short'},{id:'reading',role:'assistant',text:'Read this paragraph'},{id:'tail',role:'assistant',text:'Working'}]});await tick();flush();
+  const d=w.document,area=d.getElementById('chat-scroll');
+  Object.defineProperties(area,{scrollHeight:{get:()=>1500},clientHeight:{value:400}});
+  area.getBoundingClientRect=()=>({top:0,bottom:400});
+  for(const el of d.querySelectorAll('#messages > article')) el.getBoundingClientRect=()=>{
+   const headHeight=d.querySelector('[data-id="head"]').textContent.includes('expanded')?250:100;
+   const top=(el.dataset.id==='head'?0:el.dataset.id==='reading'?headHeight:headHeight+400)-area.scrollTop;
+   return {top,bottom:top+(el.dataset.id==='head'?headHeight:400)};
+  };
+  area.scrollTop=150;area.dispatchEvent(new w.Event('scroll'));
+  const reader=d.querySelector('[data-id="reading"]');assert.equal(reader.getBoundingClientRect().top,-50);
+  if(mode==='snapshot')w.mobileCodexEvent('state',{...state,messages:[{...state.messages[0],text:'expanded'},...state.messages.slice(1)]});
+  else w.mobileCodexEvent('message.delta',{threadId:'test',id:'head',delta:' expanded'});
+  flush();assert.equal(area.scrollTop,300,mode);assert.equal(reader.getBoundingClientRect().top,-50,mode);
+  w.mobileCodexEvent('state',{...state,busy:false,turnId:'',messages:[{...state.messages[0],text:'expanded'},...state.messages.slice(1)]});flush();
+  assert.equal(area.scrollTop,300,'completion preserves the reading position');
+  assert.equal(d.getElementById('jump-latest').hidden,false);
+ }
+});
+
+test('tool activity follows the tail only while the reader is following',async()=>{
+ const {w,flush}=setup({busy:true,messages:[{id:'a',role:'assistant',text:'Working'}]});await tick();flush();
+ const d=w.document,area=d.getElementById('chat-scroll');
+ Object.defineProperties(area,{scrollHeight:{get:()=>1200+d.querySelectorAll('#task-activity details').length*40},clientHeight:{value:400}});
+ d.getElementById('jump-latest').click();
+ w.mobileCodexEvent('tool',{threadId:'test',name:'mobile_read',path:'one.txt'});assert.equal(area.scrollTop,1240);
+ area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));
+ w.mobileCodexEvent('tool',{threadId:'test',name:'mobile_read',path:'two.txt'});assert.equal(area.scrollTop,100);
 });

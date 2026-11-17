@@ -1,0 +1,16 @@
+/* Model controls stay readable within the phone composer and popover. */
+#model-summary { font-size: var(--fs-md); font-weight: 650; }
+#model-picker { width: 320px; }
+.model-picker-heading { align-items: flex-start; gap: 8px; padding: 10px 12px; }
+.model-picker-heading > span { order: -1; width: 100%; justify-content: space-between; }
+#model-heading { font-size: var(--fs-xl, 22px); font-weight: 650; line-height: 1.35; color: var(--text); }
+#effort-heading { font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); }
+#model-picker .model-choice strong { font-size: var(--fs-lg); line-height: 1.4; }
+#reasoning-control { padding: 2px 12px 14px; }
+#effort-slider { height: 44px; }
+#effort-slider::-webkit-slider-runnable-track { height: 8px; }
+#effort-slider::-webkit-slider-thumb { width: 28px; height: 28px; margin-top: -10px; }
+.effort-levels { display: flex; justify-content: space-between; gap: 6px; font-size: var(--fs-xs); line-height: 1.5; color: var(--text-2); }
+.effort-levels span { flex: 1; text-align: center; }
+.effort-levels span:first-child { text-align: left; }
+.effort-levels span:last-child { text-align: right; }

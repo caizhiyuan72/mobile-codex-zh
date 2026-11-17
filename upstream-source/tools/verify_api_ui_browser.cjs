@@ -12,11 +12,11 @@ const state={ready:true,busy:false,permissions:'workspace-write',status:'Connect
  models:[{id:'gpt-6.1-sol-'+ 'long-model-'.repeat(12),model:'gpt-6.1-sol-'+ 'long-model-'.repeat(12),displayName:'openai · gpt-6.1-sol-'+ 'long-model-'.repeat(12),isDefault:true}],
  messages:[{id:'u',role:'user',text:'请检查项目并说明修改。'},{id:'a',role:'assistant',text:'已经读取项目。\n\n接下来可以修复布局、运行测试并审查变更。'}]};
 async function settle(page){await page.evaluate(async()=>{await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await Promise.all(document.getAnimations().filter(animation=>Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{})));});}
-async function toolbar(page,width,height){
- const geometry=await page.evaluate(()=>{
+async function toolbar(page,width,height,{busy=false,focused=true}={}){
+ const geometry=await page.evaluate(busy=>{
   const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
-  return {viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,composer:box('composer'),prompt:box('prompt'),controls:['add-attachment','composer-options','send'].map(box),stop:document.getElementById('stop').hidden,active:document.activeElement.id};
- });
+  return {viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,composer:box('composer'),prompt:box('prompt'),controls:['add-attachment','composer-options',busy?'stop':'send'].map(box),actionIds:[...document.querySelectorAll('.composer-actions > .send-button')].filter(button=>button.getClientRects().length).map(button=>button.id),stopColor:getComputedStyle(document.getElementById('stop')).backgroundColor,stopDisabled:document.getElementById('stop').disabled,active:document.activeElement.id};
+ },busy);
  assert.ok(geometry.scrollWidth<=width+1,'document fits '+width);
  assert.ok(geometry.composer.left>=0&&geometry.composer.right<=width+1,'composer fits');
  assert.ok(geometry.composer.bottom<=height+1,'composer stays above viewport edge');
@@ -24,7 +24,9 @@ async function toolbar(page,width,height){
  const [attach,model,send]=geometry.controls;assert.ok(Math.abs(attach.top-send.top)<=1&&Math.abs(model.top-send.top)<=1,'actions share one row');
  assert.ok(attach.right<=model.left+1&&model.right<=send.left+1,'actions do not overlap');assert.ok(geometry.prompt.bottom<=attach.top+1,'input does not overlap toolbar');
  assert.ok(geometry.prompt.height<=Math.max(112,height*.27)+2,'input has a bounded height');
- assert.equal(geometry.active,'prompt');return geometry;
+ assert.deepEqual(geometry.actionIds,[busy?'stop':'send'],'exactly one composer action is visible');
+ if(busy){assert.equal(geometry.stopDisabled,false);assert.equal(geometry.stopColor,'rgb(215, 58, 73)','Stop is visibly red');}
+ if(focused)assert.equal(geometry.active,'prompt');return geometry;
 }
 async function editingLine(page,expected){
  const result=await page.locator('#prompt').evaluate(field=>{
@@ -113,6 +115,71 @@ async function attachmentLayout(page,width,theme){
  assert.equal(await page.locator('#draft-context').isVisible(),false,'empty attachment row is hidden');
  await page.setViewportSize({width,height:820});await settle(page);
 }
+async function taskControls(page,width,theme){
+ await page.locator('#prompt').fill('保留这条后续指令');await settle(page);
+ const idle=(await toolbar(page,width,820)).controls.at(-1);
+ await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:true,turnId:'turn'}));await settle(page);
+ const working=(await toolbar(page,width,820,{busy:true})).controls.at(-1);
+ // Native restores and textarea input both update the same action position.
+ for(const property of ['left','top','width','height'])assert.ok(Math.abs(idle[property]-working[property])<=1,'Stop replaces Send at the same '+property);
+ await page.locator('#prompt').fill('工作时输入也不能隐藏停止按钮');await settle(page);await toolbar(page,width,820,{busy:true});
+ await page.locator('.msg-copy-btn').first().focus();await settle(page);await toolbar(page,width,820,{busy:true,focused:false});
+ await page.screenshot({path:path.join(output,`stop-${width}-${theme}.png`)});
+ await page.locator('#stop').click();await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.stop'));
+ assert.equal(await page.locator('#stop').isVisible(),true,'Stop waits for native completion');
+ await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:false,turnId:''}));await settle(page);
+ await toolbar(page,width,820,{focused:false});
+ assert.equal(await page.locator('#prompt').inputValue(),'工作时输入也不能隐藏停止按钮','completion preserves the draft');
+}
+async function reasoningLayout(page,width){
+ const result=await page.evaluate(()=>{
+  const picker=document.getElementById('model-picker'),slider=document.getElementById('effort-slider'),heading=document.getElementById('model-heading');
+  const box=element=>{const r=element.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
+  return {picker:box(picker),slider:box(slider),summaryFont:parseFloat(getComputedStyle(document.getElementById('model-summary')).fontSize),headingFont:parseFloat(getComputedStyle(heading).fontSize),
+   fits:picker.scrollWidth<=picker.clientWidth+1,levels:[...document.querySelectorAll('#effort-levels span')].map(span=>span.textContent),
+   forbidden:picker.querySelectorAll('#model-help,#effort-experimental,#effort-preset-grid,#effort-contract').length};
+ });
+ assert.ok(result.fits,'model picker content fits '+width);
+ assert.ok(result.slider.width>0&&result.slider.height>=43.5,'reasoning uses a visible 44px range control');
+ assert.ok(result.slider.left>=result.picker.left&&result.slider.right<=result.picker.right+1,'slider fits the picker');
+ assert.ok(result.summaryFont>=14&&result.headingFont>=18,'model names remain readable on phone');
+ assert.deepEqual(result.levels,['low','medium','high'],'provider without metadata offers standard English levels');
+ assert.equal(result.forbidden,0,'model picker omits descriptions and experimental controls');
+ await page.locator('#effort-slider').evaluate(slider=>{slider.value=slider.max;slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));});
+ await page.waitForFunction(()=>document.getElementById('effort').value==='high');
+ assert.equal(await page.locator('#effort').inputValue(),'high','slider changes the selected request level');
+}
+async function readingThroughCompletion(page,width,theme){
+ const messages=Array.from({length:36},(_,i)=>({id:'read-'+i,role:i%2?'assistant':'user',text:'第 '+(i+1)+' 条消息。'+('保留当前阅读位置并继续检查项目。'.repeat(3))}));
+ await page.evaluate(messages=>{window.layoutState={...window.layoutState,busy:true,turnId:'reading-turn',messages};window.mobileCodexEvent('state',window.layoutState);},messages);
+ await settle(page);
+ const before=await page.evaluate(()=>{
+  const area=document.getElementById('chat-scroll'),target=document.querySelector('[data-id="read-12"]');
+  area.scrollTop+=target.getBoundingClientRect().top-area.getBoundingClientRect().top-24;
+  area.dispatchEvent(new Event('scroll'));
+  return {top:target.getBoundingClientRect().top-area.getBoundingClientRect().top,scrollTop:area.scrollTop};
+ });
+ assert.ok(before.scrollTop>0,'reading fixture is above the live tail');
+ assert.equal(await page.locator('#jump-latest').isVisible(),false,'running task does not show latest shortcut');
+ await page.evaluate(()=>{
+  window.mobileCodexEvent('message.delta',{threadId:window.layoutState.threadId,id:'read-35',delta:'流式输出仍在继续。'});
+  window.mobileCodexEvent('agent.event',{threadId:window.layoutState.threadId,method:'item/started',params:{item:{id:'reading-command',type:'commandExecution',command:'npm test'}}});
+ });await settle(page);
+ const readingOffset=()=>page.evaluate(()=>document.querySelector('[data-id="read-12"]').getBoundingClientRect().top-document.getElementById('chat-scroll').getBoundingClientRect().top);
+ assert.ok(Math.abs(await readingOffset()-before.top)<=1,'stream output preserves the line being read');
+ await page.evaluate(()=>{
+  const messages=window.layoutState.messages.map(message=>message.id==='read-3'?{...message,text:message.text+'\n\n上方消息更新。'.repeat(12)}:message);
+  window.layoutState={...window.layoutState,busy:false,turnId:'',messages};window.mobileCodexEvent('state',window.layoutState);
+ });await settle(page);
+ assert.ok(Math.abs(await readingOffset()-before.top)<=1,'completion and changed content above preserve the reading position');
+ assert.equal(await page.locator('#jump-latest').isVisible(),true,'latest shortcut appears after whole-task completion');
+ const centered=await page.locator('#jump-latest').evaluate(button=>{const r=button.getBoundingClientRect(),parent=button.parentElement.getBoundingClientRect();return Math.abs(r.left+r.width/2-parent.left-parent.width/2)<=1;});
+ assert.ok(centered,'latest shortcut remains horizontally centered');
+ await page.screenshot({path:path.join(output,`completion-reading-${width}-${theme}.png`)});
+ await page.locator('#jump-latest').click();await settle(page);
+ assert.equal(await page.locator('#jump-latest').isVisible(),false);
+ assert.ok(await page.locator('#chat-scroll').evaluate(area=>area.scrollHeight-area.scrollTop-area.clientHeight<=2),'latest shortcut reaches the tail');
+}
 async function githubLayout(page,width,theme){
  const states=[
   ['unconfigured',{configured:false,clientId:'',state:'idle',scopes:[]}],
@@ -175,6 +242,7 @@ async function githubLayout(page,width,theme){
    if(width===320)await earlierSelection(page,width,theme);
    await page.locator('#composer-options').click();await settle(page);
    const picker=await page.locator('#model-picker').boundingBox();assert.ok(picker.x>=-1&&picker.x+picker.width<=width+1&&picker.y>=-1&&picker.y+picker.height<=421,'model picker fits short viewport');
+   await reasoningLayout(page,width);
    await page.locator('#model-picker [data-close]').click();await settle(page);
    await page.setViewportSize({width,height:820});await settle(page);
    if(width<=760)await page.locator('.topbar .sidebar-toggle').click();
@@ -185,11 +253,10 @@ async function githubLayout(page,width,theme){
    const githubStates=[320,412].includes(width)?await githubLayout(page,width,theme):[];
    await page.locator('#settings-dialog .dialog-head > [data-close]').click();await settle(page);
    await attachmentLayout(page,width,theme);
-   await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:true,turnId:'turn'}));await page.locator('#prompt').fill('');await settle(page);
-   const stop=await page.locator('#stop').boundingBox();assert.ok(stop.width>=43.5&&stop.height>=43.5,'Stop remains reachable');
-   await page.locator('#stop').click();await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.stop'));
+   await taskControls(page,width,theme);
+   await readingThroughCompletion(page,width,theme);
    assert.equal(await page.locator('#live-start,#account-button,#composer-invite').count(),0);
-   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,caret:width===320,selection:width===320,picker:true,apiPanel:true,githubStates,attachments:true,stop:true});await page.close();
+   assert.deepEqual(errors,[]);results.push({width,theme,longModel:true,keyboard:true,caret:width===320,selection:width===320,picker:true,apiPanel:true,githubStates,attachments:true,stop:true,exclusiveAction:true,reasoningSlider:true,readingStable:true});await page.close();
   }
   fs.writeFileSync(path.join(output,'results.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results));
  } finally {await browser.close();}

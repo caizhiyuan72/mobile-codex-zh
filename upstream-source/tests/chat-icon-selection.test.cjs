@@ -22,3 +22,21 @@ test('semantic tags resolve without interpreting ordinary words as message icons
   assert.equal(core.chatIconForTag('  조 금 애매함  '), 'uncertain');
   assert.equal(core.messageIcon, undefined);
 });
+
+
+test('task activity exposes public tool metadata but never reasoning payloads', () => {
+  const reasoning = core.taskActivity('agent.event', {method:'item/started',params:{item:{id:'r',type:'reasoning',text:'private',summary:['private'],encryptedContent:'secret'}}});
+  assert.deepEqual(reasoning, {kind:'thinking',key:'',detail:'',output:''});
+  assert.deepEqual(core.taskActivity('agent.event', {method:'item/reasoning/summaryTextDelta',params:{delta:'private'}}), reasoning);
+  assert.equal(core.taskActivity('agent.event',{method:'unrecognized',params:{text:'private'}}),null);
+  assert.equal(core.taskActivity('tool',{name:'mobile_write',path:'app.js'}).kind,'editing');
+  assert.equal(core.taskActivity('tool',{name:'mobile_search',path:'.'}).kind,'searching');
+  const command = core.taskActivity('agent.event',{method:'item/completed',params:{item:{id:'c',type:'commandExecution',command:'npm test',aggregatedOutput:'failure',exitCode:1}}});
+  assert.equal(command.key,'c');assert.equal(command.failed,true);assert.equal(command.completed,true);assert.equal(command.output,'failure');
+  const files = core.taskActivity('agent.event',{method:'item/completed',params:{item:{id:'f',type:'fileChange',changes:[{path:'app.js',diff:'+line'}]}}});
+  assert.equal(files.kind,'editing');assert.equal(files.detail,'app.js');assert.match(files.output,/\+line/);
+  const tool = core.taskActivity('agent.event',{method:'item/completed',params:{item:{id:'t',type:'mcpToolCall',tool:'read',result:{content:[{type:'text',text:'file content'},{type:'image',data:'binary'}]},arguments:{private:'unused'}}}});
+  assert.equal(tool.output,'file content');assert.doesNotMatch(JSON.stringify(tool),/binary|unused/);
+  const dynamic = core.taskActivity('agent.event',{method:'item/completed',params:{item:{id:'d',type:'dynamicToolCall',tool:'mobile_read',contentItems:[{type:'inputText',text:'read result'}],success:false}}});
+  assert.equal(dynamic.kind,'reading');assert.equal(dynamic.output,'read result');assert.equal(dynamic.failed,true);
+});

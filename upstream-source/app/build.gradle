@@ -10,8 +10,8 @@ android {
         applicationId 'dev.mobilecodex.app.zhcnv3'
         minSdk 29
         targetSdk 35
-        versionCode 79
-        versionName '0.3.9-cn.8'
+        versionCode 80
+        versionName '0.3.9-cn.9'
         buildConfigField 'String', 'SOURCE_SHA', '"' + ((System.getenv('GITHUB_SHA') ?: 'local').take(12)) + '"'
         buildConfigField 'String', 'REPORT_RELAY_URL', '"https://mobile-codex-diagnostic-relay.vercel.app"'
         ndk { abiFilters 'arm64-v8a' }
@@ -45,8 +45,7 @@ android {
             minifyEnabled false
             if (suppliedSigningStore) signingConfig signingConfigs.provided
         }
-        // A distinct installation for migration when the old V5 key is unavailable.
-        // Its signing identity must be kept for all subsequent parallel updates.
+        // Existing Codex CN API installation. Keep this package and its signing identity.
         parallel {
             initWith release
             applicationIdSuffix '.next'

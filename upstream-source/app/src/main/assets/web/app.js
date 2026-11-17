@@ -22,7 +22,7 @@
   const handledReceipts = new Set(), handledVoiceReceipts = new Set();
   let dictationState = {phase:'idle'}, dictationTimer = null;
   let voiceStarting = false, voiceActive = false, voiceRecoveryGeneration = 0;
-  let chatIconsEnabled = localStorage.getItem('chat-icons') !== 'off', activityIcon = 'thinking';
+  let chatIconsEnabled = localStorage.getItem('chat-icons') !== 'off';
   let characterState = {folderName:'', folderConfigured:false, selectedPackId:'builtin', packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}}]};
   let instructionsOriginal = '', instructionsLoaded = false, instructionsSaving = false, devtoolsCheckResult = null, devtoolsCheckSummary = '', devtoolsChecking = false;
   const toolCache = [null, null, null];
@@ -321,7 +321,8 @@
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
     $('send').disabled = ((!$('prompt').value.trim() && !(draftContext.attachments || []).length) || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false));
     const steering = state.busy && !!state.turnId;
-    $('send').hidden = !!state.busy && !$('prompt').value.trim() && !(draftContext.attachments || []).length;
+    $('send').hidden = !!state.busy;
+    $('stop').hidden = !state.busy;
     $('send').setAttribute('aria-label', steering ? t('진행 중인 작업에 추가 지시') : t('메시지 보내기'));
     $('send').title = steering ? t('추가 지시') : t('보내기'); $('composer-attach').disabled = !!sending;
   }
@@ -336,7 +337,20 @@
     const choices = [...$('composer-add-menu').querySelectorAll('button:not(:disabled)')];
     (last ? choices.at(-1) : choices[0])?.focus();
   }
+  function updateJumpLatest() { $('jump-latest').hidden = following || !!state.busy || !state.messages.length; }
   function scrollLatest() { following = true; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight; historyView.top = $('chat-scroll').scrollTop; $('jump-latest').hidden = true; }
+  function readingPosition() { return following ? null : visibleMessageAnchor(); }
+  function restoreReadingPosition(anchor) {
+    if (!anchor || following) return;
+    const area = $('chat-scroll');
+    const element = anchor.id && [...$('messages').children].find(el => el.dataset.id === anchor.id);
+    // Keep the same line on screen when a snapshot changes content above it.
+    const adjustment = element ? element.getBoundingClientRect().top - area.getBoundingClientRect().top - anchor.offset : 0;
+    if (element) { if (adjustment) area.scrollTop += adjustment; }
+    else area.scrollTop = anchor.scrollTop;
+    historyView.top = area.scrollTop;
+    updateJumpLatest();
+  }
   let composerFramePending = false, composerMeasureKey = '', composerLayoutKey = '', composerMeasuredHeight = 0, viewportFramePending = false;
   function updateComposerExpansion() { sizeComposer(); }
   function revealComposerSelection(field, styles, line) {
@@ -414,14 +428,12 @@
     const effort = $('effort').selectedOptions[0]?.textContent || t('추론 설정 정보 없음');
     const approval = $('approval-mode').selectedOptions[0]?.textContent || t('자동 검토');
     $('model-summary').textContent = shortModelName(model);
-    $('effort-summary').textContent = $('effort').value ? effort : (state.apiActive ? '自动' : '');
+    $('effort-summary').textContent = $('effort').value ? effort : '';
     $('composer-options').setAttribute('aria-label', t('작업 설정: ') + model + t(', 추론 ') + effort + t(', 승인 ') + approval);
     $('composer-options').title = model + ' · ' + effort;
     $('approval-mode').title = t('Codex 승인 방식') + ': ' + approval;
     $('approval-mode').setAttribute('aria-label', t('Codex 승인 방식'));
     $('permission-help').textContent = state.busy ? t('작업이 끝나면 권한을 변경할 수 있습니다.') : ({'read-only':t('파일을 읽고 검토합니다.'), 'workspace-write':t('선택한 프로젝트의 파일을 수정할 수 있습니다.'), 'danger-full-access':t('앱에 허용된 기기 파일과 명령에 접근할 수 있습니다.')}[$('permissions').value] || '');
-    const current = state.models.find(m => (m.model || m.id) === $('model').value) || state.models.find(m => m.isDefault);
-    $('model-help').textContent = current?.description || (current ? '服务商配置的模型，能力取决于接口实际支持。' : t('모델 목록을 새로고침해 주세요.'));
     syncReasoningPicker();
   }
   function positionModelPicker() {
@@ -461,61 +473,23 @@
   let reasoningSignature = '';
   function syncReasoningPicker() {
     const options = [...$('effort').options].filter(option => option.value), slider = $('effort-slider');
-    const thirdParty = !!state.apiActive;
-    const policy = window.MobileCodexReasoning;
-    const selected = state.models.find(m => (m.model || m.id) === $('model').value);
-    const offeredLevels = policy.offered();
-    const supportedLevels = policy.supported(selected,thirdParty);
-    const experimental = $('effort-experimental').checked;
-    const signature = JSON.stringify([selected, thirdParty, $('model').value, $('effort').value, experimental, L.language()]);
+    const signature = JSON.stringify([state.models, $('model').value, $('effort').value, L.language()]);
     if (signature === reasoningSignature) return;
     reasoningSignature = signature;
     $('model-heading').textContent = $('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요');
-    $('effort-heading').textContent = $('effort').value ? $('effort').selectedOptions[0].textContent : '自动';
+    $('effort-heading').textContent = $('effort').value;
     slider.max = String(Math.max(0, options.length - 1));
     slider.value = String(Math.max(0, options.findIndex(option => option.value === $('effort').value)));
     slider.disabled = options.length < 2;
-    const auto = $('effort-auto');
-    if (auto) { auto.hidden = true; auto.disabled = !options.length; }
-    $('reasoning-control').hidden = false;
-    $('effort-unavailable').hidden = true;
-    const grid = $('effort-preset-grid');
-    grid.replaceChildren();
-    const choices = [{value:'', label:'自动'}, ...offeredLevels.map(value=>({value,label:policy.labels[value]}))];
-    for (const choice of choices) {
-      const available = policy.canSelect(choice.value,selected,thirdParty,experimental);
-      const button = node('button', choice.label, 'effort-preset-button');
-      button.type='button';button.dataset.effort=choice.value;
-      button.disabled=!available;
-      const tag=choice.value ? policy.source(selected,choice.value,thirdParty) : '模型默认';
-      button.title=choice.label+' · '+tag;
-      button.classList.toggle('is-experimental', !!choice.value && (thirdParty || !supportedLevels.includes(choice.value)));
-      button.setAttribute('aria-pressed',String($('effort').value===choice.value));
-      button.setAttribute('aria-label',choice.label+' · '+tag+(available?'':'，暂不可选'));
-      button.addEventListener('click',()=>{
-        if(!policy.canSelect(choice.value,selected,thirdParty,$('effort-experimental').checked)){
-          toast('该档位未获当前模型确认，可开启实验选项尝试。');return;
-        }
-        $('effort').value=choice.value;
-        $('effort').dispatchEvent(new Event('change',{bubbles:true}));
-      });
-      grid.append(button);
-    }
-    $('effort-experimental').closest('label').hidden = thirdParty;
-    $('effort-availability').textContent=thirdParty ? (supportedLevels.length ? '服务商报告支持：' + supportedLevels.map(x=>policy.labels[x]).join(' / ') : '服务商未报告支持档位，可手动尝试。') :
-      (supportedLevels.length ? '可用：'+supportedLevels.map(x=>policy.labels[x]).join(' / ')+'（运行时上报）' : '该模型未报告思考档位；可开启实验模式尝试。');
-    $('effort-contract').textContent = $('effort').value && !supportedLevels.includes($('effort').value) ? '所选档位尚未验证；请求失败时请调整。' : '';
-    const quick=$('api-effort-settings'),select=$('api-effort-choice');
-    if(quick && select){
-      quick.hidden=!thirdParty;
-      select.replaceChildren();
-      for(const choice of choices){
-        const option=new Option(choice.label+(choice.value?'（试验）':''),choice.value);
-        option.disabled=!policy.canSelect(choice.value,selected,thirdParty,experimental);
-        select.add(option);
-      }
-      select.value=$('effort').value;
-      $('api-effort-current').textContent='当前聊天模型：'+($('model').value||'未选择');
+    $('reasoning-control').hidden = !options.length;
+    const ticks = $('effort-levels');
+    ticks.replaceChildren(...options.map(option => node('span', option.textContent)));
+    const quick = $('api-effort-settings'), select = $('api-effort-choice');
+    if (quick && select) {
+      quick.hidden = !state.apiActive || !options.length;
+      select.replaceChildren(...options.map(option => new Option(option.textContent, option.value)));
+      select.value = $('effort').value;
+      $('api-effort-current').textContent = $('model').value;
     }
     previewReasoning(); sizeModelPicker();
   }
@@ -993,7 +967,7 @@
       else renderProseLines(target, block.content);
     }
   }
-  function renderMessageIconTags(target, pack, previousIcons, streaming) {
+  function renderMessageIconTags(target, streaming) {
     // Replace only assistant prose. Code examples and user messages retain their literal text.
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -1011,14 +985,6 @@
       while ((match = pattern.exec(text))) {
         changed = true;
         fragment.append(document.createTextNode(text.slice(cursor, match.index)));
-        const iconName = match[1] === undefined ? null : C.chatIconForTag(match[1]);
-        if (chatIconsEnabled && iconName) {
-          const url = characterIconUrl(iconName, pack || undefined);
-          const oldIndex = previousIcons.findIndex(image => image.dataset.messageIconKey === iconName && image.getAttribute('src') === url);
-          const image = oldIndex < 0 ? characterIcon(iconName, '', pack) : previousIcons.splice(oldIndex, 1)[0];
-          image.dataset.messageIconKey = iconName;
-          fragment.append(image);
-        }
         cursor = match.index + match[0].length;
       }
       if (changed) {
@@ -1031,11 +997,56 @@
     }
   }
   function drawStatusIcons() {
-    for (const [id, name] of [['welcome-character','greeting'], ['activity-character',activityIcon]]) {
-      const host = $(id); host.hidden = !chatIconsEnabled;
-      if (!chatIconsEnabled) host.replaceChildren();
-      else if (host.dataset.icon !== name || host.dataset.pack !== characterVisualKey() || !host.firstChild) { host.replaceChildren(characterIcon(name)); host.dataset.icon = name; host.dataset.pack = characterVisualKey(); }
+    for (const id of ['welcome-character', 'activity-character']) {
+      const host = $(id); if (host) { host.hidden = true; host.replaceChildren(); }
     }
+  }
+  const taskActivityCards = new Map();
+  const taskActivityLabels = {
+    thinking:['思考中', 'Thinking', '생각 중'], reading:['读取文件', 'Reading files', '파일 읽는 중'],
+    searching:['搜索中', 'Searching', '검색 중'], command:['运行命令', 'Running command', '명령 실행 중'],
+    editing:['修改文件', 'Editing files', '파일 수정 중'], tool:['调用工具', 'Using tool', '도구 사용 중'],
+    responding:['正在回复', 'Responding', '응답 중']
+  };
+  function taskActivityLabel(kind) {
+    const labels = taskActivityLabels[kind] || taskActivityLabels.tool;
+    return labels[L.language() === 'zh-CN' ? 0 : L.language() === 'ko' ? 2 : 1];
+  }
+  function taskActivityHost() {
+    $('activity').setAttribute('role', 'status');
+    let host = $('task-activity');
+    if (!host) { host = node('section', null, 'task-activity'); host.id = 'task-activity'; host.setAttribute('aria-label', t('작업 기록')); $('activity').before(host); }
+    return host;
+  }
+  function showTaskActivity(name, data) {
+    const activity = C.taskActivity(name, data); if (!activity) return;
+    const anchor = readingPosition();
+    $('activity-text').textContent = taskActivityLabel(activity.kind) + (activity.detail ? ' · ' + activity.detail.slice(0, 160) : '');
+    if (activity.kind === 'thinking' || activity.kind === 'responding') {
+      if (following) scrollLatest(); else restoreReadingPosition(anchor);
+      return;
+    }
+    const host = taskActivityHost();
+    let card = activity.key && taskActivityCards.get(activity.key);
+    if (!card) {
+      card = node('details', null, 'task-activity-card');
+      card.append(node('summary'), node('pre', '', 'console'));
+      card.dataset.kind = activity.kind; host.append(card);
+      if (activity.key) taskActivityCards.set(activity.key, card);
+    }
+    card.dataset.status = activity.failed ? 'failed' : activity.completed ? 'completed' : 'running';
+    const status = activity.failed ? t('작업 실패') : activity.completed ? t('완료') : taskActivityLabel(activity.kind);
+    const summary = card.querySelector('summary');
+    if (activity.detail) card.dataset.detail = activity.detail.slice(0, 240);
+    summary.textContent = status + (card.dataset.detail ? ' · ' + card.dataset.detail : '');
+    const output = card.querySelector('pre');
+    if (activity.output) output.textContent = (activity.append ? output.textContent + activity.output : activity.output).slice(-24000);
+    output.hidden = !output.textContent;
+    while (host.children.length > 40) {
+      const oldest = host.firstChild; oldest.remove();
+      for (const [key, value] of taskActivityCards) if (value === oldest) taskActivityCards.delete(key);
+    }
+    if (following) scrollLatest(); else restoreReadingPosition(anchor);
   }
   function setChatIcons() {
     chatIconsEnabled = $('chat-icons-toggle').checked;
@@ -1090,7 +1101,7 @@
       view.beforeId = result.messageHistory.beforeId || '';
       view.hasMore = result.messageHistory.hasMore === true;
       view.total = Math.max(Number(result.messageHistory.total) || 0, view.total);
-      historyStatus(); drawMessages();
+      historyStatus(); drawMessages(null, false);
       if (preservePosition) {
         const area = $('chat-scroll'), element = [...$('messages').children].find(el => el.dataset.id === anchor.id);
         const adjustment = element ? element.getBoundingClientRect().top - area.getBoundingClientRect().top - anchor.offset : area.scrollHeight - anchor.height;
@@ -1135,7 +1146,8 @@
       drawMessages(ids);
     });
   }
-  function drawMessages(dirtyIds = null) {
+  function drawMessages(dirtyIds = null, preserveReading = true) {
+    const anchor = preserveReading ? readingPosition() : null;
     const allMessages = state.messages || [];
     if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id))) dirtyIds = null;
     if (!dirtyIds) {
@@ -1173,9 +1185,8 @@
           if (['not_sent','uncertain','failed'].includes(m.status)) el.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
         }
         else {
-          const previousIcons = [...el.querySelectorAll('.chat-character[data-message-icon-key]')];
           prose(el, m.text || '');
-          renderMessageIconTags(el, agentPack, previousIcons, streaming);
+          renderMessageIconTags(el, streaming);
           if (grouped) el.prepend(agentSpeaker(m));
           if (m.agent && m.status === 'streaming' && !m.text) el.append(node('p', t('응답 중…'), 'agent-pending'));
           if (m.agent && ['error','interrupted'].includes(m.status)) el.append(node('p', m.status === 'interrupted' ? t('중단된 응답입니다.') + (m.error ? ' ' + m.error : '') : (m.error || t('답하지 못했습니다.')), 'message-transport-status'));
@@ -1195,25 +1206,16 @@
     });
     if (!dirtyIds) for (const [id, el] of elements) if (!keep.has(id)) el.remove();
     if (following) scrollLatest();
-    else $('jump-latest').hidden = !messages.length;
+    else { restoreReadingPosition(anchor); updateJumpLatest(); }
   }
   function efforts() {
     const selected = state.models.find(m => (m.model || m.id) === $('model').value);
-    const policy = window.MobileCodexReasoning;
-    const previous = $('effort').value;
-    const thirdParty = !!state.apiActive;
-    const supported = policy.offered();
-    const experimental = $('effort-experimental').checked;
-    $('effort').replaceChildren();
-    $('effort').add(new Option('自动（模型默认）',''));
-    for (const level of supported){
-      const option=new Option(policy.labels[level],level);
-      option.disabled=!policy.canSelect(level,selected,thirdParty,experimental);
-      $('effort').add(option);
-    }
-    $('effort').disabled = false;
+    const policy = window.MobileCodexReasoning, previous = $('effort').value;
+    const thirdParty = !!state.apiActive, supported = policy.supported(selected, thirdParty);
+    $('effort').replaceChildren(...supported.map(level => new Option(policy.labels[level], level)));
+    $('effort').disabled = !supported.length;
     $('effort').value = policy.choose({previous, fallback:selected?.defaultReasoningEffort,
-      model:selected, thirdParty, experimental});
+      model:selected, thirdParty});
     optionsSummary();
   }
   let modelListSignature = '';
@@ -1223,16 +1225,15 @@
     modelListSignature = signature;
     const target = $('model-list'), focused = target.contains(document.activeElement) ? document.activeElement.value : null;
     target.replaceChildren();
-    const choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL).map(m => ({id:m.model || m.id, label:m.displayName || m.model || m.id, description:m.description || m.model || m.id}));
+    const choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL).map(m => ({id:m.model || m.id, label:m.displayName || m.model || m.id}));
     if ($('model').value && !choices.some(m => m.id === $('model').value)) target.append(node('p', $('model').value + ' · ' + t('목록 확인 필요'), 'muted'));
     if (!choices.length) target.append(node('p',t('모델 목록을 새로고침해 주세요.'),'muted'));
     for (const choice of choices) {
       const label = node('label', null, 'model-choice'); const input = node('input'); input.type = 'radio'; input.name = 'model-choice'; input.value = choice.id; input.checked = $('model').value === choice.id;
       input.addEventListener('change', () => { $('model').value = choice.id; $('model').dispatchEvent(new Event('change')); showModelPanel(false); });
       label.addEventListener('click', e => { if ($('model').value === choice.id) { e.preventDefault(); showModelPanel(false); } });
-      label.title = choice.description;
       const check = icon('check'); check.setAttribute('aria-hidden', 'true');
-      const copy = node('span', null, 'model-choice-copy'); copy.append(node('strong', shortModelName(choice.label)), node('small', choice.id));
+      const copy = node('span', null, 'model-choice-copy'); copy.append(node('strong', shortModelName(choice.label)));
       label.append(input, copy, check); target.append(label);
     }
     if (focused) [...target.querySelectorAll('input')].find(input => input.value === focused)?.focus({preventScroll:true});
@@ -1570,6 +1571,8 @@
   let navigationSignature = '';
   function render(next) {
     const changedThread = state.threadId !== next.threadId;
+    const anchor = changedThread ? null : readingPosition();
+    const wasBusy = !!state.busy;
     const changedFileContext = fileWorkspaceScope(state) !== fileWorkspaceScope(next);
     if (changedFileContext) resetFileContext();
     setDraftScope(next); state = historySnapshot(next, changedThread);
@@ -1593,10 +1596,11 @@
     const anyBusy = !!state.busy;
     $('send').hidden = anyBusy; $('stop').hidden = !anyBusy; $('activity').hidden = !anyBusy;
     updateComposerExpansion();
-    if (changedThread || !anyBusy)
-      $('activity-text').textContent = t('Codex 답변 기다리는 중');
+    if (changedThread || (anyBusy && !wasBusy)) {
+      taskActivityHost().replaceChildren(); taskActivityCards.clear();
+      $('activity-text').textContent = t('Codex 작업 중');
+    }
 
-    if (!anyBusy) activityIcon = 'thinking';
     drawStatusIcons();
     $('terminal-cwd').textContent = state.cwd || '';
     if (state.terminal) renderTerminal(state.terminal);
@@ -1634,8 +1638,9 @@
     renderModelList();
     if (changedThread) { following = true; $('event-log').replaceChildren(); $('messages').replaceChildren(); }
     updateSend(); optionsSummary(); drawUpdates(updateState);
-    drawMessages();
+    drawMessages(null, false);
     agentUi?.render();
+    restoreReadingPosition(anchor);
     $('prompt').placeholder = agentUi?.grouped() ? t('모두에게 보내기 · @로 한 명만 부르기') : t('Codex에게 물어보기');
     // A request can arrive while another conversation is visible. Once the
     // selected session is restored, show only that session's pending request.
@@ -2097,9 +2102,9 @@
     if (name === 'state') render(data);
     else if (name === 'error') { if (!data.threadId || data.threadId === state.threadId) toast(data.message); }
     else if (name === 'notice') toast(data.message);
-    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
-    else if (name === 'tool') { if (data.threadId && data.threadId !== state.threadId) return; activityIcon = /read|list|search/.test(data.name) ? 'inspecting' : 'working'; drawStatusIcons(); $('activity-text').textContent = data.name.replace('mobile_', '') + ' · ' + data.path; logEvent(data.name, data); }
-    else if (name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; if (!data.method.endsWith('/delta')) logEvent(data.method, data.params); if (data.method === 'turn/diff/updated') logEvent(t('변경 사항'), data.params.diff); }
+    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(name, data); const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
+    else if (name === 'tool') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(name, data); logEvent(data.name, data); }
+    else if (name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; const activity = C.taskActivity(name, data); showTaskActivity(name, data); if (activity && activity.kind !== 'thinking' && !data.method.endsWith('/delta')) logEvent(taskActivityLabel(activity.kind), activity.output || activity.detail); }
     else if (name === 'files.changed' && (!data.threadId || data.threadId === state.threadId) && !$('file-panel').hidden) listFiles().catch(e => toast(e.message));
     else if (name === 'updates.changed') drawUpdates(data);
     else if (name === 'linux.changed') { state.linux = linuxStatus(data); linuxStatusError = ''; renderDevtools(); renderLinux(); }
@@ -2215,7 +2220,7 @@
     if ((!text && !draftContext.attachments.length) || sending || voiceStarting || voiceActive) return;
     if (!state.models.some(m => (m.model || m.id) === $('model').value)) { toast(t('모델 목록을 새로고침해 주세요.')); return; }
     const chosenModel = state.models.find(m => (m.model || m.id) === $('model').value);
-    if (!window.MobileCodexReasoning.validSelection($('effort').value, chosenModel, !!state.apiActive, $('effort-experimental').checked)) {
+    if (!window.MobileCodexReasoning.validSelection($('effort').value, chosenModel, !!state.apiActive)) {
       toast('当前模型不支持所选思考强度，已阻止发送。请重新选择思考档位。'); return;
     }
     const steer = !!state.busy && !!state.turnId, expectedTurnId = state.turnId || '', expectedThreadId = state.threadId || '', workspaceKey = state.workspace?.key || '';
@@ -2263,7 +2268,7 @@
   $('chat-scroll').addEventListener('scroll', () => {
     const area = $('chat-scroll'), upward = area.scrollTop < historyView.top;
     historyView.top = area.scrollTop; following = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
-    $('jump-latest').hidden = following || !state.messages.length;
+    updateJumpLatest();
     if (upward && area.scrollTop <= 160) loadEarlierMessages();
   }, {passive:true});
   $('chat-scroll').addEventListener('wheel', e => { if (e.deltaY < 0 && $('chat-scroll').scrollTop <= 160) { following = false; loadEarlierMessages(); } }, {passive:true});
@@ -2279,17 +2284,6 @@
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
   on('model-picker-back', () => showModelPanel(false));
   on('model-picker-permissions', () => { close('model-picker'); show('options-dialog'); });
-  on('effort-auto', () => {
-    if (!state.apiActive) return;
-    $('effort').value = ''; $('effort').dispatchEvent(new Event('change'));
-    $('effort-heading').textContent = '自动（服务商默认）';
-    syncReasoningPicker(); saveOptions(); optionsSummary();
-  });
-  $('effort-experimental').checked = localStorage.getItem('codex-cn-effort-experimental') === 'yes';
-  on('effort-experimental',()=>{
-    try{localStorage.setItem('codex-cn-effort-experimental',$('effort-experimental').checked?'yes':'no');}catch{}
-    efforts();syncReasoningPicker();saveOptions();
-  },'change');
   on('effort-slider', previewReasoning, 'input');
   on('effort-slider', () => {
     const option = [...$('effort').options].filter(option => option.value)[Number($('effort-slider').value)];

@@ -158,7 +158,41 @@
     });
     return {hunks:selected,truncated,approximate,identical:String(before??'')===String(after??'')};
   }
+  // Only public activity metadata and tool output belong in the transcript UI.
+  // Reasoning text, summaries, encrypted content and arbitrary event payloads do not.
+  function taskActivity(name, data = {}) {
+    const params = data.params || {}, item = params.item || {};
+    const method = String(data.method || ''), type = String(item.type || '');
+    const key = String(item.id || params.itemId || '');
+    if (name === 'message.delta') return {kind:'responding', key:'', detail:'', output:''};
+    if (name === 'tool') {
+      const tool = String(data.name || '');
+      const kind = /write|edit|patch|mutate/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
+      return {kind, key:'', detail:[tool.replace(/^mobile_/, ''), data.path].filter(Boolean).join(' · '), output:''};
+    }
+    if (name !== 'agent.event') return null;
+    if (/reasoning/i.test(type) || /\/reasoning\//i.test(method))
+      return {kind:'thinking', key:'', detail:'', output:''};
+    if (method === 'item/commandExecution/outputDelta')
+      return {kind:'command', key, detail:'', output:String(params.delta || ''), append:true};
+    if (method === 'turn/diff/updated') return {kind:'editing', key:'turn-diff', detail:'', output:String(params.diff || ''), completed:true};
+    if (method !== 'item/started' && method !== 'item/completed') return null;
+    const completed = method === 'item/completed';
+    if (type === 'agentMessage') return {kind:'responding', key:'', detail:'', output:''};
+    if (type === 'commandExecution') return {kind:'command', key, detail:String(item.command || ''), output:String(item.aggregatedOutput || ''), completed, failed:item.status === 'failed' || (item.exitCode != null && Number(item.exitCode) !== 0)};
+    if (type === 'fileChange') return {kind:'editing', key, detail:(item.changes || []).map(change => change.path).filter(Boolean).join(', '), output:(item.changes || []).map(change => [change.path, change.diff].filter(Boolean).join('\n')).join('\n\n'), completed, failed:item.status === 'failed'};
+    if (type === 'mcpToolCall' || type === 'dynamicToolCall') {
+      const result = item.result || {}, tool = String(item.tool || item.name || '');
+      const content = type === 'dynamicToolCall' ? item.contentItems || [] : result.content || [];
+      const output = typeof result === 'string' ? result : content.filter(part => part.type === 'text' || part.type === 'inputText').map(part => part.text || '').join('\n');
+      const kind = /write|edit|patch|mutate/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
+      return {kind, key, detail:[item.server, tool].filter(Boolean).join(' · '), output, completed, failed:item.status === 'failed' || item.success === false || !!item.error};
+    }
+    if (type === 'webSearch') return {kind:'searching', key, detail:String(item.query || ''), output:'', completed};
+    return null;
+  }
   const core={
+    taskActivity,
     fileDiff,
     chatIconNames(){return chatIcons.slice();},
     chatIconUrl(name){const i=chatIcons.indexOf(name);return i<0 ? null : '/chat-icons/'+String(i+1).padStart(2,'0')+'-'+name+'.png';},

@@ -2,7 +2,7 @@
 
 基于 [Mobile Codex v0.3.9](https://github.com/nokryong/mobile-codex/tree/v0.3.9) 的非官方 Android 客户端。核心是 Android Java + WebView 界面，以及随 APK 分发的 Codex app-server；模型推理通过网络 API 完成。
 
-当前源码版本为 **`0.3.9-cn.6` / versionCode `77`**。原包名 `dev.mobilecodex.app.zhcnv3` 的源码已通过完整 CI 并生成未签名 APK，见[构建记录](https://github.com/caizhiyuan72/mobile-codex-zh/actions/runs/44071083752)。由于 V5 原签名尚未找到，新增独立包名 `dev.mobilecodex.app.zhcnv3.next`、名称 **Codex CN API** 的并行构建；其签名与验收进度见[迁移说明](docs/PARALLEL_INSTALL.md)。Releases 中的 V5 仍是旧二进制补丁包，本轮没有发布新 Release。
+当前工作版本为 **`0.3.9-cn.9` / versionCode `80`**。Codex CN API 延续包名 `dev.mobilecodex.app.zhcnv3.next`，用于覆盖更新已安装的 `cn.8 / 79`；本轮不创建新的安装身份。修复范围与现有签名交接说明见 [cn.9 更新](docs/UI_CN9.md)。CI 验证与未签名 APK 交付状态将在构建完成后记录。Releases 中的 V5 仍为历史二进制补丁包。
 
 ## 当前范围
 
@@ -12,7 +12,7 @@
 - 输入操作收为单排，统一按钮点击尺寸；加入轻量面板和按压动效，流式消息按帧合并刷新。
 - Android 系统听写放入添加菜单，识别结果进入草稿，由用户发送。
 - 新增 GitHub 浏览器设备授权设置页，内置 Git 使用加密保存的授权；首次配置使用自己注册的公开 OAuth Client ID，无需 `gh` 或 Client Secret。详见 [登录说明](docs/GITHUB_LOGIN.md)。
-- 32 张聊天插图从 27,729,762 字节缩为 1,429,728 字节；原画保留，最终 APK 大小待构建后测量。
+- 聊天区域显示真实任务活动与可展开工具输出；历史插图资源保留兼容，聊天不再展示人物插图。
 
 `/models` 扫描只读取模型 ID。模型能否完成对话、工具调用、推理强度和原生子智能体任务，取决于第三方服务商的实际兼容情况，不能由扫描成功推断。
 
