@@ -8,6 +8,6 @@
   "asset_filename": "Codex-CN-V5-arm64.apk",
   "apk_size_bytes": 220595479,
   "sha256": "361ef553e9c3535be08217822f44b6f681bc9c1f52655f040239a880dca2db14",
-  "published_to_github": false,
+  "published_to_github": true,
   "source_complete": false
 }
