@@ -29,6 +29,7 @@ import java.util.concurrent.Delayed;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import static dev.mobilecodex.app.core.Json.obj;
 import static org.junit.Assert.*;
 
@@ -104,6 +105,90 @@ public class GitHubAuthTest {
         assertEquals(GitHubAuthPolicy.USER_URL, user.url); assertEquals("GET", user.method); assertEquals(TOKEN, user.token);
         auth.close(); scheduler = new ManualScheduler(clock); auth = create(scheduler);
         assertEquals("connected", state()); assertEquals(TOKEN, auth.credentialFor("https", "github.com", ""));
+    }
+
+    @Test public void modelAndShellStatusNeverIncludeDeviceCodesOrCredentialMaterial() throws Exception {
+        pending(900, 5);
+        JSONObject pending = auth.agentStatus();
+        assertEquals("pending", pending.getString("state"));
+        assertEquals(3, pending.length());
+        assertFalse(pending.toString().contains(DEVICE));
+        assertFalse(pending.toString().contains("ABCD-EFGH"));
+        assertFalse(pending.toString().contains(CLIENT));
+        network.add(token("public_repo,workflow", 0)); network.add(new GitHubAuth.Response(200, obj("login", "fixture-user")));
+        scheduler.runNext();
+        JSONObject connected = auth.agentStatus();
+        assertEquals("connected", connected.getString("state"));
+        assertEquals("fixture-user", connected.getString("login"));
+        for (String secret : List.of(TOKEN, DEVICE, REFRESH, CLIENT)) assertFalse(connected.toString().contains(secret));
+        auth.disconnect(); assertEquals("idle", auth.agentStatus().getString("state"));
+        assertEquals("", auth.agentStatus().getString("login"));
+    }
+
+    @Test public void bundledCliIsInstalledInTheGitEnabledProcessEnvironment() throws Exception {
+        Application context = RuntimeEnvironment.getApplication();
+        connected(0);
+        try (GitHubCredentials broker = new GitHubCredentials(context, auth::credentialFor, auth::agentStatus)) {
+            Map<String, String> env = new java.util.HashMap<>();
+            broker.configure(env);
+            java.nio.file.Path installed = java.nio.file.Path.of(env.get("MC_GITHUB_CLI"));
+            try (java.io.InputStream asset = context.getAssets().open("mobile-github.py")) {
+                assertArrayEquals(asset.readAllBytes(), java.nio.file.Files.readAllBytes(installed));
+            }
+            assertTrue(java.nio.file.Files.isRegularFile(java.nio.file.Path.of(env.get("MC_GITHUB_HELPER"))));
+            for (String secret : List.of(TOKEN, DEVICE, REFRESH)) assertFalse(env.toString().contains(secret));
+        }
+    }
+
+    @Test public void sameChatReceivesLoginAndSignOutChangesWithoutRestartOrNewRemoteThread() throws Exception {
+        Application context = RuntimeEnvironment.getApplication();
+        java.io.File sessions = new java.io.File(context.getFilesDir(), "sessions.json");
+        sessions.delete();
+        for (String name : List.of("projects", "workspace", "settings", "api-providers-v2")) context.getSharedPreferences(name, 0).edit().clear().commit();
+        Engine engine = new Engine(context, null, auth);
+        List<JSONObject> calls = new ArrayList<>();
+        engine.setTestTransport((method, params) -> {
+            calls.add(obj("method", method, "params", new JSONObject(params.toString())));
+            if (method.equals("thread/start")) return obj("thread", obj("id", "github-thread"));
+            if (method.equals("thread/resume")) return obj();
+            if (method.equals("turn/start")) return obj("turn", obj("id", "turn-" + calls.size()));
+            throw new AssertionError(method);
+        });
+        try {
+            send(engine, "before login");
+            JSONObject started = calls.get(0).getJSONObject("params");
+            assertTrue(started.getString("developerInstructions").contains("\"state\":\"idle\""));
+            assertTrue(started.getString("developerInstructions").contains("$MC_GITHUB_CLI"));
+            assertFalse(started.getString("developerInstructions").contains("Git HTTPS requires user-supplied credentials"));
+            connected(0);
+            send(engine, "after login");
+            JSONObject resumed = calls.stream().filter(c -> c.optString("method").equals("thread/resume")).reduce((a,b) -> b).orElseThrow().getJSONObject("params");
+            assertEquals("github-thread", resumed.getString("threadId"));
+            assertFalse(resumed.has("dynamicTools"));
+            String instructions = resumed.getString("developerInstructions");
+            assertTrue(instructions.contains("\"state\":\"connected\""));
+            assertTrue(instructions.contains("fixture-user"));
+            for (String secret : List.of(TOKEN, DEVICE, REFRESH, CLIENT)) assertFalse(instructions.contains(secret));
+            assertTrue(instructions.contains("private repository access is not granted"));
+            send(engine, "same login");
+            assertEquals(1L, calls.stream().filter(c -> c.optString("method").equals("thread/resume")).count());
+            auth.disconnect(); send(engine, "after sign out");
+            resumed = calls.stream().filter(c -> c.optString("method").equals("thread/resume")).reduce((a,b) -> b).orElseThrow().getJSONObject("params");
+            assertEquals("github-thread", resumed.getString("threadId"));
+            assertTrue(resumed.getString("developerInstructions").contains("\"state\":\"idle\""));
+            assertFalse(resumed.getString("developerInstructions").contains("fixture-user"));
+            assertEquals(2L, calls.stream().filter(c -> c.optString("method").equals("thread/resume")).count());
+            assertEquals(1L, calls.stream().filter(c -> c.optString("method").equals("thread/start")).count());
+        } finally { engine.io.shutdownNow(); sessions.delete(); }
+    }
+
+    private static void send(Engine engine, String text) throws Exception {
+        java.lang.reflect.Field busy = Engine.class.getDeclaredField("busy"); busy.setAccessible(true); busy.setBoolean(engine, false);
+        CompletableFuture<JSONObject> reply = new CompletableFuture<>();
+        engine.handle("chat.send", obj("text", text), (value, error) -> {
+            if (error != null) reply.completeExceptionally(error); else reply.complete(value);
+        });
+        reply.get(5, TimeUnit.SECONDS);
     }
 
     @Test public void pendingAndSlowDownRespectServerIntervalsWithoutBlockingSleeps() throws Exception {

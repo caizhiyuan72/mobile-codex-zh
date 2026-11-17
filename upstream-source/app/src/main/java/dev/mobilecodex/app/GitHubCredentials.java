@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.function.Supplier;
 import static dev.mobilecodex.app.core.Json.obj;
 
 /** Gives Git a short-lived local capability instead of putting an OAuth token in its environment. */
@@ -18,27 +19,37 @@ final class GitHubCredentials implements AutoCloseable {
     private final Source source;
     private final File helper;
     private final byte[] helperBytes;
+    private final File cli;
+    private final byte[] cliBytes;
+    private final Supplier<JSONObject> status;
     private final String capability;
     private ServerSocket server;
     private boolean closed;
 
-    GitHubCredentials(Context context, Source source) {
-        this.source = source;
+    GitHubCredentials(Context context, Source source, Supplier<JSONObject> status) {
+        this.source = source; this.status = status;
         helper = new File(context.getFilesDir(), "github/git-credential-mobile.py");
-        byte[] bytes;
-        try (InputStream in = context.getAssets().open("git-credential-mobile.py")) {
-            ByteArrayOutputStream data = new ByteArrayOutputStream();
-            byte[] block = new byte[8192]; int n;
-            while ((n = in.read(block)) != -1) data.write(block, 0, n);
-            bytes = data.toByteArray();
-        }
-        catch (IOException error) { bytes = null; }
-        helperBytes = bytes;
+        cli = new File(context.getFilesDir(), "github/mobile-github.py");
+        helperBytes = asset(context, "git-credential-mobile.py");
+        cliBytes = asset(context, "mobile-github.py");
         byte[] random = new byte[32]; new SecureRandom().nextBytes(random);
         capability = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
     }
+    private static byte[] asset(Context context, String name) {
+        try (InputStream in = context.getAssets().open(name)) {
+            ByteArrayOutputStream data = new ByteArrayOutputStream();
+            byte[] block = new byte[8192]; int n;
+            while ((n = in.read(block)) != -1) data.write(block, 0, n);
+            return data.toByteArray();
+        }
+        catch (IOException error) { return null; }
+    }
     GitHubCredentials(File helper, Source source, String capability) {
-        this.source = source; this.helper = helper; this.capability = capability; helperBytes = null;
+        this(helper, source, capability, () -> obj("state", "unavailable", "login", "", "scopes", new org.json.JSONArray()));
+    }
+    GitHubCredentials(File helper, Source source, String capability, Supplier<JSONObject> status) {
+        this.source = source; this.helper = helper; this.capability = capability; this.status = status;
+        helperBytes = null; cli = null; cliBytes = null;
     }
     synchronized void configure(Map<String, String> env) throws IOException {
         if (closed) throw new IOException("GitHub 凭据服务已关闭。");
@@ -47,6 +58,11 @@ final class GitHubCredentials implements AutoCloseable {
             if (!helper.isFile() || !Arrays.equals(Files.readAllBytes(helper.toPath()), helperBytes))
                 Files.write(helper.toPath(), helperBytes);
         } else if (!helper.isFile()) throw new IOException("GitHub 登录组件缺失，请安装完整 APK。");
+        if (cli != null) {
+            if (cliBytes == null) throw new IOException("GitHub 仓库查询组件缺失，请安装完整 APK。");
+            if (!cli.isFile() || !Arrays.equals(Files.readAllBytes(cli.toPath()), cliBytes)) Files.write(cli.toPath(), cliBytes);
+            env.put("MC_GITHUB_CLI", cli.getAbsolutePath());
+        }
         if (server == null) {
             server = new ServerSocket();
             server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 4);
@@ -83,8 +99,12 @@ final class GitHubCredentials implements AutoCloseable {
                     byte[] expected = capability.getBytes(StandardCharsets.UTF_8);
                     byte[] supplied = request.optString("capability").getBytes(StandardCharsets.UTF_8);
                     if (MessageDigest.isEqual(expected, supplied)) {
-                        String token = source.credentialFor(request.optString("protocol"), request.optString("host"), request.optString("path"));
-                        if (!token.isBlank()) answer = obj("username", "x-access-token", "password", token);
+                        String operation = request.optString("operation", "credential");
+                        if ("status".equals(operation)) answer = status.get();
+                        else if ("credential".equals(operation)) {
+                            String token = source.credentialFor(request.optString("protocol"), request.optString("host"), request.optString("path"));
+                            if (!token.isBlank()) answer = obj("username", "x-access-token", "password", token);
+                        }
                     }
                 } catch (Exception ignored) { /* Never copy a secret or a request into error output. */ }
                 client.getOutputStream().write((answer.toString() + "\n").getBytes(StandardCharsets.UTF_8));

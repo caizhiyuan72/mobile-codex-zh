@@ -84,6 +84,7 @@ public final class Engine {
         if (name.equals("terminal.state") && !data.optBoolean("running") && !io.isShutdown()) io.execute(this::stopServiceIfIdle);
     });
     private String status = t("시작할 준비가 됐습니다"), threadId = "", turnId = "", serverThreadId = "";
+    private String serverInstructions = "";
     private String authState = "unconfigured", authError = "";
     private boolean autoRestorePaused;
     private final ApiProviders apiProviders;
@@ -106,6 +107,9 @@ public final class Engine {
 
     public Engine(Context context) { this(context, null); }
     Engine(Context context, ApiProviders providers) {
+        this(context, providers, null);
+    }
+    Engine(Context context, ApiProviders providers, GitHubAuth github) {
         this.context = context;
         permissionMode = context.getSharedPreferences("settings", 0).getString("permissions", "workspace-write");
         approvalMode = context.getSharedPreferences("settings", 0).getString("approvalMode", "auto-review");
@@ -119,8 +123,8 @@ public final class Engine {
         authState = apiProviders.configured() ? "configured" : "unconfigured";
         processHome = codexHome.root();
         instructions = new PersonalInstructions(codexHome);
-        githubAuth = new GitHubAuth(context, value -> event("github.changed", value));
-        githubCredentials = new GitHubCredentials(context, githubAuth::credentialFor);
+        githubAuth = github == null ? new GitHubAuth(context, value -> event("github.changed", value)) : github;
+        githubCredentials = new GitHubCredentials(context, githubAuth::credentialFor, githubAuth::agentStatus);
         devTools = new DevTools(context);
         devTools.setGitHubCredentials(githubCredentials);
         linux = new LinuxRuntime(context, devTools, this::linuxChanged);
@@ -850,6 +854,8 @@ public final class Engine {
             + (documents.directDirectory() != null) + ". The exact model requested for this thread is "
             + (model == null || model.isBlank() ? "not available from the runtime" : model)
             + ". When the user asks which model you are, report that exact requested model id."
+            + " Current app GitHub login: " + githubAuth.agentStatus()
+            + ". GitHub permissions cover public repositories and workflows; private repository access is not granted."
             + linuxInstructions(linux.status()) + ChatIconInstructions.forEnabled(chatIconsEnabled);
     }
     static String linuxInstructions(JSONObject state) {
@@ -902,13 +908,16 @@ public final class Engine {
     private void resumeRemote(boolean force, String model) throws Exception {
         String remoteId = activeCodexThreadId();
         requireSessionProvider(active);
-        if (active == null || remoteId.isEmpty() || (!force && remoteId.equals(serverThreadId))) return;
+        if (active == null || remoteId.isEmpty()) return;
+        String currentInstructions = workspaceInstructions(resolvedModel(model));
+        if (!force && remoteId.equals(serverThreadId) && currentInstructions.equals(serverInstructions)) return;
         if (!active.optString("workspaceKey").equals(documents.key()))
             throw new IOException(t("이 대화의 원래 작업 폴더를 다시 연결해 주세요."));
         documents.requireWorkspaceAvailable();
         call("thread/resume", obj("threadId", remoteId, "excludeTurns", true, "cwd", projectDirectory().getAbsolutePath(),
-            "sandbox", permissionMode, "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer(), "developerInstructions", workspaceInstructions(resolvedModel(model))));
+            "sandbox", permissionMode, "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer(), "developerInstructions", currentInstructions));
         serverThreadId = remoteId;
+        serverInstructions = currentInstructions;
         restoreImageHistory();
     }
     private void restoreImageHistory() {
@@ -1089,9 +1098,11 @@ public final class Engine {
         String serviceTierForTurn = fastMode == null ? null : (fastMode ? fastServiceTier(actualModel) : "default");
         JSONObject candidate = null;
         String candidateRemoteId = "", candidateLocalId = "";
+        String candidateInstructions = "";
         if (active == null) {
             JSONObject params = threadStartParams(actualModel);
             JSONObject thread = call("thread/start", params).getJSONObject("thread");
+            candidateInstructions = params.getString("developerInstructions");
             candidateRemoteId = thread.getString("id");
             candidateLocalId = "local-" + UUID.randomUUID();
             candidate = obj("id", candidateLocalId, "sessionVersion", 2, "codexThreadId", candidateRemoteId,
@@ -1100,7 +1111,9 @@ public final class Engine {
         } else {
             if (!active.optString("workspaceKey").equals(documents.key())) throw new IOException(t("이 대화의 원래 작업 폴더를 다시 연결해 주세요."));
             if (activeCodexThreadId().isBlank()) {
-                JSONObject thread = call("thread/start", threadStartParams(actualModel)).getJSONObject("thread");
+                JSONObject params = threadStartParams(actualModel);
+                JSONObject thread = call("thread/start", params).getJSONObject("thread");
+                candidateInstructions = params.getString("developerInstructions");
                 candidateRemoteId = thread.getString("id");
             } else resumeRemote(!actualModel.equals(active.optString("model")), actualModel);
         }
@@ -1118,6 +1131,7 @@ public final class Engine {
                 active.put("model", actualModel);
                 if (activeCodexThreadId().isBlank()) { active.put("codexThreadId", targetRemote); serverThreadId = targetRemote; }
             }
+            if (!candidateInstructions.isEmpty()) serverInstructions = candidateInstructions;
             if (fastMode != null) active.put("fastMode", fastMode);
             JSONObject message = userMessage(text, attachmentIds, skills, mentions);
             active.getJSONArray("messages").put(message);

@@ -107,6 +107,12 @@ public final class GitHubAuth implements AutoCloseable {
         return snapshotLocked();
     }
 
+    /** Model/shell context excludes device codes, client IDs and credential material. */
+    synchronized JSONObject agentStatus() {
+        refreshExpiryLocked();
+        return obj("state", state, "login", login, "scopes", new JSONArray(scopes));
+    }
+
     private JSONObject snapshotLocked() {
         return obj("github", obj("configured", !clientId.isEmpty(), "clientId", clientId, "state", state,
             "login", login, "userCode", pending == null ? "" : pending.userCode,

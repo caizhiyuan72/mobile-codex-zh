@@ -7,6 +7,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import static dev.mobilecodex.app.core.Json.*;
 import static org.junit.Assert.*;
 
 public class GitHubCredentialsTest {
@@ -46,11 +48,35 @@ public class GitHubCredentialsTest {
             catch (IOException expected) { }
         }
     }
+    @Test public void statusReadsLatestLoginWithoutRequestingOrReturningACredential() throws Exception {
+        File helper = File.createTempFile("github-helper", ".py");
+        AtomicInteger credentialReads = new AtomicInteger();
+        AtomicReference<JSONObject> state = new AtomicReference<>(obj("state", "idle", "login", "", "scopes", array("public_repo", "workflow")));
+        try (GitHubCredentials broker = new GitHubCredentials(helper, (protocol, host, path) -> {
+            credentialReads.incrementAndGet(); return "fixture-private-token";
+        }, "fixture-capability", state::get)) {
+            Map<String, String> env = new HashMap<>(); broker.configure(env);
+            int port = Integer.parseInt(env.get("MC_GITHUB_PORT"));
+            JSONObject query = obj("capability", "fixture-capability", "operation", "status");
+            assertEquals("idle", request(port, query).getString("state"));
+            state.set(obj("state", "connected", "login", "fixture-user", "scopes", array("public_repo", "workflow")));
+            JSONObject connected = request(port, query);
+            assertEquals("fixture-user", connected.getString("login"));
+            assertFalse(connected.toString().contains("fixture-private-token"));
+            state.set(obj("state", "idle", "login", "", "scopes", array("public_repo", "workflow")));
+            assertEquals("idle", request(port, query).getString("state"));
+            assertEquals(0, request(port, obj("capability", "wrong", "operation", "status")).length());
+            assertEquals(0, request(port, obj("capability", "fixture-capability", "operation", "unsupported")).length());
+            assertEquals(0, credentialReads.get());
+        } finally { helper.delete(); }
+    }
     private static JSONObject request(int port, String capability) throws Exception {
+        return request(port, obj("capability", capability, "protocol", "https", "host", "github.com"));
+    }
+    private static JSONObject request(int port, JSONObject query) throws Exception {
         try (Socket socket = new Socket("127.0.0.1", port)) {
             socket.setSoTimeout(3000);
-            String request = new JSONObject().put("capability", capability).put("protocol", "https").put("host", "github.com").toString();
-            socket.getOutputStream().write((request + "\n").getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write((query + "\n").getBytes(StandardCharsets.UTF_8));
             return new JSONObject(GitHubCredentials.readLine(socket.getInputStream()));
         }
     }
