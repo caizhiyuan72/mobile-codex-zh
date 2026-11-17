@@ -1,0 +1,10 @@
+*.apk
+*.zip
+*.jks
+*.keystore
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+local.properties
