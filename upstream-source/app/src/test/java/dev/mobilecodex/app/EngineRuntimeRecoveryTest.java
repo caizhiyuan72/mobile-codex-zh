@@ -205,7 +205,7 @@ public class EngineRuntimeRecoveryTest {
             assertFalse(recreated.hasForegroundWork());
             recovery.edit().putString("backgroundScope", scope).commit();
             recreated.reconcileService(); recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
-            assertTrue(recreated.hasForegroundWork());
+            assertFalse(recreated.hasForegroundWork());
             recreated.restoreVisibleThread("local-saved");
             recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
             assertEquals("local-saved", recreated.visibleThreadId());

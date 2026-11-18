@@ -15,7 +15,7 @@
   let historyView = {threadId:'', hasMore:false, beforeId:'', total:0, loading:false, loaded:false, top:0};
   const imageReads = new Map();
   let viewerImages = [], viewerIndex = 0, viewerGroup = null;
-  let seq = 0, state = {messages: [], sessions: [], projects: [], models: [], accounts: [], account: {}, authState:'unknown', rateLimits: {}, workspace: {}}, folder = '', openedFile = null, inputResolve = null, toastTimer, fileSeq = 0, modelKey = '', modelRefreshGeneration = 0, displayedRequest = null, projectMenuFocus = null, projectMenuActionClosing = false;
+  let seq = 0, state = {messages: [], sessions: [], projects: [], models: [], accounts: [], account: {}, authState:'unknown', rateLimits: {}, workspace: {}}, folder = '', openedFile = null, inputResolve = null, toastTimer, fileSeq = 0, modelKey = '', modelRefreshGeneration = 0, displayedRequest = null;
   let fileContextGeneration = 0, fileReadSeq = 0, fileInputContext = null, searchTimer;
   const fileDrafts = new Map();
   let draftContext = {attachments: [], mentions: [], skills: []}, draftOptions = {model:'', effort:''}, autocomplete = {items: [], index: -1, token: '', type: '', version: 0};
@@ -209,7 +209,7 @@
     });
   }
   function sidebar(open) {
-    if (!open) closeSessionCard();
+    if (!open) { closeSessionCard(); closeProjectCard(); }
     const wasOpen = document.body.classList.contains('sidebar-open');
     document.body.classList.toggle('sidebar-open', open); $('scrim').hidden = !open;
     if (matchMedia('(max-width:760px)').matches) {
@@ -339,7 +339,7 @@
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
     const hasDraft = !!$('prompt').value.trim() || !!draftContext.attachments.length;
-    $('send').disabled = !hasDraft || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false);
+    $('send').disabled = !hasDraft || !!sending || providerSwitchPending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false);
     const steering = state.busy && !!state.turnId;
     $('stop').hidden = !state.busy || hasDraft;
     $('send').hidden = !$('stop').hidden;
@@ -360,6 +360,14 @@
   function updateJumpLatest() { $('jump-latest').hidden = following || !!state.busy || !state.messages.length; }
   function scrollLatest() { following = true; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight; historyView.top = $('chat-scroll').scrollTop; $('jump-latest').hidden = true; }
   function readingPosition() { return following ? null : visibleMessageAnchor(); }
+  function toggleInPlace(control, toggle) {
+    const area = $('chat-scroll'), top = control.getBoundingClientRect().top;
+    following = false;
+    toggle();
+    area.scrollTop += control.getBoundingClientRect().top - top;
+    historyView.top = area.scrollTop;
+    updateJumpLatest();
+  }
   function restoreReadingPosition(anchor) {
     if (!anchor || following) return;
     const area = $('chat-scroll');
@@ -887,10 +895,7 @@
     const card = node('div', null, 'code-card');
     const head = node('div', null, 'code-head');
     const langSpan = node('span', (lang || 'code').trim().toLowerCase(), 'code-lang');
-    const copy = button(t('복사'), () => copyText(codeText, copy), 'code-copy-btn');
-    copy.setAttribute('aria-label', t('코드 복사'));
-    copy.prepend(icon('copy'));
-    head.append(langSpan, copy);
+    head.append(langSpan);
     const pre = node('pre');
     pre.append(node('code', codeText));
     card.append(head, pre);
@@ -1085,7 +1090,8 @@
       (!r.params?.turnId || r.params.turnId === state.turnId) && String(r.method).includes('requestApproval'));
     setText($('activity-text'), pendingApproval && !state.streamRetrying ? taskActivityLabel('approval') : phase);
     const engine = !state.ready ? '本机引擎未连接' : !p.engineReplyAt ? '等待本机引擎回应' : `本机引擎 ${age(p.engineReplyAt)} 秒前有回应`;
-    setText(link, `上次任务进展：${quiet} 秒前 · ${engine}`);
+    setText(link, state.streamRetrying ? '正在重连' : !state.ready ? '引擎未连接' : pendingApproval ? '等待审批' : `思考 ${quiet} 秒了`);
+    link.title = engine;
     if (!panel.hidden) {
       const text = String(p.summary);
       setText(panel.querySelector('summary'), '推理摘要 · ' + (text.trim().split('\n')[0] || '').slice(0, 96));
@@ -1224,7 +1230,7 @@
   }
   function visibleMessageAnchor() {
     const area = $('chat-scroll'), top = area.getBoundingClientRect().top;
-    const element = [...$('messages').children].find(el => !el.hidden && el.getBoundingClientRect().bottom > top);
+    const element = [...$('messages').children].find(el => el.dataset.id && !el.hidden && el.getBoundingClientRect().bottom > top);
     return {id:element?.dataset.id, offset:element ? element.getBoundingClientRect().top - top : 0,
       scrollTop:area.scrollTop, height:area.scrollHeight};
   }
@@ -1320,7 +1326,7 @@
       groupedMessages = !!agentUi?.grouped() || allMessages.some(message => message.agent);
     }
     const messages = dirtyIds ? [...dirtyIds].map(id => messageLookup.get(id)).filter(Boolean) : allMessages;
-    const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).map(n => [n.dataset.id, n]));
+    const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).filter(n => n.hasAttribute('data-id')).map(n => [n.dataset.id, n]));
     const keep = new Set();
     const folds = dirtyIds ? null : workFolds(allMessages);
     const positionAfter = el => {
@@ -1329,6 +1335,9 @@
       previous = el;
     };
     let previous = null;
+    const liveWork = $('live-work');
+    const lastUser = !dirtyIds && state.busy ? [...allMessages].reverse().find(m => m.role === 'user') : null;
+    if (!dirtyIds && !state.busy && liveWork.parentElement === $('messages')) $('messages').after(liveWork);
     const grouped = groupedMessages;
     C.groupImageMessages(messages).forEach(m => {
       if (m.kind === 'taskSummary' && !legacySummaryNotice(m)) return;
@@ -1341,8 +1350,10 @@
           let control = elements.get(key);
           if (!control) {
             control = button('', () => {
-              control.setAttribute('aria-expanded', String(control.getAttribute('aria-expanded') !== 'true'));
-              drawMessages();
+              toggleInPlace(control, () => {
+                control.setAttribute('aria-expanded', String(control.getAttribute('aria-expanded') !== 'true'));
+                drawMessages(null, false);
+              });
             }, 'work-toggle');
             control.dataset.id = key; control.setAttribute('aria-expanded','false'); elements.set(key,control);
           }
@@ -1354,6 +1365,7 @@
           el.hidden = !open;
         } else el.hidden = false;
         positionAfter(el);
+        if (lastUser && m.id === lastUser.id) positionAfter(liveWork);
       }
       renderedMessages.set(m.id, el);
       if (m.kind === 'taskSummary' && m.summary) {
@@ -1372,11 +1384,15 @@
         el.dataset.signature = signature;
         streamViews.delete(el);
         if (m.role === 'user') {
-          const body = node('div', text, 'user-message-text');
-          el.replaceChildren(body);
-          const date = messageDate(m.createdAt); el.classList.toggle('has-date', !!date); if (date) el.append(date);
-          if (m.attachments?.length) el.append(sentAttachments(m.attachments));
-          if (['not_sent','uncertain','failed'].includes(m.status)) el.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
+          const bubble = node('div', null, 'user-bubble');
+          bubble.append(node('div', text, 'user-message-text')); el.replaceChildren(bubble);
+          const date = messageDate(m.createdAt); el.classList.toggle('has-date', !!date); if (date) bubble.append(date);
+          if (m.attachments?.length) bubble.append(sentAttachments(m.attachments));
+          if (text.trim()) {
+            const copy = button(t('복사'), () => copyText(text, copy), 'msg-copy-btn');
+            copy.setAttribute('aria-label', t('메시지 복사')); copy.prepend(icon('copy')); el.append(copy);
+          }
+          if (['not_sent','uncertain','failed'].includes(m.status)) bubble.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
         }
         else {
           if (incremental) {
@@ -1394,14 +1410,6 @@
           if (m.images?.length) el.append(imageGallery(m.images, m.id));
           if (m.imageStatus === 'generating') el.append(node('p', t('이미지 생성 중…'), 'image-placeholder'));
           if (m.imageError) el.append(node('p', m.imageError, 'image-error'));
-          if (m.text?.trim() && m.imageStatus !== 'generating') {
-            const actions = node('div', null, 'message-actions');
-            const copy = button(t('복사'), () => copyText(incremental ? view.message.text : m.text, copy), 'msg-copy-btn');
-            copy.setAttribute('aria-label', t('메시지 복사'));
-            copy.prepend(icon('copy'));
-            actions.append(copy);
-            el.append(actions);
-          }
         }
       }
       if (incremental) { view.message = m; renderStreamProse(el, view, text); }
@@ -1422,6 +1430,17 @@
   }
   let modelListSignature = '';
   function renderModelList() {
+    const provider = $('picker-provider'), profiles = (state.apiProviders || []).filter(profile => profile.hasKey);
+    $('picker-provider-row').hidden = profiles.length === 0;
+    const choicesKey = JSON.stringify(profiles.map(profile => [profile.id, profile.name]));
+    if (provider.dataset.choices !== choicesKey) {
+      provider.dataset.choices = choicesKey;
+      provider.replaceChildren(new Option('选择 API', ''), ...profiles.map(profile => new Option(profile.name || profile.id, profile.id)));
+      provider.options[0].disabled = true;
+    }
+    provider.value = state.apiActive || '';
+    provider.disabled = projectWorkBusy() || !!sending || providerSwitchPending;
+    $('model-list').inert = providerSwitchPending;
     const signature = JSON.stringify([state.models, $('model').value, L.language()]);
     if (signature === modelListSignature) return;
     modelListSignature = signature;
@@ -1562,12 +1581,24 @@
   async function newChat(workspaceKey) {
     await call('chat.new', {workspaceKey:workspaceKey || ''}); sidebar(false);
   }
-  async function removeProject(project) {
+  function removeProject(project) {
+    const trigger = [...$('projects').querySelectorAll('[data-project-menu-key]')].find(item => item.dataset.projectMenuKey === project.key);
+    if (!trigger || projectRemovalBusy(project)) return;
+    $('project-remove-card')?.remove();
+    const card = node('div', null, 'session-card'); card.id = 'project-remove-card';
     const question = project.bindings?.length > 1 ? t('기본 로컬 연결을 해제할까요? 다른 연결과 파일은 그대로 유지됩니다.') : t('프로젝트를 제거할까요? 대화는 일반 대화로 이동해요.\n파일은 그대로 유지됩니다.');
-    if (projectRemovalBusy(project) || !confirm(question)) return;
-    if (projectRemovalBusy(project)) return;
-    await call('projects.remove', {key:project.key});
-    toast(t(project.bindings?.length > 1 ? '로컬 연결을 해제했습니다.' : '프로젝트를 제거했습니다. 대화는 일반 대화에 있습니다.'));
+    const actions = node('div', null, 'session-card-actions');
+    const cancel = button(t('취소'), () => { card.remove(); trigger.focus({preventScroll:true}); });
+    const remove = button(t(project.bindings?.length > 1 ? '기본 로컬 연결 해제' : '프로젝트 목록에서 제거'), async () => {
+      if (!card.isConnected || projectRemovalBusy(project)) return;
+      cancel.disabled = true;
+      try {
+        await call('projects.remove', {key:project.key}); card.remove();
+        toast(t(project.bindings?.length > 1 ? '로컬 연결을 해제했습니다.' : '프로젝트를 제거했습니다. 대화는 일반 대화에 있습니다.'));
+      } finally { cancel.disabled = false; }
+    }, 'secondary-button danger');
+    actions.append(cancel, remove); card.append(node('p', question), actions); trigger.closest('.project-row').after(card);
+    cancel.focus({preventScroll:true}); card.scrollIntoView?.({block:'nearest'});
   }
   async function renameProject(project) {
     const name = await input(t('프로젝트 이름 변경'), t('새 프로젝트 표시 이름을 입력하세요.'), project.name || '');
@@ -1677,10 +1708,17 @@
       }
     })), project.key);
   }
+  function closeProjectCard(focus = false) {
+    const card = $('project-actions') || $('project-remove-card');
+    if (!card) return false;
+    const trigger = card.closest('.project-tree')?.querySelector('.project-more');
+    card.remove(); trigger?.setAttribute('aria-expanded','false'); if (focus) trigger?.focus({preventScroll:true}); return true;
+  }
   function projectAction(project, trigger) {
-    projectMenuFocus = trigger;
-    $('project-actions-title').textContent = project.name || t('프로젝트');
-    const action = (label, fn, cls, blocked = projectWorkBusy) => { const item = button(label, async () => { if (blocked()) return; projectMenuActionClosing = true; close('project-actions-dialog'); await fn(); }, cls); item.projectBlocked = blocked; item.disabled = blocked(); return item; };
+    const same = !!trigger.closest('.project-tree').querySelector('#project-actions,#project-remove-card');
+    closeSessionCard(); closeProjectCard(); if (same) return;
+    const card = node('div', null, 'session-card'); card.id = 'project-actions';
+    const action = (label, fn, cls, blocked = projectWorkBusy) => { const item = button(label, async () => { if (blocked()) return; closeProjectCard(); await fn(); }, cls); item.disabled = blocked(); return item; };
     const actions = [
       action(t('이름 변경'), () => renameProject(project), undefined, () => false)
     ];
@@ -1691,10 +1729,51 @@
     if (project.projectId && (state.projects || []).some(p => p.projectId && p.projectId !== project.projectId)) actions.push(action(t('프로젝트 병합'), () => mergeProject(project)));
     if (project.bindings?.length > 1) actions.push(action(t('기본 로컬 폴더'), () => chooseProjectBinding(project)));
     actions.push(action(t(project.bindings?.length > 1 ? '기본 로컬 연결 해제' : '프로젝트 목록에서 제거'), () => removeProject(project), 'secondary-button danger', () => projectRemovalBusy(project)));
-    $('project-actions').replaceChildren(...actions);
-    show('project-actions-dialog');
+    const row = node('div', null, 'project-inline-actions'); row.append(...actions); card.append(row);
+    trigger.closest('.project-row').after(card); trigger.setAttribute('aria-expanded','true'); actions[0]?.focus({preventScroll:true});
   }
   let sessionCard = null;
+  let providerSwitchPending = false;
+  const folderStorageKey = () => 'chat-folders:v1:' + providerScope();
+  let folderScope = '', chatFolders = [];
+  function readChatFolders() {
+    const key = folderStorageKey();
+    if (folderScope === key) return;
+    if (sessionCard) closeSessionCard();
+    folderScope = key;
+    try { chatFolders = JSON.parse(localStorage.getItem(key) || '[]').filter(group => typeof group.name === 'string' && Array.isArray(group.ids)); }
+    catch { chatFolders = []; }
+  }
+  const folderFor = id => chatFolders.find(group => group.ids.includes(id));
+  function storeFolders(next) {
+    localStorage.setItem(folderStorageKey(), JSON.stringify(next));
+    chatFolders = next;
+  }
+  function moveToFolder(id, name) {
+    const next = chatFolders.map(group => ({...group, ids:group.ids.filter(member => member !== id)}));
+    if (name) {
+      let dest = next.find(group => group.name === name);
+      if (!dest) { dest = {name, ids:[], open:true}; next.push(dest); }
+      dest.ids.push(id); dest.open = true;
+    }
+    storeFolders(next.filter(group => group.ids.length));
+    closeSessionCard(); navigationSignature = ''; render(state);
+  }
+  function renderChatFolders() {
+    for (const group of chatFolders) {
+      const ids = new Set(group.ids), members = (state.sessions || []).filter(session => ids.has(session.id));
+      if (!members.length) continue;
+      const section = node('details', null, 'history-folder'); section.open = group.open !== false;
+      const title = node('summary', group.name + '（' + members.length + '）'); section.append(title);
+      section.addEventListener('toggle', () => {
+        if (section.isConnected && group.open !== section.open) {
+          group.open = section.open; storeFolders(chatFolders);
+        }
+      });
+      for (const session of members) section.append(sessionRow(session));
+      $('sessions').append(section);
+    }
+  }
   const sessionEdits = new Set();
   function closeSessionCard(restoreFocus = false) {
     if (!sessionCard) return false;
@@ -1765,6 +1844,42 @@
       } finally { sessionEdits.delete(id); }
     }
     card.replaceChildren();
+    if (mode === 'folder') {
+      const list = node('div', null, 'folder-destinations');
+      if (state.projects?.length) list.append(node('strong', '已有项目'));
+      for (const project of state.projects || []) {
+        const choice = button(project.name || t('이름 없는 프로젝트'), async () => {
+          if (selected !== sessionCard || sessionEdits.has(id)) return;
+          sessionEdits.add(id);
+          try {
+            const scope = folderScope;
+            const result = await call('chat.move', {id, key:project.key});
+            if (folderScope !== scope) return;
+            if (folderFor(id)) moveToFolder(id, '');
+            else if (selected === sessionCard) closeSessionCard();
+            if (result.sessions) render(result);
+          } finally { sessionEdits.delete(id); }
+        });
+        choice.prepend(icon('folder')); choice.disabled = sessionWorkBusy(session) || (projectKeys(project).includes(session.workspaceKey) && !folderFor(id)); list.append(choice);
+      }
+      if (chatFolders.length) list.append(node('strong', '聊天文件夹'));
+      for (const group of [...chatFolders].sort((left, right) => left.name.localeCompare(right.name))) {
+        const choice = button(group.name, () => moveToFolder(id, group.name));
+        choice.prepend(icon('folder')); choice.disabled = group.ids.includes(id); list.append(choice);
+      }
+      if (folderFor(id)) list.append(button('移出文件夹', () => moveToFolder(id, '')));
+      actions.append(cancel, button('新建文件夹', () => change('new-folder')));
+      card.append(list, actions); reveal(); return;
+    }
+    if (mode === 'new-folder') {
+      const field = node('input'); field.placeholder = '新文件夹名称'; field.setAttribute('aria-label', field.placeholder); field.maxLength = 80;
+      const move = () => {
+        const name = field.value.trim(); if (!name) { field.focus(); return; }
+        moveToFolder(id, name);
+      };
+      field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); move(); } });
+      actions.append(button(t('취소'), () => change('folder')), button('确定', move)); card.append(field, actions); field.focus({preventScroll:true}); reveal(); return;
+    }
     if (mode === 'rename') {
       const field = node('input');
       field.setAttribute('aria-label', t('대화 이름 변경'));
@@ -1784,7 +1899,9 @@
     remove.addEventListener('click', confirm ? () => submit() : () => change('delete'));
     remove.dataset.sessionDelete = '';
     remove.disabled = sessionWorkBusy(session);
-    actions.append(first, remove); card.append(actions);
+    actions.append(first);
+    if (!confirm) actions.append(button('移至项目或文件夹', () => change('folder')));
+    actions.append(remove); card.append(actions);
     first.focus({preventScroll:true}); reveal();
   }
   function sessionRow(session) {
@@ -1821,7 +1938,7 @@
       if (project.nameConflicts?.length) { const resolve = button(t('이름 충돌 해결'), () => resolveProjectName(project), 'new-thread'); resolve.disabled = workBusy; children.append(resolve); }
       if (project.available === false) { const bind = button(t(project.hasLocalFolder === false ? '로컬 폴더 연결' : '폴더 다시 연결'), () => pickFolder(project.key), 'new-thread'); bind.disabled = workBusy; children.append(bind); }
       if (project.bindings?.length > 1) { const choose = button(t('기본 로컬 폴더'), () => chooseProjectBinding(project), 'new-thread'); choose.disabled = workBusy; children.append(choose); }
-      for (const session of (state.sessions || []).filter(s => projectKeys(project).includes(s.workspaceKey))) children.append(sessionRow(session));
+      for (const session of (state.sessions || []).filter(s => projectKeys(project).includes(s.workspaceKey) && !folderFor(s.id))) children.append(sessionRow(session));
       section.append(children); if (!expanded) section.classList.add('collapsed'); target.append(section);
     }
     if (!projects.length && !generalFolderAvailable()) target.append(button(t('작업 폴더 선택'), pickFolder, 'project-button'));
@@ -1853,7 +1970,7 @@
     const wasBusy = !!state.busy;
     const changedFileContext = fileWorkspaceScope(state) !== fileWorkspaceScope(next);
     if (changedFileContext) resetFileContext();
-    setDraftScope(next); state = historySnapshot(next, changedThread);
+    setDraftScope(next); state = {...historySnapshot(next, changedThread), sessions:[...(next.sessions || [])].sort((left, right) => (right.lastMessageAt || 0) - (left.lastMessageAt || 0))};
     apiProvidersUi?.render(state);
     githubUi?.render(state);
     state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {}; setCharacterState(state.characters);
@@ -1901,18 +2018,19 @@
     if (changesScope !== reviewScope()) { changesGeneration++; changesScope = reviewScope(); selectedChange = null; $('change-preview').hidden = true; $('change-restore').disabled = true; $('changes-list').replaceChildren(); if ($('changes-dialog').open) $('changes-status').textContent = t('대화 또는 프로젝트가 바뀌었습니다. 새로고침해 주세요.'); }
     $('changes-turn-diff').textContent = state.turnDiff || t('이 대화에 기록된 작업 diff가 없습니다.');
     if (selectedChange) $('change-restore').disabled = restoringChange || !selectedChange.data.canRestore || !!state.busy || state.permissions === 'read-only';
-    const navigationKey = JSON.stringify([state.projects, state.sessions, state.workspace, state.threadId, !!state.busy, L.language()]);
+    readChatFolders();
+    const navigationKey = JSON.stringify([folderScope, state.projects, state.sessions, state.workspace, state.threadId, !!state.busy, L.language()]);
     if (navigationKey !== navigationSignature) {
       const scroller = $('sidebar').querySelector('.sidebar-scroll');
       let scrollTop = scroller.scrollTop;
       const focused = sessionCard?.card.contains(document.activeElement) ? document.activeElement : null;
       navigationSignature = navigationKey; renderProjects();
-      if ($('project-actions-dialog')?.open) $('project-actions').querySelectorAll('button').forEach(button => { button.disabled = button.projectBlocked(); });
       if ($('project-link-dialog')?.open) $('project-link-choices').querySelectorAll('button').forEach(button => { button.disabled = projectWorkBusy() || projectLinkPending; });
       $('sessions').replaceChildren();
+      renderChatFolders();
       const projectWorkspaceKeys = new Set((state.projects || []).flatMap(projectKeys));
       const sessionWorkspaceKey = session => session.workspaceKey || (typeof session.workspace === 'string' ? session.workspace : '');
-      for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)))) $('sessions').append(sessionRow(session));
+      for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)) && !folderFor(session.id))) $('sessions').append(sessionRow(session));
       if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
       if (sessionCard) {
         const current = (state.sessions || []).find(session => session.id === sessionCard.id);
@@ -1946,7 +2064,7 @@
     syncPermissionControls(state.permissions, anyBusy);
     syncApprovalControl(anyBusy);
     renderModelList();
-    if (changedThread) { following = true; $('event-log').replaceChildren(); $('messages').replaceChildren(); }
+    if (changedThread) { following = true; $('event-log').replaceChildren(); if ($('live-work').parentElement === $('messages')) $('messages').after($('live-work')); $('messages').replaceChildren(); }
     updateSend(); optionsSummary(); drawUpdates(updateState);
     drawMessages(null, false);
     agentUi?.render();
@@ -2452,6 +2570,7 @@
     const id = dialogs.at(-1);
     if (id) { dismiss(id); return true; }
     if (closeSessionCard(true)) return true;
+    if (closeProjectCard(true)) return true;
     if (document.body.classList.contains('sidebar-open')) { sidebar(false); return true; }
     if (!$('file-panel').hidden) { setFilePanelOpen(false); return true; }
     saveDraft(); return false;
@@ -2475,21 +2594,13 @@
     d.addEventListener('close', () => {
       backdropPointer = null;
       const i = dialogs.indexOf(d.id); if (i !== -1) dialogs.splice(i, 1);
-      const actionClosing = projectMenuActionClosing;
-      if (d.id === 'project-actions-dialog' && projectMenuFocus && !projectMenuActionClosing) {
-        const trigger = projectMenuFocus;
-        projectMenuFocus = null;
-        if (matchMedia('(max-width:760px)').matches && !document.body.classList.contains('sidebar-open')) sidebar(true);
-        const replacement = trigger.isConnected ? trigger : [...document.querySelectorAll('[data-project-menu-key]')].find(button => button.dataset.projectMenuKey === trigger.dataset.projectMenuKey);
-        replacement?.focus({preventScroll:true});
-      }
-      if (d.id === 'project-actions-dialog') { projectMenuActionClosing = false; if (actionClosing) projectMenuFocus = null; }
     });
     d.addEventListener('cancel', e => { e.preventDefault(); dismiss(d.id); });
   });
   wireSheetGestures();
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => dismiss(b.dataset.close)));
   document.addEventListener('click', event => {
+    if (!event.target.closest('#project-actions,#project-remove-card,.project-more')) closeProjectCard();
     if (sessionCard && !event.target.closest('.session-card, .session-more')) closeSessionCard();
   }, true);
   document.querySelectorAll('.sidebar-toggle').forEach(b => b.addEventListener('click', () => { if (matchMedia('(max-width:760px)').matches) sidebar(!document.body.classList.contains('sidebar-open')); else document.body.classList.toggle('sidebar-collapsed'); }));
@@ -2532,6 +2643,7 @@
   $('input-dialog').addEventListener('close', () => { if (inputResolve) { const r = inputResolve; inputResolve = null; r(null); } });
   on('input-value', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) $('input-confirm').click(); }, 'keydown');
   on('composer', async () => {
+    if (providerSwitchPending) return;
     if (!configuredApi()) { openProviderSettings(); toast('请先配置 API 服务商。'); return; }
     if (state.workspace?.selected && state.workspace.available === false) { toast(t('먼저 로컬 폴더를 연결해 주세요.')); return; }
     const value = $('prompt').value, text = value.trim();
@@ -2601,6 +2713,13 @@
   });
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
   on('model-picker-back', () => showModelPanel(false));
+  on('picker-provider', async () => {
+    const id = $('picker-provider').value;
+    if (!id || id === state.apiActive || projectWorkBusy() || sending || providerSwitchPending) return;
+    providerSwitchPending = true; saveDraft(); renderModelList(); updateSend();
+    try { await call('providers.select', {id}); render(await call('state')); }
+    finally { providerSwitchPending = false; renderModelList(); updateSend(); }
+  }, 'change');
   on('model-picker-permissions', () => { close('model-picker'); show('options-dialog'); });
   on('effort-slider', previewReasoning, 'input');
   on('effort-slider', () => {
@@ -2625,13 +2744,17 @@
     imageTouch = null;
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
+  $('live-work').addEventListener('click', event => {
+    const summary = event.target.closest('summary');
+    if (!summary || event.defaultPrevented) return;
+    event.preventDefault();
+    toggleInPlace(summary, () => { summary.parentElement.open = !summary.parentElement.open; });
+  });
   on('activity-details', () => {
     if (!state.liveTaskActivity) { show('activity-dialog'); return; }
     const latest = $('task-activities').lastElementChild;
     if (latest) {
-      const anchor = readingPosition();
-      latest.open = !latest.open;
-      if (following) scrollLatest(); else restoreReadingPosition(anchor);
+      toggleInPlace($('activity-details'), () => { latest.open = !latest.open; });
     }
   });
   on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');

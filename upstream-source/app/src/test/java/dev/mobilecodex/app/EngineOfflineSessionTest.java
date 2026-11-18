@@ -76,6 +76,24 @@ public class EngineOfflineSessionTest {
         assertEquals("never", allow.getString("approvalPolicy")); assertEquals("user", allow.getString("approvalsReviewer"));
         engine.io.shutdownNow();
     }
+    @Test public void movingToAnExistingProjectPreservesHistoryAndRecency() throws Exception {
+        JSONObject saved = obj("id", "chat", "title", "History", "workspaceKey", "", "workspace", "", "messages", array(
+            obj("id", "user", "role", "user", "text", "original", "createdAt", 1234L), obj("id", "reply", "role", "assistant", "text", "reply")));
+        File storage = new File(context.getFilesDir(), "sessions.json");
+        dev.mobilecodex.app.core.Utf8Files.write(storage.toPath(), array(saved).toString());
+        Engine engine = new Engine(context);
+        try {
+            engine.setTestTransport((method, params) -> obj());
+            handle(engine, "projects.create", obj("name", "Existing"));
+            String key = handle(engine, "state", obj()).getJSONArray("projects").getJSONObject(0).getString("key");
+            handle(engine, "chat.resume", obj("id", "chat"));
+            JSONObject moved = handle(engine, "chat.move", obj("id", "chat", "key", key));
+            assertEquals("chat", moved.getString("threadId")); assertEquals(key, moved.getJSONObject("workspace").getString("key"));
+            assertEquals(1234L, session(moved.getJSONArray("sessions"), "chat").getLong("lastMessageAt"));
+            JSONObject durable = session(new JSONArray(dev.mobilecodex.app.core.Utf8Files.read(storage.toPath())), "chat");
+            assertEquals(key, durable.getString("workspaceKey")); assertEquals("original", durable.getJSONArray("messages").getJSONObject(0).getString("text"));
+        } finally { engine.io.shutdownNow(); }
+    }
     @Test public void legacySessionOwnershipIsRemovedAndNeverHidesConversations() throws Exception {
         JSONArray initial = array(
             obj("id", "one", "title", "One", "workspace", "", "workspaceKey", "", "accountProfileKey", "account-old", "messages", new JSONArray()),

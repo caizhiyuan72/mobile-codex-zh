@@ -16,7 +16,8 @@ test('composer keeps equal touch targets and one action row at supported text si
    assert.equal(style.width,'44px');assert.equal(style.height,'44px');
    assert.equal(style.minWidth,'44px');assert.equal(style.minHeight,'44px');
    const symbol=getComputedStyle(button.querySelector('svg'));
-   assert.equal(symbol.width,'20px');assert.equal(symbol.height,'20px');
+   const iconSize=id==='send'?'28px':'20px';
+   assert.equal(symbol.width,iconSize);assert.equal(symbol.height,iconSize);
   }
   assert.equal(getComputedStyle(document.querySelector('.composer-bottom')).display,'flex');
   assert.equal(getComputedStyle(document.querySelector('.composer-bottom')).gap,'8px');

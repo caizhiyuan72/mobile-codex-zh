@@ -51,7 +51,7 @@ public class EngineForegroundLifecycleTest {
             Child stale = new Child(), replacement = new Child();
             field(engine,"process",replacement); field(engine,"ready",true);
             engine.codexDisconnected(stale,null,null,new RuntimeFailure.Tail());
-            assertTrue(engine.hasForegroundWork()); assertTrue(replacement.alive);
+            assertFalse(engine.hasForegroundWork()); assertTrue(replacement.alive);
             eof(engine,replacement); assertFalse(engine.hasForegroundWork());
         } finally { engine.io.shutdownNow(); }
     }

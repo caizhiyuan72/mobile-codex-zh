@@ -48,7 +48,7 @@ test('text size restores natively, saves explicitly and preserves the conversati
   select.value=String(size);select.dispatchEvent(new w.Event('change'));await tick();
   assert.equal(saved,size);assert.equal(d.documentElement.dataset.textSize,String(size));assert.equal(select.disabled,false);
  }
- assert.equal(d.getElementById('prompt').value,'unsent draft');assert.equal(d.querySelector('[data-id="keep"]').textContent,'keep me');
+ assert.equal(d.getElementById('prompt').value,'unsent draft');assert.equal(d.querySelector('[data-id="keep"] .user-message-text').textContent,'keep me');
  assert.equal(calls.some(c=>c.action==='chat.send'||c.action==='config.save'||c.action==='projects.select'),false);
  const reopened=setup({}, {textSize:saved});await tick();assert.equal(reopened.w.document.getElementById('text-size').value,String(saved));
 });
@@ -896,16 +896,16 @@ test('a partial tag stays hidden when another participant becomes the last messa
  assert.doesNotMatch(d.querySelector('[data-id="a"]').textContent,/\[\[icon:/);
 });
 
-test('code blocks render with language label and clipboard copy button',async()=>{
+test('only user text has a copy button, never assistant text or code blocks',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,messages:[{id:'m1',role:'assistant',text:'```python\nprint("hello")\n```'}]});
+ w.mobileCodexEvent('state',{...snapshot,messages:[{id:'u1',role:'user',text:'Question'},{id:'m1',role:'assistant',text:'```python\nprint("hello")\n```'}]});
  const card=d.querySelector('.code-card');assert.ok(card);
  const lang=card.querySelector('.code-lang');assert.equal(lang.textContent,'python');
  const pre=card.querySelector('pre code');assert.match(pre.textContent,/print\("hello"\)/);
- const copyBtn=card.querySelector('.code-copy-btn');assert.ok(copyBtn);
- copyBtn.click();await tick();
- assert.match(copyBtn.textContent,/복사됨/);
+ assert.equal(d.querySelector('.assistant button'),null);
  const msgCopy=d.querySelector('.msg-copy-btn');assert.ok(msgCopy);
+ assert.equal(msgCopy.previousElementSibling,d.querySelector('.user-bubble'));
+ assert.equal(msgCopy.previousElementSibling.textContent,'Question');
  msgCopy.click();await tick();
  assert.match(msgCopy.textContent,/복사됨/);
 });
@@ -1000,13 +1000,13 @@ test('clipboard denial falls back to native and only confirms successful copying
  let fail=false;
  const {w,calls,snapshot}=setup({'ui.copyCode':()=>{if(fail)throw new Error('Clipboard unavailable');return {ok:true};}});await tick();
  Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async()=>{throw new w.DOMException('Denied','NotAllowedError');}}});
- w.mobileCodexEvent('state',{...snapshot,messages:[{id:'copy',role:'assistant',text:'```js\nconst x = 1;\n```'}]});
+ w.mobileCodexEvent('state',{...snapshot,messages:[{id:'copy',role:'user',text:'const x = 1;\n'},{id:'again',role:'user',text:'next'}]});
  const d=w.document;
- d.querySelector('.code-copy-btn').click();await tick();
+ d.querySelector('.msg-copy-btn').click();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='ui.copyCode').at(-1).args,{code:'const x = 1;\n'});
- assert.match(d.querySelector('.code-copy-btn').textContent,/복사됨/);
- fail=true;d.querySelector('.msg-copy-btn').click();await tick();
- assert.doesNotMatch(d.querySelector('.msg-copy-btn').textContent,/복사됨/);
+ assert.match(d.querySelector('.msg-copy-btn').textContent,/복사됨/);
+ const second=d.querySelector('[data-id="again"] .msg-copy-btn');fail=true;second.click();await tick();
+ assert.doesNotMatch(second.textContent,/복사됨/);
  assert.match(d.getElementById('toast').textContent,/복사하지 못했습니다/);
 });
 
@@ -1069,9 +1069,9 @@ test('general Codex workspace uses its default folder and orphan conversations f
  assert.equal(d.querySelector('#projects .new-thread').textContent,'폴더 다시 연결');
  d.getElementById('files-toggle').click();await tick();assert.equal(calls.some(c=>c.action==='files.list'),true);
   const menu=d.querySelector('.project-more');assert.ok(menu);menu.click();await tick();
- const confirmation=[];w.confirm=message=>{confirmation.push(message);return true;};
  [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();
- assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:'kept'});assert.match(confirmation[0],/^프로젝트를 제거할까요\? 대화는 일반 대화로 이동해요\./);assert.match(confirmation[0],/파일은 그대로 유지됩니다/);
+ const confirmation=d.querySelector('#project-remove-card p').textContent;assert.match(confirmation,/대화는 일반 대화로 이동해요/);assert.match(confirmation,/파일은 그대로 유지됩니다/);
+ d.querySelector('#project-remove-card .danger').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:'kept'});
  d.querySelector('#sessions .session').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.resume').at(-1).args,{id:'old'});
  });
 test('project menus remain available while global import controls wait for running work',async()=>{
@@ -1096,13 +1096,15 @@ test('mobile project menu supports new chat, persisted display rename and cancel
   const project={key:'project-menu',name:'Folder name',selected:true,available:true};
   w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:project.key,name:project.name},projects:[project]});await tick();
   const open=()=>{d.querySelector('.project-more').click();};
-  open();await tick();assert.equal(d.getElementById('project-actions-dialog').open,true);assert.match(d.getElementById('project-actions').textContent,/새 대화/);
+  d.querySelector('.sidebar-toggle').click();open();await tick();assert.ok(d.querySelector('#projects #project-actions'));assert.match(d.getElementById('project-actions').textContent,/새 대화/);
   d.querySelector('#project-actions button').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:project.key});
   open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='이름 변경').click();await tick();
   d.getElementById('input-value').value='표시 이름';d.getElementById('input-confirm').click();await tick();await tick();
   assert.deepEqual(calls.filter(c=>c.action==='projects.rename').at(-1).args,{key:project.key,name:'표시 이름'});assert.equal(d.querySelector('.project-tree .project-button span').textContent,'표시 이름');
-  open();await tick();confirmResult=false;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);
-  open();await tick();confirmResult=true;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:project.key});
+  if(!d.body.classList.contains('sidebar-open'))d.querySelector('.sidebar-toggle').click();
+  open();await tick();confirmResult=false;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);assert.ok(d.body.classList.contains('sidebar-open'));
+  d.querySelector('#project-remove-card button').click();await tick();assert.equal(d.querySelector('#project-remove-card'),null);assert.equal(calls.some(c=>c.action==='projects.remove'),false);
+  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();d.querySelector('#project-remove-card button:last-child').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:project.key});assert.ok(d.body.classList.contains('sidebar-open'));
  });
 
 test('shared projects group conversations without changing their original workspace keys',async()=>{
@@ -1323,7 +1325,7 @@ test('language switch preserves drafts, model content and editor values',async()
  assert.equal(d.documentElement.lang,'en');assert.match(d.getElementById('settings').textContent,/Settings/);
  assert.equal(d.getElementById('prompt').value,'기존 초안');assert.equal(d.getElementById('editor').value,'사용자 파일');assert.equal(d.getElementById('instructions-editor').value,'기존 지침');
  w.mobileCodexEvent('state',{...snapshot,messages:[{id:'a',role:'assistant',text:raw}]});
- assert.match(d.getElementById('messages').textContent,/설정 파일 보내기/);assert.match(d.getElementById('messages').textContent,/Copy/);
+ assert.match(d.getElementById('messages').textContent,/설정 파일 보내기/);assert.equal(d.querySelector('[data-id="a"] .msg-copy-btn'),null);
  assert.match(d.querySelector('[data-prompt]').dataset.prompt,/Look through/);
  assert.equal(calls.filter(x=>['runtime.stop','runtime.start'].includes(x.action)).length,0);
  d.getElementById('language').value='ko';d.getElementById('language').dispatchEvent(new w.Event('change'));await tick();await tick();
@@ -1333,6 +1335,68 @@ test('system locale uses Chinese fallback and catalog copies match',async()=>{
  const {w}=setup({}, {language:'system',systemLanguage:'ja-JP'});await tick();
  assert.equal(w.document.documentElement.lang,'zh-CN');assert.match(w.document.getElementById('prompt').placeholder,/Codex/);
  assert.deepEqual(JSON.parse(JSON.stringify(w.MobileCodexEnglish)), JSON.parse(fs.readFileSync('app/src/main/assets/translations-en.json','utf8')));
+});
+
+test('chat folders preserve same-title sessions by ID across reload and provider changes',async()=>{
+ const {w,snapshot}=setup();await tick();const doc=w.document;
+ const sessions=[{id:'one',title:'同名'},{id:'two',title:'同名'}];
+ const state={...snapshot,sessions};w.mobileCodexEvent('state',state);
+ async function move(id,choice){
+  doc.querySelector(`[data-session-id="${id}"] .session-more`).click();await tick();
+  const action=text=>[...doc.querySelectorAll('#session-card button')].find(button=>button.textContent===text);
+  assert.equal(doc.querySelector('#session-card button:last-child').dataset.sessionDelete,'');
+  action('移至项目或文件夹').click();await tick();assert.equal(doc.querySelector('#session-card input'),null);
+  if(choice==='new'){action('新建文件夹').click();await tick();doc.querySelector('#session-card input').value='工作';action('确定').click();}
+  else action(choice==='none'?'移出文件夹':'工作').click();await tick();
+ }
+ await move('one','new');await move('two','0');assert.equal(doc.querySelectorAll('.history-folder .session-row').length,2);
+ await move('one','none');assert.equal(doc.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+ const key='chat-folders:v1:'+state.apiActive;
+ const restored=setup({}, {drafts:{[key]:w.localStorage.getItem(key)}});await tick();restored.w.mobileCodexEvent('state',state);
+ assert.equal(restored.w.document.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+ w.mobileCodexEvent('state',{...state,apiActive:'another'});assert.equal(doc.querySelector('.history-folder'),null);
+ w.mobileCodexEvent('state',state);assert.equal(doc.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+});
+
+test('recent messages sort general, project and folder chats without promoting a viewed thread',async()=>{
+ const {w,snapshot}=setup({}, {drafts:{'chat-folders:v1:fixture-api':JSON.stringify([{name:'F',ids:['f1','f2']}])}});await tick();
+ const state={...snapshot,projects:[{key:'p',name:'Project'}],sessions:['a','b','p1','p2','f1','f2'].map((id,index)=>({id,lastMessageAt:index+1,workspaceKey:id.startsWith('p')?'p':''}))};
+ const order=selector=>[...w.document.querySelectorAll(selector)].map(row=>row.dataset.sessionId);
+ w.mobileCodexEvent('state',state);assert.deepEqual(order('#sessions > .session-row'),['b','a']);assert.deepEqual(order('#projects .session-row'),['p2','p1']);assert.deepEqual(order('.history-folder .session-row'),['f2','f1']);
+ w.mobileCodexEvent('state',{...state,threadId:'a'});assert.deepEqual(order('#sessions > .session-row'),['b','a']);state.sessions.find(session=>session.id==='a').lastMessageAt=100;
+ w.mobileCodexEvent('state',state);assert.deepEqual(order('#sessions > .session-row'),['a','b']);
+});
+
+test('moving chat into an existing project does not create a project or switch the sidebar',async()=>{
+ const {w,snapshot,calls}=setup({'chat.move':request=>({...snapshot,sessions:[{id:'chat',title:'History',workspaceKey:request.args.key}]})},{mobile:true});await tick();
+ snapshot.projects=[{key:'existing',name:'Existing project'}];snapshot.sessions=[{id:'chat',title:'History'}];w.mobileCodexEvent('state',snapshot);
+ const doc=w.document;doc.querySelector('.sidebar-toggle').click();doc.querySelector('.session-more').click();await tick();
+ const action=label=>[...doc.querySelectorAll('#session-card button')].find(button=>button.textContent===label);
+ action('移至项目或文件夹').click();await tick();action('Existing project').click();await tick();
+ assert.deepEqual(calls.find(request=>request.action==='chat.move').args,{id:'chat',key:'existing'});assert.ok(doc.querySelector('#projects [data-session-id="chat"]'));assert.ok(doc.body.classList.contains('sidebar-open'));assert.ok(!calls.some(request=>request.action==='projects.create'));
+});
+
+test('provider picker guards pending sends and restores selection on failure',async()=>{
+ let finish,fail=true;const {w,snapshot,calls}=setup({'providers.select':async request=>{
+  await new Promise(resolve=>{finish=resolve;});if(fail)throw Error('offline');
+  snapshot.apiActive=request.args.id;snapshot.models=[{id:'other-model',isDefault:true}];return {};
+ }});await tick();const doc=w.document,select=doc.getElementById('picker-provider');
+ snapshot.apiProviders.push({id:'other',hasKey:true},{id:'no-key',hasKey:false});w.mobileCodexEvent('state',snapshot);
+ assert.deepEqual([...select.options].map(option=>option.value),['','fixture-api','other']);
+ const choose=async()=>{select.value='other';select.dispatchEvent(new w.Event('change'));await tick();};
+ await choose();assert.ok(select.disabled);doc.getElementById('prompt').value='pending';
+ doc.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();assert.ok(!calls.some(request=>request.action==='chat.send'));
+ finish();await tick();assert.equal(select.value,'fixture-api');assert.ok(!select.disabled);
+ fail=false;await choose();finish();await tick();assert.equal(select.value,'other');assert.equal(doc.getElementById('model').value,'other-model');
+ w.mobileCodexEvent('state',{...snapshot,busy:true});assert.ok(select.disabled);
+});
+
+test('live work precedes the current answer without moving prior turns',async()=>{
+ const {w,snapshot}=setup();await tick();const doc=w.document;
+ const messages=[{id:'old',role:'assistant',text:'old answer'},{id:'ask',role:'user',text:'question'},{id:'reply',role:'assistant',text:'answer',status:'streaming'}];
+ w.mobileCodexEvent('state',{...snapshot,busy:true,turnId:'turn',messages});
+ assert.deepEqual([...doc.getElementById('messages').children].map(child=>child.dataset.id||child.id),['old','ask','live-work','reply']);
+ w.mobileCodexEvent('state',{...snapshot,threadId:'new-thread',messages:[]});assert.ok(doc.getElementById('live-work'));assert.equal(doc.getElementById('messages').childElementCount,0);
 });
 test('welcome logo is visible before startup and fresh portraits retain their colors in dark mode',()=>{
  const dom=new JSDOM(fs.readFileSync(root+'index.html','utf8'),{url:'https://appassets.androidplatform.net',runScripts:'outside-only'});
@@ -1695,9 +1759,9 @@ test('deleting unrelated projects and conversations remains available during Cod
   const removal=()=>[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거');
   assert.equal(removal().disabled,false);
   w.mobileCodexEvent('state',current);assert.equal(removal().disabled,false,'live updates preserve target-scoped availability');
-  removal().click();await tick();assert.deepEqual(calls.find(c=>c.action==='projects.remove').args,{key:'b'});
+  removal().click();await tick();d.querySelector('#project-remove-card .danger').click();await tick();assert.deepEqual(calls.find(c=>c.action==='projects.remove').args,{key:'b'});
   d.querySelector('[data-project-menu-key="a"]').click();await tick();assert.equal(removal().disabled,true);
-  d.getElementById('project-actions-dialog').close();
+  w.mobileCodexBack();
   [...d.querySelectorAll('.session-more')].find(b=>b.getAttribute('aria-label')==='B chat 관리').click();await tick();
   d.querySelector('[data-session-delete]').click();await tick();
  d.querySelector('[data-session-delete]').click();await tick();

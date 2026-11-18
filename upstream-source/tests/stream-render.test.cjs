@@ -7,7 +7,7 @@ const {JSDOM} = require('jsdom');
 const web = path.join(__dirname, '../app/src/main/assets/web');
 const read = file => fs.readFileSync(path.join(web, file), 'utf8');
 
-test('streaming keeps completed Markdown nodes, updates the copy action and accepts the final snapshot', async () => {
+test('streaming keeps completed Markdown nodes without reply copy actions and accepts the final snapshot', async () => {
   const dom = new JSDOM(read('index.html'), {url:'https://appassets.androidplatform.net/index.html', runScripts:'outside-only'});
   try {
     const w = dom.window, frames = [], copied = [];
@@ -47,9 +47,8 @@ test('streaming keeps completed Markdown nodes, updates the copy action and acce
     delta('Latest.'); paint();
     assert.equal(reply().querySelector('strong'), start);
     assert.equal(reply().querySelector('pre code'), code);
-    reply().querySelector('.msg-copy-btn').click();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(copied, ['  **Start**\n\n```html\n<a>text\n\n</a>\n```\n\n| H |\n| - |\n| cell |\n\nLatest.']);
+    assert.equal(reply().querySelector('button'),null);
+    assert.deepEqual(copied, []);
 
     const finalText = '**Final**\n\n```html\n<b>replacement</b>\n```';
     w.mobileCodexEvent('state', {...state,busy:false,messages:[{...answer,text:finalText}]});

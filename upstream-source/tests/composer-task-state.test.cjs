@@ -20,7 +20,7 @@ function setup(task = {}, overrides = {}) {
     threadId:'task', cwd:'/test/project', workspace:{selected:true,key:'project',name:'Project',available:true},
     apiActive:'proxy', apiProviders:[{id:'proxy',hasKey:true}],
     models:[{id:'gpt-6.1-sol',model:'gpt-6.1-sol',isDefault:true}], projects:[], sessions:[],
-    messages:[{id:'answer',role:'assistant',text:'A message to read while the task continues.'}], ...task
+    messages:[{id:'question',role:'user',text:'Please continue.'},{id:'answer',role:'assistant',text:'A message to read while the task continues.'}], ...task
   };
   w.matchMedia = () => ({matches:false, addEventListener(){}});
   w.requestAnimationFrame = callback => w.setTimeout(callback, 0);

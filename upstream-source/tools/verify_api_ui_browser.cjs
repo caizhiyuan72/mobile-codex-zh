@@ -134,8 +134,8 @@ async function taskControls(page,width,theme){
  assert.equal(await page.locator('#stop').isVisible(),true,'Stop waits for native completion');
  await page.evaluate(()=>window.mobileCodexEvent('agent.event',{threadId:'layout',method:'item/completed',params:{turnId:'turn',item:{type:'commandExecution',command:'/bin/sh -lc '+ '/long/path/AGENTS.md '.repeat(15),exitCode:1}}}));
  assert.match(await page.locator('#activity-text').textContent(),/运行命令.*任务失败/);
- assert.equal(await page.locator('#messages details').count(),0,'tool details stay out of the transcript during an active turn');
- assert.doesNotMatch(await page.locator('#messages').textContent(),/\/long\/path\/AGENTS\.md/,'tool commands stay out of message text');
+ assert.equal(await page.locator('#messages .message details').count(),0,'tool details stay out of message bodies during an active turn');
+ assert.doesNotMatch((await page.locator('#messages .message').allTextContents()).join('\n'),/\/long\/path\/AGENTS\.md/,'tool commands stay out of message text');
  assert.equal(await page.locator('#activity-text').evaluate(el=>getComputedStyle(el).whiteSpace),'nowrap');
  await page.locator('#prompt').fill('保留这条后续指令');
  await page.evaluate(()=>{document.activeElement.blur();window.mobileCodexEvent('state',{...window.layoutState,busy:false,turnId:''});});await settle(page);

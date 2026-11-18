@@ -152,7 +152,7 @@ test('public turn progress separates quiet model output from the local engine, s
  const now=Date.now(), p={turnId:'one',phase:'reasoning',lastEventAt:now-35000,engineReplyAt:now,summary:'检查配置\n\n核对请求'};
  const {w,state,flush}=setup({busy:true,turnId:'one',turnProgress:p});await tick();flush();
  const d=w.document,el=id=>d.getElementById(id),fire=(name,data)=>{w.mobileCodexEvent(name,data);flush();};
- assert.match(el('activity-text').textContent,/等待新的任务进展/);assert.match(el('turn-connection').textContent,/本机引擎 \d+ 秒前有回应/);
+ assert.match(el('activity-text').textContent,/等待新的任务进展/);assert.match(el('turn-connection').textContent,/^思考 \d+ 秒了$/);assert.match(el('turn-connection').title,/本机引擎 \d+ 秒前有回应/);
  assert.equal(el('turn-summary-text').textContent,p.summary);el('turn-summary').open=true;
  for(const [threadId,turnId] of [['other','one'],['test','old']])fire('turn.progress',{threadId,progress:{...p,turnId,summary:'stale'}});
  assert.equal(el('turn-summary-text').textContent,p.summary);

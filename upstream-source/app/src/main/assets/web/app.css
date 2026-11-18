@@ -209,6 +209,13 @@ html[data-theme=dark] .mode-switch button[aria-pressed="true"] { background: var
 .session-card p { margin: 0 var(--s-1) var(--s-2); overflow-wrap: anywhere; font-size: var(--fs-sm); }
 .session-card input { width: 100%; min-width: 0; margin-bottom: var(--s-1); }
 .session-card-actions { display: flex; gap: var(--s-1); }
+.history-folder > summary { cursor: pointer; padding: var(--s-2); overflow-wrap: anywhere; }
+.history-folder > .session-row { margin-inline-start: var(--s-3); }
+.folder-destinations { display: grid; max-height: 36vh; overflow-y: auto; }
+.folder-destinations button { display: flex; align-items: center; gap: var(--s-2); min-height: var(--touch); text-align: start; overflow-wrap: anywhere; }
+.folder-destinations svg { flex: none; width: 18px; height: 18px; }
+.project-inline-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.project-inline-actions .danger { margin-inline-start: auto; }
 .session-card-actions button { min-height: var(--touch); flex: 1; padding-inline: var(--s-1); }
 .session-row:hover { background: var(--fill-2); }
 .session-row.active { background: var(--fill-3); }
@@ -316,8 +323,11 @@ html[data-theme=dark] .mode-switch button[aria-pressed="true"] { background: var
 .history-status { position: sticky; top: 0; z-index: 1; height: 0; max-width: var(--content-width); margin: 0 auto; color: var(--text-3); font-size: var(--fs-xs); text-align: center; }
 .message { margin: 0 0 var(--s-6); font-size: var(--fs-lg); line-height: 1.7; overflow-wrap: anywhere; }
 .message.user {
-  position: relative; width: fit-content; max-width: 80%;
-  margin: 0 0 var(--s-6) auto; padding: 10px var(--s-4);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--s-1);
+  width: fit-content; max-width: 80%; margin: 0 0 var(--s-6) auto;
+}
+.user-bubble {
+  position: relative; max-width: 100%; padding: 10px var(--s-4);
   border-radius: var(--r-xl); background: var(--bubble); color: var(--text);
 }
 .message.user.has-date { max-width: min(80%, calc(100% - 72px * var(--text-size-factor))); }
@@ -442,6 +452,7 @@ html[data-theme=dark] .mode-switch button[aria-pressed="true"] { background: var
   border-radius: 50%; color: var(--text);
 }
 .composer-attach svg, .send-button svg { width: 20px; height: 20px; }
+#send svg { width: 28px; height: 28px; stroke-width: 2.3; }
 .send-button { color: var(--on-solid); background: var(--solid); transition: transform var(--fast) var(--ease), opacity var(--fast) ease; }
 .send-button:disabled { color: var(--disabled-fg); background: var(--disabled-bg); opacity: 1; }
 .send-button:not(:disabled):active { transform: scale(.94); }
@@ -935,7 +946,7 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 
 /* Send and Stop share one action position. */
 .composer-actions > .send-button[hidden] { display: none !important; }
-#stop.send-button { color: #fff; background: #d73a49; }
+#stop.send-button { color: #fff; background: #d73a49; background-clip: padding-box; border: 2px solid transparent; }
 #stop.send-button svg { fill: currentColor; stroke: none; }
 
 .conversation-failure { max-width:var(--content-width); margin:var(--s-3) auto; padding:var(--s-4); border:1px solid var(--border-strong); border-radius:var(--r-md); background:var(--danger-fill); color:var(--text); overflow-wrap:anywhere; }

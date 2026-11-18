@@ -210,7 +210,7 @@ public final class Engine {
         if (!fromActivity && !scope.equals(runtimeRecovery.getString("backgroundScope", ""))) return;
         runtimeRecovery.edit().remove("backgroundScope").apply();
         try {
-            start(false, fromActivity);
+            start(false);
             if (active != null && sessionProviderMatches(active) && active.optString("workspaceKey").equals(documents.key())
                     && documents.workspace().optBoolean("available")) resumeRemote(false);
         } catch (Exception failure) {
@@ -256,13 +256,21 @@ public final class Engine {
     private void taskNotification(String kind, String title, String message, String thread, String approval) {
         context.sendBroadcast(taskNotificationIntent(context, kind, title, message, thread, approval));
     }
+    static long lastMessageAt(JSONObject session) {
+        JSONArray messages = session.optJSONArray("messages");
+        for (int index = messages == null ? -1 : messages.length() - 1; index >= 0; index--) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message != null && message.optLong("createdAt") > 0) return message.optLong("createdAt");
+        }
+        return 0;
+    }
     private JSONObject snapshot() {
         JSONArray summaries = new JSONArray();
         for (int i = sessions.length() - 1; i >= 0; i--) {
             JSONObject s = sessions.optJSONObject(i);
             if (s != null && !s.optBoolean("deletionPending")) summaries.put(obj("id", s.optString("id"), "title", s.optString("title"),
                 "workspace", s.optString("workspace"), "workspaceKey", s.optString("workspaceKey"), "projectId", documents.projectId(s.optString("workspaceKey")),
-                "busy", runningTurns.containsKey(s.optString("id")),
+                "lastMessageAt", lastMessageAt(s), "busy", runningTurns.containsKey(s.optString("id")),
                 "approvalPending", s.optBoolean("approvalPending")));
         }
         return obj("ready", ready, "busy", busy, "status", t(status), "account", obj("type", "apiKey"), "sessionStorage", sessionStore.status(),
@@ -323,6 +331,7 @@ public final class Engine {
     private synchronized void syncTaskCpu() {
         boolean needed = startingTurn || !runningTurns.isEmpty();
         if (taskLeaseActive == needed) return;
+        if (needed) context.startForegroundService(new Intent(context, EngineService.class));
         taskLeaseActive = needed;
         turnWifi.update(needed);
         if (needed) {
@@ -334,6 +343,7 @@ public final class Engine {
             turnMonitor = null;
             powerHandler.removeCallbacks(renewTaskLease);
             if (taskCpu.isHeld()) taskCpu.release();
+            stopServiceIfIdle();
         }
     }
     private final class TurnMonitor implements Runnable {
@@ -714,6 +724,7 @@ public final class Engine {
                         documents.selectProject(key); clearActive(); publish(); reply.complete(snapshot(), null);
                     }
                     case "chat.resume" -> { resume(args.getString("id")); reply.complete(snapshot(), null); }
+                    case "chat.move" -> { moveSession(args.getString("id"), args.getString("key")); publish(); reply.complete(snapshot(), null); }
                     case "chat.rename" -> { renameSession(args.getString("id"), args.getString("title")); publish(); reply.complete(snapshot(), null); }
                     case "chat.delete" -> {
                         boolean deletionPending = deleteSession(args.getString("id"));
@@ -784,7 +795,7 @@ public final class Engine {
         if (!hasForegroundWork()) context.stopService(new Intent(context, EngineService.class));
     }
     boolean hasForegroundWork() {
-        return ready || (process != null && process.isAlive()) || terminal.busy() || linux.status().optBoolean("busy");
+        return startingTurn || !runningTurns.isEmpty() || terminal.busy() || linux.status().optBoolean("busy");
     }
     void reconcileService() {
         if (!io.isShutdown()) io.execute(() -> {
@@ -820,9 +831,6 @@ public final class Engine {
     }
     /** Preparing the API runtime does not change saved conversations. */
     private void start(boolean restoreConversation) throws Exception {
-        start(restoreConversation, true);
-    }
-    private void start(boolean restoreConversation, boolean foregroundRuntime) throws Exception {
         StartupDiagnostics diagnostic = new StartupDiagnostics();
         RuntimeFailure.Tail stderrTail = new RuntimeFailure.Tail();
         boolean replacing = false, spawnAttempted = false;
@@ -880,8 +888,6 @@ public final class Engine {
             builder.environment().remove("MOBILE_CODEX_CUSTOM_API_KEY");
             builder.environment().put(ApiProviderPolicy.KEY_ENV, apiProviders.activeKey());
             builder.environment().put("CODEX_SELF_EXE", binary.getAbsolutePath());
-            diagnostic.stage("service_start");
-            if (foregroundRuntime) context.startForegroundService(new Intent(context, EngineService.class));
             diagnostic.stage("before_spawn");
             spawnAttempted = true;
             process = builder.start();
@@ -1322,6 +1328,25 @@ public final class Engine {
         }
         throw new IOException(t("대화를 찾을 수 없습니다."));
     }
+    private void moveSession(String id, String key) throws Exception {
+        ensureSessionIdle(id);
+        JSONObject current = session(id);
+        if (current == null || current.optBoolean("deletionPending")) throw new IOException(t("대화를 찾을 수 없습니다."));
+        requireSessionProvider(current);
+        JSONArray projects = documents.projects(); JSONObject destination = null;
+        for (int index = 0; index < projects.length(); index++) {
+            JSONObject project = projects.getJSONObject(index);
+            if (key.equals(project.getString("key"))) { destination = project; break; }
+        }
+        if (destination == null) throw new IOException("该项目已不存在，请重新选择。");
+        JSONArray replacement = new JSONArray(sessions.toString());
+        for (int index = 0; index < replacement.length(); index++) {
+            JSONObject entry = replacement.getJSONObject(index);
+            if (id.equals(entry.optString("id"))) { entry.put("workspaceKey", key).put("workspace", destination.optString("name")); break; }
+        }
+        persistSessions(replacement); replaceSessions(replacement);
+        if (id.equals(threadId)) { serverThreadId = ""; documents.selectProject(key); syncCurrentTurn(); }
+    }
     private void renameSession(String id, String title) throws Exception {
         // Titles are Mobile Codex local aliases: they remain available without starting or signing in to Codex.
         String trimmed = title.trim();
@@ -1682,7 +1707,7 @@ public final class Engine {
         for (int i = messages.length() - 1; i >= 0; i--) {
             JSONObject m = messages.getJSONObject(i); if (m.optString("id").equals(id)) return m;
         }
-        JSONObject m = obj("id", id, "role", "assistant", "text", ""); messages.put(m); return m;
+        JSONObject m = obj("id", id, "role", "assistant", "text", "", "createdAt", System.currentTimeMillis()); messages.put(m); return m;
     }
     private void installUltraCatalog(File config, JSONObject profile) throws IOException {
         JSONArray models = profile.optJSONArray("models");
