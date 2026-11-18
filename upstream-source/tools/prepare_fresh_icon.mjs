@@ -12,16 +12,19 @@ globalThis.ImageData ??= class ImageData {
 };
 await initResize(await readFile(resolve(root, 'node_modules/@jsquash/resize/lib/resize/pkg/squoosh_resize_bg.wasm')));
 
-// A 108dp adaptive layer is clipped by the launcher around the central 72dp.
-const size = 432, inset = 96, subject = size - inset * 2;
+// The launcher masks the middle 72dp of its 108dp adaptive layer. Fill that
+// entire viewport with the portrait and extend its edge pixels into the overscan.
+const size = 432, viewport = 288, overscan = (size - viewport) / 2;
 const image = await resize(new ImageData(new Uint8ClampedArray(original.data), original.width, original.height), {
-  width:subject, height:subject, method:'lanczos3', premultiply:true, linearRGB:true
+  width:viewport, height:viewport, method:'lanczos3', premultiply:true, linearRGB:true
 });
 const canvas = new PNG({width:size, height:size});
-canvas.data.fill(255);
-for (let y = 0; y < subject; y++) {
-  const offset = ((y + inset) * size + inset) * 4;
-  canvas.data.set(image.data.subarray(y * subject * 4, (y + 1) * subject * 4), offset);
+const edge = (n) => Math.min(viewport - 1, Math.max(0, n - overscan));
+for (let y = 0; y < size; y++) {
+  for (let x = 0; x < size; x++) {
+    const src = (edge(y) * viewport + edge(x)) * 4;
+    canvas.data.set(image.data.subarray(src, src + 4), (y * size + x) * 4);
+  }
 }
 const output = resolve(root, 'app/src/fresh/res/drawable-nodpi/dafeilong_artwork.png');
 await mkdir(dirname(output), {recursive:true});
