@@ -336,10 +336,11 @@
     renderConversationFailure();
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
-    $('send').disabled = ((!$('prompt').value.trim() && !(draftContext.attachments || []).length) || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false));
+    const hasDraft = !!$('prompt').value.trim() || !!draftContext.attachments.length;
+    $('send').disabled = !hasDraft || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false);
     const steering = state.busy && !!state.turnId;
-    $('send').hidden = !!state.busy;
-    $('stop').hidden = !state.busy;
+    $('stop').hidden = !state.busy || hasDraft;
+    $('send').hidden = !$('stop').hidden;
     $('send').setAttribute('aria-label', steering ? t('진행 중인 작업에 추가 지시') : t('메시지 보내기'));
     $('send').title = steering ? t('추가 지시') : t('보내기'); $('composer-attach').disabled = !!sending;
   }
@@ -1018,7 +1019,6 @@
       const host = $(id); if (host) { host.hidden = true; host.replaceChildren(); }
     }
   }
-  const taskActivityCards = new Map();
   const taskActivityLabels = {
     thinking:['思考中', 'Thinking', '생각 중'], reading:['读取文件', 'Reading files', '파일 읽는 중'],
     searching:['搜索中', 'Searching', '검색 중'], command:['运行命令', 'Running command', '명령 실행 중'],
@@ -1029,39 +1029,16 @@
     const labels = taskActivityLabels[kind] || taskActivityLabels.tool;
     return labels[L.language() === 'zh-CN' ? 0 : L.language() === 'ko' ? 2 : 1];
   }
-  function taskActivityHost() {
-    $('activity').setAttribute('role', 'status');
-    let host = $('task-activity');
-    if (!host) { host = node('section', null, 'task-activity'); host.id = 'task-activity'; host.setAttribute('aria-label', t('작업 기록')); $('activity').before(host); }
-    return host;
-  }
-  function showTaskActivity(name, data) {
-    const activity = C.taskActivity(name, data); if (!activity) return;
+  function showTaskActivity(activity, data) {
+    if (!state.busy || !activity || activity.append ||
+        (state.turnId && data.params?.turnId && data.params.turnId !== state.turnId)) return;
     const anchor = readingPosition();
-    $('activity-text').textContent = taskActivityLabel(activity.kind) + (activity.detail ? ' · ' + activity.detail.slice(0, 160) : '');
-    if (activity.kind === 'thinking' || activity.kind === 'responding') {
-      if (following) scrollLatest(); else restoreReadingPosition(anchor);
-      return;
-    }
-    const host = taskActivityHost();
-    let card = activity.key && taskActivityCards.get(activity.key);
-    if (!card) {
-      card = node('details', null, 'task-activity-card');
-      card.append(node('summary'), node('pre', '', 'console'));
-      card.dataset.kind = activity.kind; host.append(card);
-      if (activity.key) taskActivityCards.set(activity.key, card);
-    }
-    card.dataset.status = activity.failed ? 'failed' : activity.completed ? 'completed' : 'running';
-    const status = activity.failed ? t('작업 실패') : activity.completed ? t('완료') : taskActivityLabel(activity.kind);
-    const summary = card.querySelector('summary');
-    if (activity.detail) card.dataset.detail = activity.detail.slice(0, 240);
-    summary.textContent = status + (card.dataset.detail ? ' · ' + card.dataset.detail : '');
-    const output = card.querySelector('pre');
-    if (activity.output) output.textContent = (activity.append ? output.textContent + activity.output : activity.output).slice(-24000);
-    output.hidden = !output.textContent;
-    while (host.children.length > 40) {
-      const oldest = host.firstChild; oldest.remove();
-      for (const [key, value] of taskActivityCards) if (value === oldest) taskActivityCards.delete(key);
+    const label = taskActivityLabel(activity.kind);
+    const status = activity.failed ? label + ' · ' + t('작업 실패') : label;
+    $('activity-text').textContent = status;
+    if (activity.kind !== 'thinking' && activity.kind !== 'responding') {
+      logEvent(activity.failed ? status : activity.completed ? label + ' · ' + t('완료') : label,
+        [activity.detail, activity.output].filter(Boolean).join('\n\n').slice(0, 24000));
     }
     if (following) scrollLatest(); else restoreReadingPosition(anchor);
   }
@@ -1611,10 +1588,9 @@
     $('pending-deletions').hidden = pendingDeletes === 0;
     $('pending-deletions').textContent = pendingDeletes ? t('원본 삭제 대기 {count}건. 아래 ‘Codex 시작 / 다시 연결’을 누르면 다시 시도합니다.', {count:pendingDeletes}) : '';
     const anyBusy = !!state.busy;
-    $('send').hidden = anyBusy; $('stop').hidden = !anyBusy; $('activity').hidden = !anyBusy;
+    $('activity').hidden = !anyBusy;
     updateComposerExpansion();
-    if (changedThread || (anyBusy && !wasBusy)) {
-      taskActivityHost().replaceChildren(); taskActivityCards.clear();
+    if (!anyBusy || changedThread || !wasBusy) {
       $('activity-text').textContent = t('Codex 작업 중');
     }
 
@@ -2119,9 +2095,8 @@
     if (name === 'state') render(data);
     else if (name === 'error') { if (!data.threadId || data.threadId === state.threadId) toast(data.message); }
     else if (name === 'notice') toast(data.message);
-    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(name, data); const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
-    else if (name === 'tool') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(name, data); logEvent(data.name, data); }
-    else if (name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; const activity = C.taskActivity(name, data); showTaskActivity(name, data); if (activity && activity.kind !== 'thinking' && !data.method.endsWith('/delta')) logEvent(taskActivityLabel(activity.kind), activity.output || activity.detail); }
+    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(C.taskActivity(name, data), data); const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
+    else if (name === 'tool' || name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(C.taskActivity(name, data), data); }
     else if (name === 'files.changed' && (!data.threadId || data.threadId === state.threadId) && !$('file-panel').hidden) listFiles().catch(e => toast(e.message));
     else if (name === 'updates.changed') drawUpdates(data);
     else if (name === 'linux.changed') { state.linux = linuxStatus(data); linuxStatusError = ''; renderDevtools(); renderLinux(); }
@@ -2326,6 +2301,7 @@
     imageTouch = null;
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
+  on('activity-details', () => show('activity-dialog'));
   on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
   $('add-attachment').addEventListener('click', () => { if (!closeComposerAddMenu()) openComposerAddMenu(); });
   // Focusing the compact plus before pointerup moves it to the expanded row.

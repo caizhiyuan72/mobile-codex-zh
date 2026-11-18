@@ -1,7 +1,10 @@
 /* Runtime metadata defines available levels; custom providers without metadata use standard requests. */
 (() => {
   'use strict';
-  const levels = Object.freeze(['low','medium','high','xhigh','max']);
+  const levels = Object.freeze(['low','medium','high','xhigh','max','ultra']);
+  const standard = Object.freeze(levels.slice(0, 3));
+  // The runtime understands all six values; custom providers decide which to accept.
+  const sixLevelModels = new Set(['gpt-6.2-sol','gpt-6.2-astra','gpt-6.1-sol','gpt-6-astra','gpt-6-sol']);
   const labels = Object.freeze(Object.fromEntries(levels.map(level => [level, level])));
   const levelSet = new Set(levels);
   function id(model) { return String(model?.model || model?.id || ''); }
@@ -23,7 +26,7 @@
   function supported(model, thirdParty = false) {
     const reported = efforts(model);
     return thirdParty && id(model) && !metadata(model).some(items => items.length)
-      ? ['low','medium','high'] : reported;
+      ? (sixLevelModels.has(id(model).toLowerCase()) ? levels : standard).slice() : reported;
   }
   function offered() { return levels.slice(); }
   function source(model, effort, thirdParty = false) {

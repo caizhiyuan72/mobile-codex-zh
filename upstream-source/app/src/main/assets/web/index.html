@@ -82,7 +82,7 @@
             <small>新对话保留当前项目选择，任务进度需自行补充。</small>
           </section>
 
-          <div id="activity" class="activity" hidden><span id="activity-character" class="activity-character"></span><span class="pulse-dot"></span><span id="activity-text">작업 중</span></div>
+          <div id="activity" class="activity" hidden><span id="activity-character" class="activity-character"></span><span class="pulse-dot" aria-hidden="true"></span><button id="activity-details" type="button" title="작업 기록"><span id="activity-text" role="status">작업 중</span></button></div>
         </div>
         <div class="composer-wrap">
           <button id="jump-latest" class="jump-latest" aria-label="최신 메시지로 이동" hidden><svg><use href="#i-down"/></svg><span>최신 메시지</span></button>

@@ -89,20 +89,28 @@ test('task transitions use the newest restored conversation state and keep the i
 });
 
 
-test('typing during a task preserves one red Stop until completion', async () => {
-  const {w, snapshot} = setup({busy:true,turnId:'running'}); await tick();
+test('typing replaces Stop with Send and clicking it steers the running task', async () => {
+  const {w, calls} = setup({busy:true,turnId:'running'}); await tick();
   const prompt = w.document.getElementById('prompt');
-  prompt.value = 'Keep this draft while the task is running';
+  const send = w.document.getElementById('send');
+  const stop = w.document.getElementById('stop');
+  assertStopReachable(w);
+  prompt.value = 'Additional instruction';
+  prompt.dispatchEvent(new w.Event('input'));
+  assert.equal(send.hidden, false);
+  assert.equal(stop.hidden, true);
+  prompt.value = '   ';
   prompt.dispatchEvent(new w.Event('input'));
   assertStopReachable(w);
-  w.mobileCodexEvent('state', {...snapshot,busy:false,turnId:''});
-  assert.equal(w.document.getElementById('stop').hidden, true);
-  assert.equal(w.document.getElementById('send').hidden, false);
-  assert.equal(w.document.getElementById('send').disabled, false);
-  assert.equal(prompt.value, 'Keep this draft while the task is running');
+  prompt.value = 'Additional instruction';
+  prompt.dispatchEvent(new w.Event('input'));
+  send.click(); await tick();
+  assert.equal(calls.find(call => call.action === 'chat.steer').args.text, 'Additional instruction');
+  assert.equal(prompt.value, '');
+  assertStopReachable(w);
 });
 
-test('Ctrl/Cmd+Enter preserves steering and queued input while Stop remains available', async () => {
+test('Ctrl/Cmd+Enter sends only once while waiting for acknowledgement', async () => {
   for (const [turnId, modifier, action] of [['running','ctrlKey','chat.steer'],['','metaKey','chat.send']]) {
     let finish;
     const pending = new Promise(resolve => { finish = resolve; });
@@ -116,14 +124,19 @@ test('Ctrl/Cmd+Enter preserves steering and queued input while Stop remains avai
     assert.equal(sent.length, 1);
     assert.equal(sent[0].args.text, 'Additional instruction');
     assert.equal(sent[0].args.expectedTurnId, turnId);
-    assertStopReachable(w);
+    const send = w.document.getElementById('send');
+    assert.equal(send.hidden, false);
+    assert.equal(send.disabled, true);
+    prompt.dispatchEvent(new w.KeyboardEvent('keydown', {key:'Enter',[modifier]:true,bubbles:true,cancelable:true}));
+    await tick();
+    assert.equal(calls.filter(call => call.action === action).length, 1);
     finish({}); await tick();
     assert.equal(prompt.value, '');
     assertStopReachable(w);
   }
 });
 
-test('a rejected steering request keeps the draft and the active Stop button', async () => {
+test('a rejected steering request keeps the draft and allows retry', async () => {
   const {w} = setup({busy:true,turnId:'running'}, {'chat.steer':() => { throw new Error('Try again'); }}); await tick();
   const prompt = w.document.getElementById('prompt');
   prompt.value = 'Do not lose this instruction';
@@ -131,7 +144,8 @@ test('a rejected steering request keeps the draft and the active Stop button', a
   prompt.dispatchEvent(new w.KeyboardEvent('keydown', {key:'Enter',ctrlKey:true,bubbles:true,cancelable:true}));
   await tick();
   assert.equal(prompt.value, 'Do not lose this instruction');
-  assertStopReachable(w);
+  assert.equal(w.document.getElementById('send').hidden, false);
+  assert.equal(w.document.getElementById('send').disabled, false);
 });
 
 test('failed conversations show a persistent safe explanation and open a new chat in the same project', async () => {

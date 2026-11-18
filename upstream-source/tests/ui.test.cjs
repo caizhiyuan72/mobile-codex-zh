@@ -431,15 +431,15 @@ test('model picker sends actual catalog values and reselecting the active model 
  assert.equal(d.getElementById('model-panel').inert,false);
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
  assert.equal(d.getElementById('model').value,'catalog-b');
- assert.equal(d.getElementById('effort').value,'medium');
- assert.equal(d.getElementById('effort-heading').textContent,'medium');
+ assert.equal(d.getElementById('effort').value,'ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
  assert.equal(d.getElementById('reasoning-panel').inert,false);
  const slider=d.getElementById('effort-slider');
- assert.equal(slider.hidden,false);assert.equal(slider.disabled,true);
- assert.equal(d.getElementById('effort-levels').textContent,'medium');
- slider.value='0';slider.dispatchEvent(new w.Event('input'));slider.dispatchEvent(new w.Event('change'));await tick();
- assert.equal(d.getElementById('effort').value,'medium');
- assert.equal(d.getElementById('effort-heading').textContent,'medium');
+ assert.equal(slider.hidden,false);assert.equal(slider.disabled,false);
+ assert.deepEqual([...d.querySelectorAll('#effort-levels span')].map(span=>span.textContent),['medium','ultra']);
+ slider.value='1';slider.dispatchEvent(new w.Event('input'));slider.dispatchEvent(new w.Event('change'));await tick();
+ assert.equal(d.getElementById('effort').value,'ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
  assert.equal(d.getElementById('effort-summary').textContent,d.getElementById('effort-heading').textContent);
  d.getElementById('model-picker-model').click();await tick();
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
@@ -447,7 +447,7 @@ test('model picker sends actual catalog values and reselecting the active model 
  d.getElementById('prompt').value='Check the selected settings';
  d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
  const request=calls.find(c=>c.action==='chat.send');
- assert.equal(request.args.model,'catalog-b');assert.equal(request.args.effort,'medium');
+ assert.equal(request.args.model,'catalog-b');assert.equal(request.args.effort,'ultra');
 });
 
 test('reasoning slider follows runtime metadata, saves English values and removes model prose',async()=>{
@@ -455,18 +455,18 @@ test('reasoning slider follows runtime metadata, saves English values and remove
  const model={id:'slider-model',displayName:'Slider model',description:'Do not show this description',defaultReasoningEffort:'high',supported_reasoning_efforts:['low','medium','high','xhigh','max','ultra']};
  w.mobileCodexEvent('state',{...snapshot,models:[model]});await tick();
  const slider=d.getElementById('effort-slider');
- assert.deepEqual([...d.getElementById('effort').options].map(option=>option.value),['low','medium','high','xhigh','max']);
- assert.equal(slider.max,'4');assert.equal(slider.disabled,false);
- slider.value='4';slider.dispatchEvent(new w.Event('input'));await tick();
- assert.equal(slider.getAttribute('aria-valuetext'),'max');
- assert.equal(d.getElementById('effort-heading').textContent,'max');
+ assert.deepEqual([...d.getElementById('effort').options].map(option=>option.value),['low','medium','high','xhigh','max','ultra']);
+ assert.equal(slider.max,'5');assert.equal(slider.disabled,false);
+ slider.value='5';slider.dispatchEvent(new w.Event('input'));await tick();
+ assert.equal(slider.getAttribute('aria-valuetext'),'ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
  slider.dispatchEvent(new w.Event('change'));await tick();
- assert.equal(d.getElementById('effort').value,'max');
- assert.equal(d.getElementById('effort-summary').textContent,'max');
+ assert.equal(d.getElementById('effort').value,'ultra');
+ assert.equal(d.getElementById('effort-summary').textContent,'ultra');
  assert.equal(d.querySelector('#model-list small'),null);
  assert.doesNotMatch(d.getElementById('model-picker').textContent,/Do not show this description|试验|实验|全部 7|自动/);
  assert.equal(d.getElementById('effort-experimental'),null);
- assert.ok([...Array(w.localStorage.length)].map((_,i)=>w.localStorage.getItem(w.localStorage.key(i))).some(value=>value.includes('\"effort\":\"max\"')));
+ assert.ok([...Array(w.localStorage.length)].map((_,i)=>w.localStorage.getItem(w.localStorage.key(i))).some(value=>value.includes('\"effort\":\"ultra\"')));
  w.mobileCodexEvent('state',{...snapshot,models:[{id:'custom'}]});await tick();
  d.getElementById('model').value='custom';d.getElementById('model').dispatchEvent(new w.Event('change'));await tick();
  assert.equal(slider.disabled,false);assert.equal(slider.max,'2');
@@ -760,35 +760,39 @@ test('character packs hydrate from initial RPC, select, and refresh the same id 
 test('character pack requests expose busy state and preserve selection on cancellation',async()=>{
  let finish; const delayed=new Promise(resolve=>{finish=resolve;}); const {w,snapshot,calls}=setup({'characters.select':()=>delayed}); await tick(); const chars={folderName:'Packs',folderConfigured:true,selectedPackId:'custom',packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}},{id:'custom',name:'Custom',valid:true,icons:{done:'/packs/done.png'}}]}; w.mobileCodexEvent('state',{...snapshot,characters:chars,messages:[{id:'a',role:'assistant',text:'완료했어요.'}]}); w.document.getElementById('settings').click(); await tick(); w.document.querySelector('[data-pack-id="builtin"]').click(); await tick(); assert.equal(w.document.querySelector('[data-pack-id="builtin"]').disabled,true); assert.equal(w.document.getElementById('character-pack-folder-button').disabled,true); assert.equal(w.document.querySelector('.character-pack-option[aria-pressed="true"]').dataset.packId,'custom'); finish({cancelled:true}); await tick(); assert.equal(w.document.querySelector('.character-pack-option[aria-pressed="true"]').dataset.packId,'custom'); assert.equal(w.document.querySelector('[data-pack-id="builtin"]').disabled,false); assert.equal(calls.filter(call=>call.action==='characters.select').length,1);
 });
-test('live activity follows runtime events with expandable safe output and no illustrations',async()=>{
+test('live activity shows one line during a turn and keeps command details in the work log',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,busy:true,messages:[{id:'a',role:'assistant',text:'[[icon:설명]]\n설명할게요.'}]});
  assert.equal(d.getElementById('activity').hidden,false);
  assert.equal(d.querySelector('#activity-character img, #welcome-character img, .message .chat-character'),null);
  w.mobileCodexEvent('tool',{name:'mobile_read',path:'README.md'});
- assert.match(d.getElementById('activity-text').textContent,/파일 읽는 중.*README.md/);
- w.mobileCodexEvent('agent.event',{threadId:'t',method:'item/started',params:{item:{id:'cmd',type:'commandExecution',command:'npm test'}}});
- const card=d.querySelector('#task-activity details[data-kind="command"]');
- assert.match(card.querySelector('summary').textContent,/npm test/);card.open=true;
- w.mobileCodexEvent('agent.event',{threadId:'t',method:'item/commandExecution/outputDelta',params:{itemId:'cmd',delta:'<script>literal</script>\n'}});
- assert.equal(card.querySelector('pre').textContent,'<script>literal</script>\n');assert.equal(card.querySelector('script'),null);assert.equal(card.open,true);
- w.mobileCodexEvent('agent.event',{threadId:'t',method:'item/completed',params:{item:{id:'cmd',type:'commandExecution',command:'npm test',aggregatedOutput:'passed',exitCode:0}}});
- assert.equal(d.querySelectorAll('#task-activity details[data-kind="command"]').length,1);
- assert.equal(card.dataset.status,'completed');assert.equal(card.querySelector('pre').textContent,'passed');
- const before=d.getElementById('task-activity').textContent;
+ assert.equal(d.getElementById('activity-text').textContent,'파일 읽는 중');
+ const command='/bin/sh -lc '+ '/long/path/AGENTS.md '.repeat(12);
+ const event={threadId:'t',method:'item/completed',params:{item:{id:'cmd',type:'commandExecution',command,aggregatedOutput:'<script>literal</script>',exitCode:1}}};
+ w.mobileCodexEvent('agent.event',event);
+ assert.match(d.getElementById('activity-text').textContent,/명령 실행 중.*작업 실패/);
+ assert.doesNotMatch(d.getElementById('activity').textContent,/AGENTS/);
+ assert.equal(d.querySelector('#chat-scroll details'),null);
+ d.getElementById('activity-details').click();await tick();
+ assert.equal(d.getElementById('activity-dialog').open,true);
+ const card=d.querySelector('#event-log details:last-child');
+ assert.equal(card.querySelector('pre').textContent,command+'\n\n<script>literal</script>');
+ assert.equal(card.querySelector('script'),null);
+ const before=d.getElementById('activity-text').textContent;
  w.mobileCodexEvent('agent.event',{threadId:'other',method:'item/started',params:{item:{id:'private',type:'commandExecution',command:'other thread'}}});
- assert.equal(d.getElementById('task-activity').textContent,before);
+ assert.equal(d.getElementById('activity-text').textContent,before);
  w.mobileCodexEvent('agent.event',{method:'item/reasoning/textDelta',params:{delta:'PRIVATE REASONING'}});
  assert.equal(d.getElementById('activity-text').textContent,'생각 중');
- assert.doesNotMatch(d.getElementById('task-activity').textContent+d.getElementById('event-log').textContent,/PRIVATE REASONING/);
+ assert.doesNotMatch(d.getElementById('activity').textContent+d.getElementById('event-log').textContent,/PRIVATE REASONING/);
  w.mobileCodexEvent('message.delta',{id:'a',delta:' 이어서'});
  assert.equal(d.getElementById('activity-text').textContent,'응답 중');
  assert.equal(d.querySelectorAll('.message').length,1);
  w.mobileCodexEvent('state',{...snapshot,busy:false,messages:[{id:'a',role:'assistant',text:'[[icon:수정완료]]\n수정을 완료했어요.'}]});
- assert.equal(d.getElementById('activity').hidden,true);assert.equal(card.querySelector('pre').textContent,'passed');
+ assert.equal(d.getElementById('activity').hidden,true);
+ w.mobileCodexEvent('agent.event',event);
+ assert.equal(d.getElementById('activity').hidden,true);
+ assert.equal(d.getElementById('activity-text').textContent,'Codex 작업 중');
  assert.equal(d.querySelector('.message .chat-character'),null);
- w.mobileCodexEvent('state',{...snapshot,threadId:'other'});
- assert.equal(d.getElementById('task-activity').children.length,0);
 });
 test('all character URLs resolve to bundled source bytes and cannot be arbitrary file paths',()=>{
  const dir=root+'chat-icons/',manifest=JSON.parse(fs.readFileSync(dir+'manifest.json','utf8')),hashes=JSON.parse(fs.readFileSync('tests/chat-icons-derived.sha256.json','utf8')),originals=JSON.parse(fs.readFileSync('tests/chat-icons.sha256.json','utf8'));
@@ -1137,17 +1141,15 @@ test('phone emergency stop remains visible and stops without ending a chat or lo
  assert.equal(w.document.getElementById('prompt').value,'keep my draft');
 });
 
-test('busy composer keeps Stop visible while keyboard steering retains rejected instructions',async()=>{
+test('busy composer offers Send while keyboard steering retains rejected instructions',async()=>{
  const {w,calls,snapshot}=setup({'chat.steer':async()=>{throw new Error('turn already completed');}});await tick();
  const d=w.document,prompt=d.getElementById('prompt'),send=d.getElementById('send'),stop=d.getElementById('stop');
  w.mobileCodexEvent('state',{...snapshot,busy:true,turnId:'active-turn'});
  prompt.value='색만 바꿔';prompt.dispatchEvent(new w.Event('input'));
- assert.equal(send.disabled,false);assert.equal(send.hidden,true);assert.equal(stop.hidden,false);
+ assert.equal(send.disabled,false);assert.equal(send.hidden,false);assert.equal(stop.hidden,true);
  prompt.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,cancelable:true}));await tick();
  const call=calls.find(x=>x.action==='chat.steer');assert.equal(call.args.expectedTurnId,'active-turn');assert.equal(call.args.expectedThreadId,'t');assert.equal(prompt.value,'색만 바꿔');assert.equal(calls.some(x=>x.action==='chat.send'),false);
- assert.equal(send.hidden,true);assert.equal(stop.hidden,false);
- stop.click();await tick();assert.equal(calls.filter(x=>x.action==='chat.stop').length,1);
- assert.equal(prompt.value,'색만 바꿔');assert.equal(stop.hidden,false,'Stop remains until native task completion');
+ assert.equal(send.hidden,false);assert.equal(stop.hidden,true);
  w.mobileCodexEvent('state',{...snapshot,busy:false,turnId:''});
  assert.equal(stop.hidden,true);assert.equal(send.hidden,false);assert.equal(send.disabled,false);assert.equal(prompt.value,'색만 바꿔');
 });

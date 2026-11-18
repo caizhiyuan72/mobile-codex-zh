@@ -42,12 +42,12 @@ test('stream chunks share a frame and leave earlier message content untouched',a
  w.mobileCodexEvent('message.delta',{threadId:'other',id:'tail',delta:'越界'});flush();assert.doesNotMatch(tail.textContent,/越界/);
 });
 
-test('long provider names stay outside the composer and Stop stays reachable during work',async()=>{
+test('long provider names stay outside the composer and a draft exposes Send during work',async()=>{
  const {w,flush,state}=setup({busy:true});await tick();flush();const d=w.document;
  assert.equal(d.getElementById('model-summary').textContent,'gpt-6.1-sol');
  assert.equal(d.getElementById('stop').hidden,false);assert.equal(d.getElementById('send').hidden,true);
  const prompt=d.getElementById('prompt');prompt.value='再检查测试';prompt.dispatchEvent(new w.Event('input'));flush();
- assert.equal(d.getElementById('stop').hidden,false);assert.equal(d.getElementById('send').hidden,true);
+ assert.equal(d.getElementById('stop').hidden,true);assert.equal(d.getElementById('send').hidden,false);
  w.mobileCodexEvent('state',{...state,busy:false});flush();assert.equal(d.getElementById('stop').hidden,true);
  assert.equal(d.getElementById('send').hidden,false);assert.equal(prompt.value,'再检查测试');
 });
@@ -108,7 +108,7 @@ test('snapshot and streaming changes above the reader keep the same visible mess
 test('tool activity follows the tail only while the reader is following',async()=>{
  const {w,flush}=setup({busy:true,messages:[{id:'a',role:'assistant',text:'Working'}]});await tick();flush();
  const d=w.document,area=d.getElementById('chat-scroll');
- Object.defineProperties(area,{scrollHeight:{get:()=>1200+d.querySelectorAll('#task-activity details').length*40},clientHeight:{value:400}});
+ Object.defineProperties(area,{scrollHeight:{value:1240},clientHeight:{value:400}});
  d.getElementById('jump-latest').click();
  w.mobileCodexEvent('tool',{threadId:'test',name:'mobile_read',path:'one.txt'});assert.equal(area.scrollTop,1240);
  area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));

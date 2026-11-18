@@ -905,16 +905,10 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 #api-status { min-height: 1.55em; margin: 0; }
 .api-error { color: var(--danger); }
 
-/* Public runtime activity replaces character illustrations in the conversation. */
-.task-activity { max-width:var(--content-width); margin:0 auto var(--s-3); }
-.task-activity:empty { display:none; }
-.task-activity-card { margin:var(--s-2) 0; border:1px solid var(--border); border-radius:10px; color:var(--text-2); font-size:var(--fs-sm); overflow:hidden; }
-.task-activity-card summary { padding:10px 12px; cursor:pointer; overflow-wrap:anywhere; }
-.task-activity-card[data-status="running"] summary::marker { color:var(--accent); }
-.task-activity-card .console { margin:0; max-height:280px; overflow:auto; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
-#activity-text { overflow-wrap:anywhere; }
+#activity-details { min-width:0; padding:0; border:0; background:none; color:inherit; font:inherit; text-align:start; cursor:pointer; }
+#activity-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* One composer action: a red stop control replaces Send during work. */
+/* Send and Stop share one action position. */
 .composer-actions > .send-button[hidden] { display: none !important; }
 #stop.send-button { color: #fff; background: #d73a49; }
 #stop.send-button svg { fill: currentColor; stroke: none; }

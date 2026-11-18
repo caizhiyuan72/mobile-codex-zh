@@ -7,9 +7,9 @@ const web=path.resolve(__dirname,'../app/src/main/assets/web');
 const output=path.resolve(__dirname,'../artifacts/api-ui-preview');
 const state={ready:true,busy:false,permissions:'workspace-write',status:'Connected',threadId:'layout',cwd:'/project',directWorkspace:true,
  workspace:{selected:true,key:'project',name:'很长的项目名称仍应保持顶部按钮可用',available:true},projects:[],sessions:[],apiActive:'fixture',
- apiProviders:[{id:'fixture',name:'第三方服务商名称'.repeat(8),baseUrl:'https://proxy.example/v1',hasKey:true,models:['gpt-6.1-sol-'+ 'long-model-'.repeat(12)]}],
+ apiProviders:[{id:'fixture',name:'第三方服务商名称'.repeat(8),baseUrl:'https://proxy.example/v1',hasKey:true,models:['gpt-6.2-sol']}],
  github:{configured:false,clientId:'',state:'idle',scopes:[]},
- models:[{id:'gpt-6.1-sol-'+ 'long-model-'.repeat(12),model:'gpt-6.1-sol-'+ 'long-model-'.repeat(12),displayName:'openai · gpt-6.1-sol-'+ 'long-model-'.repeat(12),isDefault:true}],
+ models:[{id:'gpt-6.2-sol',model:'gpt-6.2-sol',displayName:'openai · gpt-6.2-sol-'+ 'long-model-'.repeat(12),isDefault:true}],
  messages:[{id:'u',role:'user',text:'请检查项目并说明修改。'},{id:'a',role:'assistant',text:'已经读取项目。\n\n接下来可以修复布局、运行测试并审查变更。'}]};
 async function settle(page){await page.evaluate(async()=>{await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await Promise.all(document.getAnimations().filter(animation=>Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{})));});}
 async function toolbar(page,width,height,{busy=false,focused=true}={}){
@@ -116,20 +116,31 @@ async function attachmentLayout(page,width,theme){
  await page.setViewportSize({width,height:820});await settle(page);
 }
 async function taskControls(page,width,theme){
- await page.locator('#prompt').fill('保留这条后续指令');await settle(page);
+ await page.locator('#prompt').fill('');await settle(page);
  const idle=(await toolbar(page,width,820)).controls.at(-1);
  await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:true,turnId:'turn'}));await settle(page);
  const working=(await toolbar(page,width,820,{busy:true})).controls.at(-1);
  // Native restores and textarea input both update the same action position.
  for(const property of ['left','top','width','height'])assert.ok(Math.abs(idle[property]-working[property])<=1,'Stop replaces Send at the same '+property);
- await page.locator('#prompt').fill('工作时输入也不能隐藏停止按钮');await settle(page);await toolbar(page,width,820,{busy:true});
+ await page.locator('#prompt').fill('给正在运行的任务补充指令');await settle(page);
+ const steering=(await toolbar(page,width,820)).controls.at(-1);
+ for(const property of ['left','top','width','height'])assert.ok(Math.abs(steering[property]-working[property])<=1,'Send replaces Stop at the same '+property);
+ await page.locator('#send').click();
+ await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.steer'&&call.args.expectedTurnId==='turn'));
+ await page.waitForFunction(()=>!document.getElementById('stop').hidden);
  await page.locator('.msg-copy-btn').first().focus();await settle(page);await toolbar(page,width,820,{busy:true,focused:false});
  await page.screenshot({path:path.join(output,`stop-${width}-${theme}.png`)});
  await page.locator('#stop').click();await page.waitForFunction(()=>window.layoutCalls.some(call=>call.action==='chat.stop'));
  assert.equal(await page.locator('#stop').isVisible(),true,'Stop waits for native completion');
- await page.evaluate(()=>window.mobileCodexEvent('state',{...window.layoutState,busy:false,turnId:''}));await settle(page);
+ await page.evaluate(()=>window.mobileCodexEvent('agent.event',{threadId:'layout',method:'item/completed',params:{turnId:'turn',item:{type:'commandExecution',command:'/bin/sh -lc '+ '/long/path/AGENTS.md '.repeat(15),exitCode:1}}}));
+ assert.match(await page.locator('#activity-text').textContent(),/运行命令.*任务失败/);
+ assert.equal(await page.locator('#chat-scroll details').count(),0,'tool commands stay out of the transcript');
+ assert.equal(await page.locator('#activity-text').evaluate(el=>getComputedStyle(el).whiteSpace),'nowrap');
+ await page.locator('#prompt').fill('保留这条后续指令');
+ await page.evaluate(()=>{document.activeElement.blur();window.mobileCodexEvent('state',{...window.layoutState,busy:false,turnId:''});});await settle(page);
  await toolbar(page,width,820,{focused:false});
- assert.equal(await page.locator('#prompt').inputValue(),'工作时输入也不能隐藏停止按钮','completion preserves the draft');
+ assert.equal(await page.locator('#activity').isVisible(),false,'activity disappears after task completion');
+ assert.equal(await page.locator('#prompt').inputValue(),'保留这条后续指令','completion preserves the draft');
 }
 async function reasoningLayout(page,width){
  const result=await page.evaluate(()=>{
@@ -143,11 +154,11 @@ async function reasoningLayout(page,width){
  assert.ok(result.slider.width>0&&result.slider.height>=43.5,'reasoning uses a visible 44px range control');
  assert.ok(result.slider.left>=result.picker.left&&result.slider.right<=result.picker.right+1,'slider fits the picker');
  assert.ok(result.summaryFont>=14&&result.headingFont>=18,'model names remain readable on phone');
- assert.deepEqual(result.levels,['low','medium','high'],'provider without metadata offers standard English levels');
+ assert.deepEqual(result.levels,['low','medium','high','xhigh','max','ultra'],'GPT-6.2 Sol offers six request levels');
  assert.equal(result.forbidden,0,'model picker omits descriptions and experimental controls');
  await page.locator('#effort-slider').evaluate(slider=>{slider.value=slider.max;slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));});
- await page.waitForFunction(()=>document.getElementById('effort').value==='high');
- assert.equal(await page.locator('#effort').inputValue(),'high','slider changes the selected request level');
+ await page.waitForFunction(()=>document.getElementById('effort').value==='ultra');
+ assert.equal(await page.locator('#effort').inputValue(),'ultra','slider changes the selected request level');
 }
 async function readingThroughCompletion(page,width,theme){
  const messages=Array.from({length:36},(_,i)=>({id:'read-'+i,role:i%2?'assistant':'user',text:'第 '+(i+1)+' 条消息。'+('保留当前阅读位置并继续检查项目。'.repeat(3))}));
