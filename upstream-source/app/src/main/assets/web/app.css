@@ -914,9 +914,13 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 .task-activity-row > summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-activity-preview { margin-inline-start: var(--s-2); }
 .task-activity-row .console { max-height: 12em; margin: var(--s-1) 0; }
+.turn-summary { max-width: var(--content-width); margin: 0 auto; }
+#turn-summary-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14em; overflow-y: auto; }
+#turn-summary > summary { white-space: normal; overflow-wrap: anywhere; }
 
-.task-summary-message { border-inline-start: 2px solid var(--border-strong); padding-inline-start: var(--s-3); overflow-wrap: anywhere; }
-.task-summary-message p, .task-summary-message ul { margin-block: var(--s-2); }
+.work-toggle { display: block; width: fit-content; padding: .65em 0; color: var(--text-2); background: transparent; border: 0; cursor: pointer; }
+.work-toggle::before { content: '▸'; margin-inline-end: .5em; }
+.work-toggle[aria-expanded="true"]::before { content: '▾'; }
 
 /* Send and Stop share one action position. */
 .composer-actions > .send-button[hidden] { display: none !important; }

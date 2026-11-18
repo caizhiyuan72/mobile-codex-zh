@@ -87,6 +87,24 @@ public class EngineActivityEventTest {
         assertEquals("current-local", activity.get(0).getString("threadId"));
     }
 
+    @Test public void reasoningOnlyExposesTheCurrentPublicSummary() throws Exception {
+        TurnProgress current = new TurnProgress("one", 1);
+        JSONObject part = obj("threadId", "current-remote", "turnId", "one", "itemId", "r", "summaryIndex", 0);
+        @SuppressWarnings("unchecked") Map<String,TurnProgress> tracked = (Map<String,TurnProgress>) get("turnProgress");
+        tracked.put("current-local", current);
+        notifyEvent("item/reasoning/summaryTextDelta", part.put("delta", "First "));
+        notifyEvent("item/reasoning/summaryTextDelta", part.put("delta", "step"));
+        notifyEvent("item/reasoning/textDelta", part.put("delta", "private"));
+        notifyEvent("item/reasoning/summaryTextDelta", part.put("turnId", "expired"));
+        notifyEvent("item/reasoning/summaryTextDelta", part.put("turnId", "one").put("threadId", "background-remote"));
+        assertEquals("First step", current.snapshot(9).getString("summary"));
+        notifyEvent("item/completed", obj("threadId", "current-remote", "turnId", "one", "item",
+            obj("id", "r", "type", "reasoning", "summary", array("Public result"), "content", array("private"), "encrypted_content", "opaque")));
+        assertEquals("Public result", current.snapshot(9).getString("summary"));
+        assertEquals(9L, current.snapshot(9).getLong("engineReplyAt"));
+        assertTrue(activity.isEmpty());
+    }
+
     private void notifyEvent(String name, JSONObject params) throws Exception {
         Method notification = Engine.class.getDeclaredMethod("onNotification", String.class, JSONObject.class);
         notification.setAccessible(true);

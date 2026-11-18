@@ -772,7 +772,7 @@ test('live activity shows one line during a turn and keeps command details in th
  w.mobileCodexEvent('agent.event',event);
  assert.match(d.getElementById('activity-text').textContent,/명령 실행 중.*작업 실패/);
  assert.doesNotMatch(d.getElementById('activity').textContent,/AGENTS/);
- assert.equal(d.querySelector('#chat-scroll details'),null);
+ assert.equal(d.querySelector('#chat-scroll details:not([hidden])'),null);
  d.getElementById('activity-details').click();await tick();
  assert.equal(d.getElementById('activity-dialog').open,true);
  const card=d.querySelector('#event-log details:last-child');

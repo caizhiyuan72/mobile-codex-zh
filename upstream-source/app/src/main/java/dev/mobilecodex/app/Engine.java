@@ -78,9 +78,28 @@ public final class Engine {
     private final Map<String, String> runningTurns = new HashMap<>();
     private final Map<String, TurnAgents> turnAgents = new HashMap<>();
     private final Set<String> retryingStreams = new HashSet<>();
-    private record SummaryTurn(String threadId, String turnId) {}
-    private final Map<SummaryTurn, TaskSummary> taskSummaries = new HashMap<>();
-    private final boolean taskSummariesEnabled;
+    private final Map<String, TurnProgress> turnProgress = new HashMap<>();
+    private long lastProgressPush;
+    private boolean progressPushQueued;
+
+    private JSONObject progressSnapshot() {
+        TurnProgress progress = turnProgress.get(threadId);
+        return progress == null ? null : progress.snapshot(rpc == null ? 0 : rpc.lastMessageAt());
+    }
+    private void pushProgress() {
+        JSONObject progress = progressSnapshot();
+        if (progress != null) event("turn.progress", obj("threadId", threadId, "progress", progress));
+        lastProgressPush = android.os.SystemClock.elapsedRealtime();
+    }
+    private void queueProgress() {
+        if (progressPushQueued) return;
+        long delay = lastProgressPush + 200 - android.os.SystemClock.elapsedRealtime();
+        if (delay <= 0) { pushProgress(); return; }
+        progressPushQueued = true;
+        approvalTimer.schedule(() -> {
+            if (!io.isShutdown()) io.execute(() -> { progressPushQueued = false; pushProgress(); });
+        }, delay, TimeUnit.MILLISECONDS);
+    }
     private String toolRequestThread = "";
     private String permissionMode, approvalMode;
     private boolean chatIconsEnabled = true;
@@ -125,15 +144,11 @@ public final class Engine {
         this(context, providers, null);
     }
     Engine(Context context, ApiProviders providers, GitHubAuth github) {
-        this(context, providers, github, BuildConfig.APPLICATION_ID.endsWith(".fresh"));
-    }
-    Engine(Context context, ApiProviders providers, GitHubAuth github, boolean taskSummariesEnabled) {
         this.context = context;
         runtimeRecovery = context.getSharedPreferences("runtime-recovery", 0);
         taskCpu = context.getSystemService(android.os.PowerManager.class).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:turn");
         taskCpu.setReferenceCounted(false);
         turnWifi = new TurnWifiLease(context);
-        this.taskSummariesEnabled = taskSummariesEnabled;
         permissionMode = context.getSharedPreferences("settings", 0).getString("permissions", "workspace-write");
         approvalMode = context.getSharedPreferences("settings", 0).getString("approvalMode", "auto-review");
         documents = new DocumentStore(context);
@@ -258,6 +273,7 @@ public final class Engine {
             "models", models, "workspace", documents.workspace(), "projects", documents.projects(), "sessions", summaries,
             "threadId", threadId, "turnId", turnId, "liveTaskActivity", BuildConfig.APPLICATION_ID.endsWith(".fresh"),
             "streamRetrying", retryingStreams.contains(threadId),
+            "turnProgress", progressSnapshot(),
             "subagentUsage", turnAgents.containsKey(threadId) ? turnAgents.get(threadId).snapshot()
                 : active == null ? JSONObject.NULL : uiJsonCopy(active.optJSONObject("subagentUsage")),
             "conversationFailure", active == null ? JSONObject.NULL : uiJsonCopy(active.optJSONObject("conversationFailure")),
@@ -345,7 +361,7 @@ public final class Engine {
                     }
                 }
             }
-            if (turnMonitor == this) schedule();
+            if (turnMonitor == this) { pushProgress(); schedule(); }
         }
     }
     private synchronized void renewTaskCpu() {
@@ -787,18 +803,9 @@ public final class Engine {
                 lostTurn = true;
             } catch (org.json.JSONException ignored) { }
         }
-        if (!taskSummaries.isEmpty()) {
-            for (Map.Entry<SummaryTurn, TaskSummary> entry : taskSummaries.entrySet()) {
-                SummaryTurn key = entry.getKey();
-                JSONObject target = session(key.threadId());
-                if (target != null && key.turnId().equals(runningTurns.get(key.threadId())))
-                    appendTaskSummary(target, entry.getValue(), key.turnId(), "interrupted", false);
-            }
-            taskSummaries.clear();
-            lostTurn = true;
-        }
         turnAgents.clear();
         retryingStreams.clear();
+        turnProgress.clear();
         runningTurns.clear();
         syncTaskCpu();
         for (int i = 0; i < sessions.length(); i++) {
@@ -857,6 +864,7 @@ public final class Engine {
             // Keep upstream Codex tools/features available; preserve user configuration.
             diagnostic.stage("config_prepare");
             File config = new File(processHome, "config.toml");
+            installUltraCatalog(config, apiProviders.activeProfile());
             ProcessBuilder builder = new ProcessBuilder(binary.getAbsolutePath(), "app-server", "--listen", "stdio://",
                 "-c", "model_provider=" + ApiProviderPolicy.quote(ApiProviderPolicy.PROVIDER_ID),
                 "-c", "model=" + ApiProviderPolicy.quote(apiProviders.activeProfile().optString("defaultModel")));
@@ -1279,6 +1287,7 @@ public final class Engine {
             JSONObject params = obj("threadId", targetRemote, "input", input, "cwd", projectDirectory().getAbsolutePath(), "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer());
             if (!actualModel.isEmpty()) params.put("model", actualModel);
             if (!effort.isEmpty()) params.put("effort", effort);
+            params.put("summary", "auto");
             if (serviceTierForTurn != null) params.put("serviceTierForTurn", serviceTierForTurn);
             long turnStartedAt = System.currentTimeMillis();
             JSONObject turn = call("turn/start", params).optJSONObject("turn");
@@ -1495,6 +1504,13 @@ public final class Engine {
             String eventThreadId = implicitCurrentThread ? threadId : localIdForCodexThread(remoteEventThreadId);
             JSONObject target = implicitCurrentThread ? active : (eventThreadId.isBlank() ? null : session(eventThreadId));
             boolean currentThread = implicitCurrentThread || eventThreadId.equals(threadId);
+            TurnProgress progress = implicitCurrentThread ? null : turnProgress.get(eventThreadId);
+            boolean advanced = progress != null && progress.observe(method, p, System.currentTimeMillis());
+            if (advanced && currentThread) queueProgress();
+            if (advanced && !implicitCurrentThread && retryingStreams.remove(eventThreadId) && currentThread) publish();
+            // Raw reasoning, encrypted content and unscoped deltas never cross the WebView bridge.
+            if (method.startsWith("item/reasoning/") || (p.optJSONObject("item") != null
+                    && "reasoning".equals(p.optJSONObject("item").optString("type")))) return;
             if ((method.equals("item/agentMessage/delta") || method.equals("item/started") || method.equals("item/completed"))
                     && p.optString("turnId").equals(runningTurns.get(eventThreadId)) && retryingStreams.remove(eventThreadId) && currentThread) publish();
             if (method.equals("item/agentMessage/delta") && target != null) {
@@ -1511,11 +1527,8 @@ public final class Engine {
                 JSONObject previous = active;
                 try {
                     active = target;
-                    if (item != null) imageHandled = withWorkspace(target.optString("workspaceKey"), () -> {
-                        TaskSummary summary = taskSummary(eventThreadId, p.optString("turnId"));
-                        if (summary != null) summary.item(item, completed, projectDirectory());
-                        return recordImages(item, completed, p.optString("turnId", turnId));
-                    });
+                    if (item != null) imageHandled = withWorkspace(target.optString("workspaceKey"),
+                        () -> recordImages(item, completed, p.optString("turnId", turnId)));
                     if (!imageHandled && completed && item != null && "agentMessage".equals(item.optString("type"))) {
                         recordAgentMessage(item, p.optString("turnId", runningTurns.getOrDefault(eventThreadId, "")));
                         messageHandled = true;
@@ -1542,6 +1555,7 @@ public final class Engine {
                         || completedId.isBlank() || !completedId.equals(runningId)
                         || "inProgress".equals(completedTurn.optString("status"))) return;
                 runningTurns.remove(eventThreadId);
+                turnProgress.remove(eventThreadId);
                 if (runningTurns.isEmpty()) runtimeRecovery.edit().remove("backgroundScope").apply();
                 target.remove("inFlightTurn"); retryingStreams.remove(eventThreadId);
                 syncTaskCpu();
@@ -1560,20 +1574,8 @@ public final class Engine {
                 boolean interrupted = "interrupted".equals(completionStatus);
                 JSONObject error = turn == null ? null : turn.optJSONObject("error");
                 boolean failed = !interrupted && ("failed".equals(completionStatus) || error != null);
-                TaskSummary summary = taskSummaries.remove(new SummaryTurn(eventThreadId, completedId));
-                if (summary == null && taskSummariesEnabled) summary = new TaskSummary(Long.MAX_VALUE);
-                if (summary != null) {
-                    JSONArray items = turn.optJSONArray("items");
-                    File directory = target.optString("workspaceKey").equals(documents.key()) ? projectDirectory() : null;
-                    for (int i = 0; items != null && i < items.length(); i++) {
-                        JSONObject item = items.optJSONObject(i);
-                        if (item != null) summary.item(item, true, directory);
-                    }
-                }
                 boolean successful = "completed".equals(completionStatus) && !failed;
-                boolean missingReply = successful && !finishReply(target, turn, summary == null || summary.isEmpty());
-                if (summary != null) appendTaskSummary(target, summary, completedId,
-                    interrupted ? "interrupted" : failed ? "failed" : completionStatus, successful && !missingReply);
+                boolean missingReply = successful && !finishReply(target, turn);
                 if (failed) {
                     String failureCode = ConversationFailure.code(error);
                     target.put("conversationFailure", obj("code", failureCode, "turnId", completedId));
@@ -1610,7 +1612,8 @@ public final class Engine {
                     return;
                 }
                 error("chat.send", obj("threadId", eventThreadId, "message", ConversationFailure.message(ConversationFailure.code(error))), new DiagnosticFailure.RpcFailure("", error));
-            } else if (target != null && currentThread) {
+            } else if (target != null && currentThread && (method.equals("item/commandExecution/outputDelta")
+                    || method.equals("item/fileChange/outputDelta"))) {
                 event("agent.event", obj("threadId", eventThreadId, "method", method, "params", p));
             }
         } catch (Exception e) {
@@ -1681,6 +1684,21 @@ public final class Engine {
         }
         JSONObject m = obj("id", id, "role", "assistant", "text", ""); messages.put(m); return m;
     }
+    private void installUltraCatalog(File config, JSONObject profile) throws IOException {
+        JSONArray models = profile.optJSONArray("models");
+        for (int i = 0; models != null && i < models.length(); i++) {
+            if (!Set.of("gpt-6.2-sol", "gpt-6.2-astra").contains(models.optString(i))) continue;
+            String original = Utf8Files.read(config.toPath());
+            // Custom catalogs (including profile-specific ones) remain authoritative.
+            if (original.contains("model_catalog_json")) return;
+            File catalog = new File(config.getParentFile(), "bundled-mobile-models.json");
+            try (InputStream asset = context.getAssets().open("runtime/mobile-models.json")) {
+                Files.copy(asset, catalog.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Utf8Files.write(config.toPath(), "model_catalog_json = " + ApiProviderPolicy.quote(catalog.getAbsolutePath()) + "\n" + original);
+            return;
+        }
+    }
     private void recordAgentMessage(JSONObject item, String completedTurnId) throws Exception {
         message(item.getString("id")).put("text", item.optString("text"))
             .put("completedTurnId", completedTurnId).put("phase", item.optString("phase", ""));
@@ -1688,6 +1706,7 @@ public final class Engine {
     private void trackTurn(String localThread, String id, long startedAt) throws org.json.JSONException {
         if (runningTurns.isEmpty()) runtimeRecovery.edit().putString("backgroundScope", apiProviders.scope()).apply();
         String previous = runningTurns.put(localThread, id);
+        if (!id.equals(previous)) turnProgress.put(localThread, new TurnProgress(id, startedAt));
         syncTaskCpu();
         if (!id.equals(previous) || !turnAgents.containsKey(localThread)) {
             turnAgents.put(localThread, new TurnAgents(id));
@@ -1695,26 +1714,8 @@ public final class Engine {
             retryingStreams.remove(localThread);
             if (target != null) { target.remove("subagentUsage"); target.put("inFlightTurn", id); }
         }
-        if (taskSummariesEnabled) {
-            if (previous != null && !previous.equals(id)) taskSummaries.remove(new SummaryTurn(localThread, previous));
-            taskSummaries.computeIfAbsent(new SummaryTurn(localThread, id), ignored -> new TaskSummary(startedAt));
-        }
     }
-    private TaskSummary taskSummary(String localThread, String id) {
-        if (!taskSummariesEnabled || id.isBlank() || !id.equals(runningTurns.get(localThread))) return null;
-        return taskSummaries.computeIfAbsent(new SummaryTurn(localThread, id), ignored -> new TaskSummary(Long.MAX_VALUE));
-    }
-    private void appendTaskSummary(JSONObject target, TaskSummary summary, String id, String status, boolean finalReply) {
-        JSONObject message = summary.message(id, status, finalReply);
-        JSONArray messages = target.optJSONArray("messages");
-        if (message == null || messages == null) return;
-        for (int i = messages.length() - 1; i >= 0; i--) {
-            JSONObject previous = messages.optJSONObject(i);
-            if (previous != null && message.optString("id").equals(previous.optString("id"))) return;
-        }
-        messages.put(message);
-    }
-    private boolean finishReply(JSONObject target, JSONObject turn, boolean emitNotice) throws Exception {
+    private boolean finishReply(JSONObject target, JSONObject turn) throws Exception {
         String completedTurnId = turn.getString("id");
         JSONObject previous = active;
         try {
@@ -1730,9 +1731,12 @@ public final class Engine {
             for (int index = messages.length() - 1; index >= 0; index--) {
                 JSONObject message = messages.optJSONObject(index);
                 if (message != null && completedTurnId.equals(message.optString("completedTurnId"))
-                        && !"commentary".equals(message.optString("phase")) && !message.optString("text").isBlank()) return true;
+                        && !"commentary".equals(message.optString("phase")) && !message.optString("text").isBlank()) {
+                    message.put("finalForTurn", true);
+                    return true;
+                }
             }
-            if (emitNotice) messages.put(obj("id", "completion-" + completedTurnId, "role", "assistant", "kind", "completionNotice",
+            messages.put(obj("id", "completion-" + completedTurnId, "role", "assistant", "kind", "completionNotice",
                 "text", t("앱 알림: 작업이 끝났지만 최종 답변을 받지 못했습니다.")));
             return false;
         } finally { active = previous; }
@@ -1771,10 +1775,7 @@ public final class Engine {
                         throw new IOException(t("읽기 전용 모드에서는 화면 조회만 가능합니다. 조작하려면 작업 권한을 변경해 주세요."));
                     connection.respond(id, PhoneUseService.execute(context, tool, args));
                 } else if (ToolCatalog.WRITE.contains(tool)) {
-                    TaskSummary summary = taskSummary(requestThreadId, p.optString("turnId"));
                     mutate(tool, args, false, (result, error) -> {
-                        if (summary != null && error == null && result != null)
-                            summary.committed(result, documents.workspace().optString("name"), documents.directDirectory());
                         try { connection.respond(id, ToolCatalog.result(error == null, error == null ? result.toString() : error.getMessage())); }
                         catch (IOException ignored) {}
                     });

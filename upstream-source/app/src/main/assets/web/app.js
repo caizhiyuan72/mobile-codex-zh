@@ -1064,6 +1064,33 @@
   }
   const taskActivities = new Map(), dirtyActivities = new Set(), evictedActivities = new Set(), activityOutputLimit = 12000;
   let activityFramePending = false, activityStatus = '';
+  let progressTimer = 0, summaryScope = '';
+  function drawTurnProgress() {
+    const p = state.turnProgress, valid = state.busy && p && state.turnId && p.turnId === state.turnId;
+    const link = $('turn-connection'), panel = $('turn-summary'), body = $('turn-summary-text');
+    const scope = valid ? JSON.stringify([state.threadId, state.turnId]) : '';
+    if (scope !== summaryScope) { panel.open = false; summaryScope = scope; }
+    link.hidden = !valid; panel.hidden = !valid || !p.summary;
+    if (!valid) {
+      clearInterval(progressTimer); progressTimer = 0; link.textContent = ''; body.textContent = ''; return;
+    }
+    if (!progressTimer) progressTimer = setInterval(drawTurnProgress, 3000);
+    const age = stamp => Math.max(0, Math.floor((Date.now() - stamp) / 1000));
+    const quiet = age(p.lastEventAt);
+    const phase = state.streamRetrying ? '响应流中断，正在重连' : !state.ready ? '本机引擎未连接' :
+      quiet >= 30 ? '等待新的任务进展' : p.phase === 'reasoning' ? '收到推理进展' : p.phase === 'waiting' ? '等待下一步' : taskActivityLabel(p.phase);
+    const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+    const pendingApproval = [...requestQueue.values()].some(r => requestThread(r) === state.threadId &&
+      (!r.params?.turnId || r.params.turnId === state.turnId) && String(r.method).includes('requestApproval'));
+    setText($('activity-text'), pendingApproval && !state.streamRetrying ? taskActivityLabel('approval') : phase);
+    const engine = !state.ready ? '本机引擎未连接' : !p.engineReplyAt ? '等待本机引擎回应' : `本机引擎 ${age(p.engineReplyAt)} 秒前有回应`;
+    setText(link, `上次任务进展：${quiet} 秒前 · ${engine}`);
+    if (!panel.hidden) {
+      const text = String(p.summary);
+      setText(panel.querySelector('summary'), '推理摘要 · ' + (text.trim().split('\n')[0] || '').slice(0, 96));
+      setText(body, text);
+    } else setText(body, '');
+  }
   function showTaskActivity(activity, data) {
     const thread = data.threadId || data.params?.threadId;
     const turn = data.turnId || data.params?.turnId;
@@ -1156,7 +1183,8 @@
         row.body.textContent = [row.approval ? row.reason : '', row.detail, (row.omitted ? '…\n' : '') + row.output].filter(Boolean).join('\n\n');
       }
       dirtyActivities.clear();
-      if (activityStatus && $('activity-text').textContent !== activityStatus) $('activity-text').textContent = activityStatus;
+      if (state.turnProgress) drawTurnProgress();
+      else if (activityStatus && $('activity-text').textContent !== activityStatus) $('activity-text').textContent = activityStatus;
       activityStatus = '';
       if (viewportChanged) { if (following) scrollLatest(); else restoreReadingPosition(anchor); }
     });
@@ -1195,7 +1223,7 @@
   }
   function visibleMessageAnchor() {
     const area = $('chat-scroll'), top = area.getBoundingClientRect().top;
-    const element = [...$('messages').children].find(el => el.getBoundingClientRect().bottom > top);
+    const element = [...$('messages').children].find(el => !el.hidden && el.getBoundingClientRect().bottom > top);
     return {id:element?.dataset.id, offset:element ? element.getBoundingClientRect().top - top : 0,
       scrollTop:area.scrollTop, height:area.scrollHeight};
   }
@@ -1263,25 +1291,23 @@
       drawMessages(ids);
     });
   }
-  function drawTaskSummary(el, summary) {
-    const heading = node('strong', t('작업 요약'));
-    const statuses = {completed:'작업 완료', interrupted:'작업 중지됨', failed:'작업 실패'};
-    el.replaceChildren(heading, node('p', t(statuses[summary.status] || '작업 종료')));
-    if (summary.missingReply) el.append(node('p', t('작업이 끝났지만 최종 답변을 받지 못했습니다.')));
-    const section = (label, rows) => {
-      if (!rows.length) return;
-      const list = node('ul');
-      for (const row of rows) list.append(node('li', row));
-      el.append(node('strong', t(label)), list);
-    };
-    const actions = {add:'추가', update:'수정', delete:'삭제', move:'이동', write:'저장'};
-    section('확인된 변경 사항', (summary.changes || []).map(change => `${t(actions[change.action] || '수정')}: ${change.path}`));
-    section('확인된 결과물 위치', summary.locations || []);
-    if (summary.checks?.length) section('검사 결과', summary.checks.map(check => `${check.command} · ${t('종료 코드')}: ${check.exitCode}`));
-    else el.append(node('p', t('기록된 검사 결과 없음')));
-    if (summary.failed) el.append(node('p', `${t('실패한 도구 작업')}: ${summary.failed}`));
-    if (summary.unfinished) el.append(node('p', `${t('종료 결과를 받지 못한 도구 작업')}: ${summary.unfinished}`));
-    if (summary.limited) el.append(node('p', t('일부 도구 기록 생략')));
+  function workFolds(messages) {
+    const final = new Set(), folds = new Map();
+    for (let i = messages.length - 1; i >= 0; --i) {
+      const m = messages[i], id = m.completedTurnId;
+      if (!id || m.agent || m.kind || m.role !== 'assistant' || m.images?.length || !m.text?.trim() ||
+          (state.busy && state.turnId === id)) continue;
+      if (m.finalForTurn || m.phase === 'final_answer') final.add(id);
+      else if (final.has(id) && (!m.phase || m.phase === 'commentary')) {
+        if (!folds.has(id)) folds.set(id, new Set());
+        folds.get(id).add(m.id);
+      }
+    }
+    return folds;
+  }
+  function legacySummaryNotice(m) {
+    return m.summary?.status === 'failed' ? t('작업 실패') : m.summary?.status === 'interrupted' ? t('작업 중지됨') :
+      m.summary?.missingReply ? t('작업이 끝났지만 최종 답변을 받지 못했습니다.') : '';
   }
   function drawMessages(dirtyIds = null, preserveReading = true) {
     const anchor = preserveReading ? readingPosition() : null;
@@ -1295,24 +1321,42 @@
     const messages = dirtyIds ? [...dirtyIds].map(id => messageLookup.get(id)).filter(Boolean) : allMessages;
     const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).map(n => [n.dataset.id, n]));
     const keep = new Set();
+    const folds = dirtyIds ? null : workFolds(allMessages);
+    const positionAfter = el => {
+      const next = previous ? previous.nextSibling : $('messages').firstChild;
+      if (el !== next) $('messages').insertBefore(el, next);
+      previous = el;
+    };
     let previous = null;
     const grouped = groupedMessages;
     C.groupImageMessages(messages).forEach(m => {
+      if (m.kind === 'taskSummary' && !legacySummaryNotice(m)) return;
       keep.add(m.id); let el = elements.get(m.id);
       if (!el) { el = node('article', null, 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }
       if (!dirtyIds) {
-        const position = previous ? previous.nextSibling : $('messages').firstChild;
-        if (el !== position) $('messages').insertBefore(el, position);
-        previous = el;
+        const ids = folds.get(m.completedTurnId), folded = ids?.has(m.id);
+        if (folded) {
+          const key = JSON.stringify(['work',state.threadId,m.completedTurnId]);
+          let control = elements.get(key);
+          if (!control) {
+            control = button('', () => {
+              control.setAttribute('aria-expanded', String(control.getAttribute('aria-expanded') !== 'true'));
+              drawMessages();
+            }, 'work-toggle');
+            control.dataset.id = key; control.setAttribute('aria-expanded','false'); elements.set(key,control);
+          }
+          const open = control.getAttribute('aria-expanded') === 'true';
+          if (!keep.has(key)) {
+            keep.add(key); positionAfter(control);
+            control.textContent = (open ? '收起工作过程' : '查看工作过程') + `（${ids.size}）`;
+          }
+          el.hidden = !open;
+        } else el.hidden = false;
+        positionAfter(el);
       }
       renderedMessages.set(m.id, el);
       if (m.kind === 'taskSummary' && m.summary) {
-        const signature = JSON.stringify([m.kind, m.summary, L.language()]);
-        if (el.dataset.signature !== signature) {
-          el.dataset.signature = signature;
-          el.classList.add('task-summary-message');
-          drawTaskSummary(el, m.summary);
-        }
+        el.textContent = legacySummaryNotice(m);
         return;
       }
       el.classList.toggle('pro-consultation-message', m.kind === 'proConsultation');
@@ -1769,6 +1813,7 @@
         showTaskActivity(C.taskActivity('server.request', request), request);
     }
 
+    drawTurnProgress();
     drawStatusIcons();
     $('terminal-cwd').textContent = state.cwd || '';
     if (state.terminal) renderTerminal(state.terminal);
@@ -2268,6 +2313,9 @@
     if (name.startsWith('agents.')) { agentUi?.event(name, data); return; }
     if (name === 'response') { const p = pending.get(data.id); if (p) { clearTimeout(p.timer); pending.delete(data.id); data.error ? p.reject(new Error(data.error)) : p.resolve(data.result || {}); } return; }
     if (name === 'state') render(data);
+    else if (name === 'turn.progress' && state.busy && data.threadId === state.threadId && data.progress?.turnId === state.turnId) {
+      state.turnProgress = data.progress; drawTurnProgress();
+    }
     else if (name === 'error') { if (!data.threadId || data.threadId === state.threadId) toast(data.message); }
     else if (name === 'notice') toast(data.message);
     else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(C.taskActivity(name, data), data); const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }

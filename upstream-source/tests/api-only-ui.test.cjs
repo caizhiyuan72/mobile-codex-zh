@@ -124,3 +124,39 @@ test('tool activity follows the tail only while the reader is following',async()
  area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));
  w.mobileCodexEvent('tool',{threadId:'test',name:'mobile_read',path:'two.txt'});assert.equal(area.scrollTop,100);
 });
+
+test('a final answer folds its own commentary, preserves the original answer and omits the redundant app summary',async()=>{
+ const msg=(id,text,phase,completedTurnId='one')=>({id,text,role:'assistant',phase,completedTurnId});
+ const messages=[msg('step1','找到目录','commentary'),msg('step2','另存文件','commentary')];
+ const {w,state,flush}=setup({busy:true,turnId:'one',messages});await tick();flush();
+ const d=w.document,article=id=>d.querySelector(`[data-id="${id}"]`);
+ assert.equal(article('step1').hidden,false);assert.equal(d.querySelector('.work-toggle'),null);
+ const done={...state,busy:false,turnId:'',messages:[...messages,msg('final','已保存 report.html','final_answer'),
+  {id:'old-summary',role:'assistant',kind:'taskSummary',summary:{status:'completed'}},msg('other','检查失败前的进展','commentary','two')]};
+ w.mobileCodexEvent('state',done);flush();const toggle=d.querySelector('.work-toggle');
+ assert.equal(toggle.textContent,'查看工作过程（2）');assert.equal(article('step1').hidden,true);
+ assert.equal(article('final').hidden,false);assert.match(article('final').textContent,/report.html/);
+ assert.equal(article('other').hidden,false);assert.equal(article('old-summary'),null);
+ toggle.click();await tick();flush();assert.equal(article('step2').hidden,false);
+ w.mobileCodexEvent('state',done);flush();assert.equal(toggle.getAttribute('aria-expanded'),'true');
+ toggle.click();await tick();assert.equal(article('step2').hidden,true);
+ w.mobileCodexEvent('state',{...done,threadId:'other',messages:[]});flush();assert.equal(d.querySelector('.work-toggle'),null);
+ w.mobileCodexEvent('state',done);flush();assert.equal(article('step1').hidden,true);
+});
+
+test('public turn progress separates quiet model output from the local engine, scopes updates and clears on completion',async()=>{
+ const now=Date.now(), p={turnId:'one',phase:'reasoning',lastEventAt:now-35000,engineReplyAt:now,summary:'检查配置\n\n核对请求'};
+ const {w,state,flush}=setup({busy:true,turnId:'one',turnProgress:p});await tick();flush();
+ const d=w.document,el=id=>d.getElementById(id),fire=(name,data)=>{w.mobileCodexEvent(name,data);flush();};
+ assert.match(el('activity-text').textContent,/等待新的任务进展/);assert.match(el('turn-connection').textContent,/本机引擎 \d+ 秒前有回应/);
+ assert.equal(el('turn-summary-text').textContent,p.summary);el('turn-summary').open=true;
+ for(const [threadId,turnId] of [['other','one'],['test','old']])fire('turn.progress',{threadId,progress:{...p,turnId,summary:'stale'}});
+ assert.equal(el('turn-summary-text').textContent,p.summary);
+ fire('state',{...state,streamRetrying:true});assert.match(el('activity-text').textContent,/响应流中断/);
+ fire('state',{...state,threadId:'away',turnProgress:null});assert.equal(el('turn-summary').hidden,true);
+ fire('state',state);assert.equal(el('turn-summary').open,false);assert.equal(el('turn-summary-text').textContent,p.summary);
+ fire('server.request',{key:'a',method:'item/commandExecution/requestApproval',params:{threadId:'test',turnId:'one'}});
+ fire('turn.progress',{threadId:'test',progress:{...p,lastEventAt:now}});assert.match(el('activity-text').textContent,/等待审批/);
+ fire('server.resolved',{key:'a'});fire('state',{...state,busy:false,turnId:'',turnProgress:null});
+ fire('turn.progress',{threadId:'test',progress:p});assert.equal(el('turn-summary').hidden,true);assert.equal(el('turn-connection').hidden,true);
+});

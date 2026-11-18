@@ -119,8 +119,11 @@ public final class RpcClient implements AutoCloseable {
         return line.length() == 0 ? null : line.toString();
     }
     private final AtomicLong receivedMessages = new AtomicLong();
+    private volatile long lastMessageAt;
+    public long lastMessageAt() { return lastMessageAt; }
     public long receivedMessages() { return receivedMessages.get(); }
     public void accept(JSONObject msg) {
+        lastMessageAt = System.currentTimeMillis();
         receivedMessages.incrementAndGet();
         String method = msg.optString("method", "");
         JSONObject params = msg.optJSONObject("params");
