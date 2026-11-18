@@ -1256,5 +1256,19 @@ window.MobileCodexEnglish = {
   "일간 한도": "Daily limit",
   "현재 세션": "Current session",
   "이번 주": "This week",
-  "전체 모델": "All models"
+  "전체 모델": "All models",
+  "작업 종료": "Task ended",
+  "작업이 끝났지만 최종 답변을 받지 못했습니다.": "The task ended without a final reply.",
+  "앱 알림: 작업이 끝났지만 최종 답변을 받지 못했습니다.": "App notice: The task ended without a final reply.",
+  "작업 요약": "Task summary",
+  "이번 작업에서 시작한 하위 에이전트: {count}": "Subagents started this turn: {count}",
+  "실행 중: {count}": "Running: {count}",
+  "확인된 변경 사항": "Recorded changes",
+  "확인된 결과물 위치": "Verified output locations",
+  "검사 결과": "Check results",
+  "기록된 검사 결과 없음": "No check results recorded",
+  "실패한 도구 작업": "Failed tool calls",
+  "종료 결과를 받지 못한 도구 작업": "Tool calls with no completion result",
+  "일부 도구 기록 생략": "Some tool records were omitted",
+  "종료 코드": "Exit code"
 };

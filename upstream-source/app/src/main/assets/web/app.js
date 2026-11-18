@@ -61,6 +61,7 @@
 
   function renderConversationFailure() {
     const messages = {
+      runtime_disconnected:'本机运行时连接已中断，未收到这轮任务的最终状态。对话记录已保留，上一条消息未自动重发。',
       encrypted_transport_changed:'服务商拒绝恢复此对话（HTTP 409）：加密会话传输发生变化。长对话的自动压缩也可能因此失败。请联系服务商检查会话路由；原记录已保留，可先打开新对话。',
       upstream_conflict:'服务商返回会话冲突（HTTP 409）。请联系服务商检查会话状态；原记录已保留，可先打开新对话。',
       context_limit:'此对话的上下文已达到上限，本次请求未完成。可稍后重试，或打开新对话并补充任务进度；原记录已保留。',
@@ -1014,6 +1015,38 @@
       if (!paragraph.textContent.trim() && !paragraph.querySelector('img,button')) paragraph.remove();
     }
   }
+  // A blank line outside a fence, or a closed fence, ends a block whose
+  // Markdown cannot be changed by the next delta.
+  function completeProseLength(text) {
+    const separators = /```|\n[^\S\n]*\n/g;
+    let end = 0, match;
+    while ((match = separators.exec(text))) {
+      if (match[0] !== '```') { end = separators.lastIndex; continue; }
+      const openingEnd = text.indexOf('\n', separators.lastIndex);
+      const closing = openingEnd < 0 ? -1 : text.indexOf('```', openingEnd + 1);
+      if (closing < 0) break;
+      end = separators.lastIndex = closing + 3;
+    }
+    return end;
+  }
+  const streamViews = new WeakMap();
+  function renderStreamProse(target, view, text) {
+    if (text === view.text) return;
+    for (const child of view.tail) child.remove();
+    const pending = text.slice(view.prefix), ready = completeProseLength(pending);
+    const append = content => {
+      const fragment = document.createDocumentFragment();
+      prose(fragment, content);
+      renderMessageIconTags(fragment, true);
+      const children = [...fragment.childNodes];
+      target.insertBefore(fragment, view.footer);
+      return children;
+    };
+    if (ready) append(pending.slice(0, ready));
+    view.tail = append(pending.slice(ready));
+    view.prefix += ready;
+    view.text = text;
+  }
   function drawStatusIcons() {
     for (const id of ['welcome-character', 'activity-character']) {
       const host = $(id); if (host) { host.hidden = true; host.replaceChildren(); }
@@ -1023,24 +1056,114 @@
     thinking:['思考中', 'Thinking', '생각 중'], reading:['读取文件', 'Reading files', '파일 읽는 중'],
     searching:['搜索中', 'Searching', '검색 중'], command:['运行命令', 'Running command', '명령 실행 중'],
     editing:['修改文件', 'Editing files', '파일 수정 중'], tool:['调用工具', 'Using tool', '도구 사용 중'],
-    responding:['正在回复', 'Responding', '응답 중']
+    responding:['正在回复', 'Responding', '응답 중'], approval:['等待审批', 'Waiting for approval', '승인 대기 중']
   };
   function taskActivityLabel(kind) {
     const labels = taskActivityLabels[kind] || taskActivityLabels.tool;
     return labels[L.language() === 'zh-CN' ? 0 : L.language() === 'ko' ? 2 : 1];
   }
+  const taskActivities = new Map(), dirtyActivities = new Set(), evictedActivities = new Set(), activityOutputLimit = 12000;
+  let activityFramePending = false, activityStatus = '';
   function showTaskActivity(activity, data) {
-    if (!state.busy || !activity || activity.append ||
-        (state.turnId && data.params?.turnId && data.params.turnId !== state.turnId)) return;
-    const anchor = readingPosition();
-    const label = taskActivityLabel(activity.kind);
-    const status = activity.failed ? label + ' · ' + t('작업 실패') : label;
-    $('activity-text').textContent = status;
-    if (activity.kind !== 'thinking' && activity.kind !== 'responding') {
-      logEvent(activity.failed ? status : activity.completed ? label + ' · ' + t('완료') : label,
-        [activity.detail, activity.output].filter(Boolean).join('\n\n').slice(0, 24000));
+    const thread = data.threadId || data.params?.threadId;
+    const turn = data.turnId || data.params?.turnId;
+    if (!state.busy || !activity || (thread && thread !== state.threadId) ||
+        (turn && state.turnId && turn !== state.turnId)) return;
+    if (!state.liveTaskActivity) {
+      if (activity.append || activity.approval) return;
+      const anchor = readingPosition();
+      const label = taskActivityLabel(activity.kind);
+      const status = activity.failed ? label + ' · ' + t('작업 실패') : label;
+      $('activity-text').textContent = status;
+      if (activity.kind !== 'thinking' && activity.kind !== 'responding') {
+        logEvent(activity.completed && !activity.failed ? label + ' · ' + t('완료') : status,
+          [activity.detail, activity.output].filter(Boolean).join('\n\n').slice(0, 24000));
+      }
+      if (following) scrollLatest(); else restoreReadingPosition(anchor);
+      return;
     }
-    if (following) scrollLatest(); else restoreReadingPosition(anchor);
+    if (activity.key) {
+      const key = JSON.stringify([thread || state.threadId, turn || state.turnId || '', activity.key]);
+      let row = taskActivities.get(key);
+      if (!row) {
+        row = {kind:activity.kind, detail:'', output:'', omitted:false};
+        taskActivities.set(key, row);
+      }
+      // Once finalized, a delayed start or delta cannot overwrite the canonical result.
+      if (row.completed && !activity.completed) return;
+      if (!activity.append && !activity.approval) row.kind = activity.kind;
+      if (activity.detail) row.detail = activity.detail.slice(0, 4000);
+      if (activity.approval) { row.approval = data.key; row.reason = activity.reason.slice(0, 2000); }
+      if (activity.completed) {
+        row.completed = true;
+        row.failed = activity.failed;
+        row.interrupted = activity.interrupted;
+        row.approval = null;
+        if (activity.output) { row.output = ''; row.omitted = false; }
+      }
+      if (activity.output) {
+        row.omitted ||= row.output.length + activity.output.length > activityOutputLimit;
+        row.output = (row.output + activity.output.slice(-activityOutputLimit)).slice(-activityOutputLimit);
+      }
+      activityStatus = activityRowStatus(row);
+      dirtyActivities.add(key);
+      if (taskActivities.size > 16) {
+        const oldest = taskActivities.keys().next().value;
+        const element = taskActivities.get(oldest).element;
+        if (element) evictedActivities.add(element);
+        taskActivities.delete(oldest);
+        dirtyActivities.delete(oldest);
+      }
+    } else {
+      activityStatus = taskActivityLabel(activity.kind);
+    }
+    scheduleActivityDraw();
+  }
+  function activityRowStatus(row, completed = false) {
+    const label = taskActivityLabel(row.approval ? 'approval' : row.kind);
+    return label + (row.interrupted ? ' · ' + t('작업 중지됨') : row.failed ? ' · ' + t('작업 실패') :
+      row.completed && completed ? ' · ' + t('완료') : '');
+  }
+  function resolveTaskActivity(key) {
+    for (const [id, row] of taskActivities) if (row.approval === key) {
+      row.approval = null;
+      activityStatus = activityRowStatus(row);
+      dirtyActivities.add(id);
+      scheduleActivityDraw();
+    }
+  }
+  function scheduleActivityDraw() {
+    if (activityFramePending) return;
+    activityFramePending = true;
+    frame(() => {
+      activityFramePending = false;
+      if (!state.busy || (!dirtyActivities.size && !activityStatus)) return;
+      const anchor = readingPosition();
+      const viewportChanged = dirtyActivities.size > 0 || evictedActivities.size > 0;
+      for (const element of evictedActivities) element.remove();
+      evictedActivities.clear();
+      for (const key of dirtyActivities) {
+        const row = taskActivities.get(key);
+        if (!row) continue;
+        if (!row.element) {
+          row.element = node('details', null, 'task-activity-row');
+          row.label = node('span'); row.preview = node('span', null, 'task-activity-preview'); row.body = node('pre', null, 'console');
+          const summary = node('summary'); summary.append(row.label, row.preview); row.element.append(summary, row.body);
+          $('task-activities').append(row.element);
+        }
+        row.label.textContent = activityRowStatus(row, true);
+        row.preview.textContent = (row.output.slice(-240).trim() || row.detail).split(/\r?\n/).at(-1) || '';
+        row.body.textContent = [row.approval ? row.reason : '', row.detail, (row.omitted ? '…\n' : '') + row.output].filter(Boolean).join('\n\n');
+      }
+      dirtyActivities.clear();
+      if (activityStatus && $('activity-text').textContent !== activityStatus) $('activity-text').textContent = activityStatus;
+      activityStatus = '';
+      if (viewportChanged) { if (following) scrollLatest(); else restoreReadingPosition(anchor); }
+    });
+  }
+  function resetTaskActivities() {
+    $('task-activities').replaceChildren();
+    taskActivities.clear(); dirtyActivities.clear(); evictedActivities.clear(); activityStatus = '';
   }
   function setChatIcons() {
     chatIconsEnabled = $('chat-icons-toggle').checked;
@@ -1140,6 +1263,26 @@
       drawMessages(ids);
     });
   }
+  function drawTaskSummary(el, summary) {
+    const heading = node('strong', t('작업 요약'));
+    const statuses = {completed:'작업 완료', interrupted:'작업 중지됨', failed:'작업 실패'};
+    el.replaceChildren(heading, node('p', t(statuses[summary.status] || '작업 종료')));
+    if (summary.missingReply) el.append(node('p', t('작업이 끝났지만 최종 답변을 받지 못했습니다.')));
+    const section = (label, rows) => {
+      if (!rows.length) return;
+      const list = node('ul');
+      for (const row of rows) list.append(node('li', row));
+      el.append(node('strong', t(label)), list);
+    };
+    const actions = {add:'추가', update:'수정', delete:'삭제', move:'이동', write:'저장'};
+    section('확인된 변경 사항', (summary.changes || []).map(change => `${t(actions[change.action] || '수정')}: ${change.path}`));
+    section('확인된 결과물 위치', summary.locations || []);
+    if (summary.checks?.length) section('검사 결과', summary.checks.map(check => `${check.command} · ${t('종료 코드')}: ${check.exitCode}`));
+    else el.append(node('p', t('기록된 검사 결과 없음')));
+    if (summary.failed) el.append(node('p', `${t('실패한 도구 작업')}: ${summary.failed}`));
+    if (summary.unfinished) el.append(node('p', `${t('종료 결과를 받지 못한 도구 작업')}: ${summary.unfinished}`));
+    if (summary.limited) el.append(node('p', t('일부 도구 기록 생략')));
+  }
   function drawMessages(dirtyIds = null, preserveReading = true) {
     const anchor = preserveReading ? readingPosition() : null;
     const allMessages = state.messages || [];
@@ -1163,15 +1306,27 @@
         previous = el;
       }
       renderedMessages.set(m.id, el);
+      if (m.kind === 'taskSummary' && m.summary) {
+        const signature = JSON.stringify([m.kind, m.summary, L.language()]);
+        if (el.dataset.signature !== signature) {
+          el.dataset.signature = signature;
+          el.classList.add('task-summary-message');
+          drawTaskSummary(el, m.summary);
+        }
+        return;
+      }
       el.classList.toggle('pro-consultation-message', m.kind === 'proConsultation');
       el.classList.toggle('agent-message', !!m.agent);
       const agentPack = m.agent ? agentCharacter(m.agent) : null;
       const streaming = m.status === 'streaming' || (state.busy && m.id === allMessages[allMessages.length - 1]?.id);
-      const signature = JSON.stringify([m.agent, m.agentName, agentPack?.id, grouped, m.text, m.kind, m.prompt, m.createdAt, m.status, m.source, m.backend, m.displayModel, m.error, m.images, m.attachments, m.imageStatus, m.imageError, L.language(), chatIconsEnabled, streaming, characterVisualKey()]);
-      if (el.dataset.signature !== signature) {
+      const text = m.text || '';
+      const incremental = m.role !== 'user' && streaming && !!text.trim() && !m.images?.length && !m.imageStatus && !m.imageError && !m.kind;
+      let view = streamViews.get(el);
+      const signature = JSON.stringify([m.agent, m.agentName, agentPack?.id, grouped, incremental ? null : m.text, m.kind, m.prompt, m.createdAt, m.status, m.source, m.backend, m.displayModel, m.error, m.images, m.attachments, m.imageStatus, m.imageError, L.language(), chatIconsEnabled, streaming, characterVisualKey()]);
+      if (el.dataset.signature !== signature || (incremental && !text.startsWith(view?.text ?? ''))) {
         el.dataset.signature = signature;
+        streamViews.delete(el);
         if (m.role === 'user') {
-          const text = m.text || '';
           const body = node('div', text, 'user-message-text');
           el.replaceChildren(body);
           const date = messageDate(m.createdAt); el.classList.toggle('has-date', !!date); if (date) el.append(date);
@@ -1179,8 +1334,15 @@
           if (['not_sent','uncertain','failed'].includes(m.status)) el.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
         }
         else {
-          prose(el, m.text || '');
-          renderMessageIconTags(el, streaming);
+          if (incremental) {
+            el.replaceChildren();
+            view = {text:'', prefix:0, tail:[], footer:document.createComment('end of streaming prose'), message:m};
+            el.append(view.footer);
+            streamViews.set(el, view);
+          } else {
+            prose(el, text);
+            renderMessageIconTags(el, streaming);
+          }
           if (grouped) el.prepend(agentSpeaker(m));
           if (m.agent && m.status === 'streaming' && !m.text) el.append(node('p', t('응답 중…'), 'agent-pending'));
           if (m.agent && ['error','interrupted'].includes(m.status)) el.append(node('p', m.status === 'interrupted' ? t('중단된 응답입니다.') + (m.error ? ' ' + m.error : '') : (m.error || t('답하지 못했습니다.')), 'message-transport-status'));
@@ -1189,7 +1351,7 @@
           if (m.imageError) el.append(node('p', m.imageError, 'image-error'));
           if (m.text?.trim() && m.imageStatus !== 'generating') {
             const actions = node('div', null, 'message-actions');
-            const copy = button(t('복사'), () => copyText(m.text, copy), 'msg-copy-btn');
+            const copy = button(t('복사'), () => copyText(incremental ? view.message.text : m.text, copy), 'msg-copy-btn');
             copy.setAttribute('aria-label', t('메시지 복사'));
             copy.prepend(icon('copy'));
             actions.append(copy);
@@ -1197,6 +1359,7 @@
           }
         }
       }
+      if (incremental) { view.message = m; renderStreamProse(el, view, text); }
     });
     if (!dirtyIds) for (const [id, el] of elements) if (!keep.has(id)) el.remove();
     if (following) scrollLatest();
@@ -1565,6 +1728,7 @@
   let navigationSignature = '';
   function render(next) {
     const changedThread = state.threadId !== next.threadId;
+    const changedTurn = !!state.turnId && state.turnId !== next.turnId;
     const anchor = changedThread ? null : readingPosition();
     const wasBusy = !!state.busy;
     const changedFileContext = fileWorkspaceScope(state) !== fileWorkspaceScope(next);
@@ -1588,10 +1752,21 @@
     $('pending-deletions').hidden = pendingDeletes === 0;
     $('pending-deletions').textContent = pendingDeletes ? t('원본 삭제 대기 {count}건. 아래 ‘Codex 시작 / 다시 연결’을 누르면 다시 시도합니다.', {count:pendingDeletes}) : '';
     const anyBusy = !!state.busy;
+    $('stream-retry').hidden = !(anyBusy && state.streamRetrying);
+    const usage = state.subagentUsage, counter = $('subagent-usage');
+    const liveUsage = anyBusy && usage && usage.turnId === state.turnId;
+    const totalAgents = liveUsage || !anyBusy ? usage?.total || 0 : 0;
+    counter.hidden = !anyBusy && !totalAgents;
+    const countLabel = counter.hidden ? '' : t('이번 작업에서 시작한 하위 에이전트: {count}', {count:totalAgents}) +
+      (liveUsage && totalAgents && Number.isInteger(usage.running) ? ' · ' + t('실행 중: {count}', {count:usage.running}) : '');
+    if (counter.textContent !== countLabel) counter.textContent = countLabel;
     $('activity').hidden = !anyBusy;
     updateComposerExpansion();
-    if (!anyBusy || changedThread || !wasBusy) {
+    if (!anyBusy || changedThread || changedTurn || !wasBusy) {
+      resetTaskActivities();
       $('activity-text').textContent = t('Codex 작업 중');
+      if (anyBusy) for (const request of requestQueue.values()) if (requestThread(request) === state.threadId)
+        showTaskActivity(C.taskActivity('server.request', request), request);
     }
 
     drawStatusIcons();
@@ -2114,8 +2289,8 @@
       $('terminal-output').textContent = ($('terminal-output').textContent + data.text).slice(-1000000);
       $('terminal-output').scrollTop = $('terminal-output').scrollHeight;
     }
-    else if (name === 'server.request') { requestQueue.set(data.key, data); nextRequest(); }
-    else if (name === 'server.resolved') { requestQueue.delete(data.key); if (displayedRequest === data.key) { displayedRequest = null; close('request-dialog'); } nextRequest(); }
+    else if (name === 'server.request') { requestQueue.set(data.key, data); showTaskActivity(C.taskActivity(name, data), data); nextRequest(); }
+    else if (name === 'server.resolved') { requestQueue.delete(data.key); resolveTaskActivity(data.key); if (displayedRequest === data.key) { displayedRequest = null; close('request-dialog'); } nextRequest(); }
     else if (name === 'viewport') { document.body.classList.toggle('keyboard-open', !!data.keyboardVisible); viewportChanged(); }
     else if (name === 'theme') document.documentElement.dataset.theme = data.theme === 'dark' ? 'dark' : 'light';
     else if (name === 'notification.open') { const resume = data.threadId ? call('chat.resume', {id:data.threadId}) : Promise.resolve(); resume.then(() => nextRequest()).catch(error => toast(error.message)); }
@@ -2301,7 +2476,15 @@
     imageTouch = null;
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
-  on('activity-details', () => show('activity-dialog'));
+  on('activity-details', () => {
+    if (!state.liveTaskActivity) { show('activity-dialog'); return; }
+    const latest = $('task-activities').lastElementChild;
+    if (latest) {
+      const anchor = readingPosition();
+      latest.open = !latest.open;
+      if (following) scrollLatest(); else restoreReadingPosition(anchor);
+    }
+  });
   on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
   $('add-attachment').addEventListener('click', () => { if (!closeComposerAddMenu()) openComposerAddMenu(); });
   // Focusing the compact plus before pointerup moves it to the expanded row.
@@ -2443,6 +2626,7 @@
 
   on('restart', async () => { await call('runtime.stop'); await call('runtime.start'); });
   on('engine-stop', () => call('runtime.stop'));
+  on('battery-settings', () => call('ui.batterySettings'));
   selectSettingsTab('general');
   on('configure-api', openProviderSettings); on('settings', () => { ensureCharacterPackUi(); ensureNotificationSettings(); show('settings-dialog'); sidebar(false); if (!characterState.folderConfigured && characterState.packs.length <= 1) loadCharacterPacks(); });
   document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.addEventListener('click', () => {

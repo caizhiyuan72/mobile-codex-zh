@@ -907,6 +907,16 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 
 #activity-details { min-width:0; padding:0; border:0; background:none; color:inherit; font:inherit; text-align:start; cursor:pointer; }
 #activity-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-activities { max-width: var(--content-width); margin: 0 auto; }
+.subagent-usage { max-width: var(--content-width); margin: 0 auto var(--s-2); color: var(--text-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.task-activities:not(:empty) { margin-bottom: var(--s-3); }
+.task-activity-row { padding: var(--s-1) 0; color: var(--text-2); font-size: var(--fs-sm); }
+.task-activity-row > summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-activity-preview { margin-inline-start: var(--s-2); }
+.task-activity-row .console { max-height: 12em; margin: var(--s-1) 0; }
+
+.task-summary-message { border-inline-start: 2px solid var(--border-strong); padding-inline-start: var(--s-3); overflow-wrap: anywhere; }
+.task-summary-message p, .task-summary-message ul { margin-block: var(--s-2); }
 
 /* Send and Stop share one action position. */
 .composer-actions > .send-button[hidden] { display: none !important; }

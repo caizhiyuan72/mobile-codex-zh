@@ -32,6 +32,16 @@ test('API-only startup configures providers without subscription auth and preser
  for(const id of ['account-button','login-dialog','usage-limits','live-start','invite-dialog'])assert.equal(d.getElementById(id),null);
 });
 
+test('subagent counts restore from the current turn, then show only the final total',async()=>{
+ const {w,state,flush}=setup({busy:true,turnId:'one',subagentUsage:{turnId:'one',total:3,running:1}});
+ await tick();flush();const counter=w.document.getElementById('subagent-usage');
+ assert.equal(counter.textContent,'本轮已启动子代理：3 · 运行中：1');
+ w.mobileCodexEvent('state',{...state,busy:false,turnId:'',subagentUsage:{turnId:'one',total:3}});
+ assert.equal(counter.textContent,'本轮已启动子代理：3');
+ w.mobileCodexEvent('state',{...state,turnId:'two'});assert.equal(counter.textContent,'本轮已启动子代理：0');
+ w.mobileCodexEvent('state',{...state,threadId:'other',busy:false,subagentUsage:null});assert.equal(counter.hidden,true);
+});
+
 test('stream chunks share a frame and leave earlier message content untouched',async()=>{
  const {w,flush}=setup({busy:true,messages:[{id:'old',role:'assistant',text:'之前的正文'},{id:'tail',role:'assistant',text:'开始',status:'streaming'}]});await tick();flush();
  const d=w.document,old=d.querySelector('[data-id="old"]'),oldContent=old.firstChild,tail=d.querySelector('[data-id="tail"]');

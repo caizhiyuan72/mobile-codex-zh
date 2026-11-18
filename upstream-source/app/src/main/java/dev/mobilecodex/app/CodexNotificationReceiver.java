@@ -15,13 +15,17 @@ public final class CodexNotificationReceiver extends BroadcastReceiver {
     static final String ACTION = "dev.mobilecodex.app.TASK_NOTIFICATION";
     static final String CHANNEL = "codex_task_events";
     private static volatile boolean appForeground;
-    static void setAppForeground(boolean value) { appForeground = value; }
+    private static volatile String visibleThread = "";
+    static void setAppForeground(boolean value) {
+        appForeground = value;
+        if (!value) visibleThread = "";
+    }
+    static void setVisibleThread(String threadId) { visibleThread = threadId; }
     @Override public void onReceive(Context context, Intent intent) {
         if (!ACTION.equals(intent.getAction())) return;
         var prefs = context.getSharedPreferences("notifications", 0);
         String threadId = intent.getStringExtra("threadId");
-        // The conversation itself is the completion indicator while the app is open.
-        if (appForeground) { clearTaskNotifications(context); return; }
+        if (appForeground && threadId != null && !threadId.isBlank() && threadId.equals(visibleThread)) return;
         if (!prefs.getBoolean("enabled", true)) return;
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
         String kind = intent.getStringExtra("kind");
@@ -44,16 +48,5 @@ public final class CodexNotificationReceiver extends BroadcastReceiver {
         if (Build.VERSION.SDK_INT < 26 && prefs.getBoolean("vibration", true)) builder.setVibrate(new long[]{0, 180, 100, 180});
         int id = Math.abs((threadId + approvalId + kind).hashCode());
         manager.notify("codex-task", id == 0 ? 1001 : id, builder.build());
-    }
-    static void clearTaskNotifications(Context context) {
-        NotificationManager manager = context.getSystemService(NotificationManager.class);
-        if (manager == null) return;
-        // Clear both new tagged notifications and task notifications from older builds,
-        // preserving the foreground runtime service notification.
-        for (android.service.notification.StatusBarNotification item : manager.getActiveNotifications()) {
-            if ("codex-task".equals(item.getTag())
-                    || CHANNEL.equals(item.getNotification().getChannelId()))
-                manager.cancel(item.getTag(), item.getId());
-        }
     }
 }

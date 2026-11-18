@@ -104,6 +104,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarContrastEnforced(false);
         engine = ((MobileCodexApp) getApplication()).engine();
+        if (savedInstanceState != null) engine.restoreVisibleThread(savedInstanceState.getString("visibleThreadId", ""));
         characterPacks = new CharacterPacks(this);
         updates = ((MobileCodexApp) getApplication()).updates();
         if (savedInstanceState != null) { exportId = savedInstanceState.getString("exportId", ""); pendingPickerId = savedInstanceState.getString("pickerId"); pendingSkillId = savedInstanceState.getString("skillId"); }
@@ -156,8 +157,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 if (url.equals("https://" + HOST + "/index.html")) {
                     loaded = true;
                     while (!pendingUiEvents.isEmpty()) web.evaluateJavascript(pendingUiEvents.removeFirst(), null);
-                    engine.attach(MainActivity.this);
-                    if (foreground) engine.restoreAccount();
+                    if (foreground) engine.resumeForeground(MainActivity.this);
                     handleNotificationIntent(getIntent());
                     event("viewport", obj("keyboardVisible", keyboardVisible));
                 }
@@ -196,8 +196,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
     private static WebResourceResponse deniedResponse() {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", Map.of(), new ByteArrayInputStream(new byte[0]));
     }
-    @Override protected void onStart() { super.onStart(); if (loaded) engine.attach(this); engine.unobserve(this); }
-    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; CodexNotificationReceiver.setAppForeground(true); CodexNotificationReceiver.clearTaskNotifications(this); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) { engine.attach(this); engine.restoreAccount(); } event("voice.changed", obj()); }
+    @Override protected void onResume() { super.onResume(); AppLanguage.configure(this); applyTextSize(); foreground = true; CodexNotificationReceiver.setAppForeground(true); requestNotificationPermissionIfNeeded(); event("notifications.changed", obj()); event("updates.changed", updates.snapshot()); if (loaded) engine.resumeForeground(this); event("voice.changed", obj()); }
     @Override protected void onPause() { foreground = false; CodexNotificationReceiver.setAppForeground(false); if (dictation != null && !dictation.waitingPermission()) dictation.cancel(); super.onPause(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleNotificationIntent(intent); }
     private void handleNotificationIntent(Intent intent) {
@@ -213,6 +212,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         super.onStop();
     }
     @Override protected void onSaveInstanceState(Bundle out) {
+        out.putString("visibleThreadId", engine.visibleThreadId());
         out.putString("reconnectProjectKey", reconnectProjectKey);
         out.putString("attachmentDraftKey", attachmentDraftKey);
         out.putString("exportAttachmentId", exportAttachmentId);
@@ -287,7 +287,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         }
         runOnUiThread(() -> {
             if (isDestroyed()) return;
-            if ("state".equals(name)) getSharedPreferences("notifications", 0).edit().putString("visibleThread", data.optString("threadId", "")).commit();
+            if (foreground && loaded && "state".equals(name)) CodexNotificationReceiver.setVisibleThread(data.optString("threadId", ""));
             String script = "window.mobileCodexEvent(" + JSONObject.quote(name) + "," + data + ");";
             if (loaded) web.evaluateJavascript(script, null); else pendingUiEvents.addLast(script);
         });
@@ -672,6 +672,16 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     runOnUiThread(() -> {
                         try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); respond(id, obj("ok", true), null); }
                         catch (Exception e) { respond(id, null, e); }
+                    }); return;
+                }
+                if (action.equals("ui.batterySettings")) {
+                    runOnUiThread(() -> {
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            if (intent.resolveActivity(getPackageManager()) == null)
+                                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+                            startActivity(intent); respond(id, obj("ok", true), null);
+                        } catch (Exception failure) { respond(id, null, failure); }
                     }); return;
                 }
                 if (action.equals("ui.storageAccess")) {

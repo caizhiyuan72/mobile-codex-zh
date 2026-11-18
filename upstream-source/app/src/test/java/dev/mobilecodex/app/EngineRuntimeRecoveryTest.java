@@ -149,4 +149,24 @@ public class EngineRuntimeRecoveryTest {
         assertEquals("still-running", turns.get("local-saved"));
         assertSame(child, field("process")); assertFalse(rpc.isClosed());
     }
+    @Test public void foregroundReconnectsOnlyTheRememberedProviderAndNeverResends() throws Exception {
+        List<String> calls = new ArrayList<>();
+        engine.setTestTransport((method, params) -> { calls.add(method); return obj(); });
+        Engine.Ui owner = new Engine.Ui() {
+            public void event(String name, JSONObject data) { }
+            public void approval(Engine.Approval approval) { }
+        };
+        field("ready", false); field("serverThreadId", "");
+        var recovery = RuntimeEnvironment.getApplication().getSharedPreferences("runtime-recovery", 0);
+        recovery.edit().putString("scope", "other-provider").commit();
+        engine.resumeForeground(owner); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        assertFalse((boolean)field("ready")); assertTrue(calls.isEmpty());
+        recovery.edit().putString("scope", session.getString("apiScope")).commit();
+        engine.resumeForeground(owner); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        engine.resumeForeground(owner); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        assertEquals(List.of("thread/resume"), calls);
+        engine.stop(); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        engine.resumeForeground(owner); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        assertFalse((boolean)field("ready")); assertEquals(List.of("thread/resume"), calls);
+    }
 }

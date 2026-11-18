@@ -48,22 +48,23 @@ public class CodexNotificationReceiverTest {
             manager.getNotificationChannel(CodexNotificationReceiver.CHANNEL).getImportance());
     }
 
-    @Test public void foregroundCompletionStaysSilentAndClearsExistingTaskNotifications() {
-        Intent completed = Engine.taskNotificationIntent(context, "completed", "Done", "Task finished", "thread-one", "");
-        new CodexNotificationReceiver().onReceive(context, completed);
-        assertEquals(1, shadowOf(manager).size());
+    @Test public void foregroundCompletionOnlyStaysSilentForTheVisibleConversation() {
         CodexNotificationReceiver.setAppForeground(true);
-        new CodexNotificationReceiver().onReceive(context, completed);
-        assertEquals(0, shadowOf(manager).size());
+        CodexNotificationReceiver.setVisibleThread("thread-one");
+        CodexNotificationReceiver receiver = new CodexNotificationReceiver();
+        receiver.onReceive(context, Engine.taskNotificationIntent(context, "completed", "Done", "Task finished", "thread-two", ""));
+        assertEquals(1, shadowOf(manager).size());
+        receiver.onReceive(context, Engine.taskNotificationIntent(context, "completed", "Done", "Task finished", "thread-one", ""));
+        assertEquals(1, shadowOf(manager).size());
     }
-    @Test public void returningToAppClearsTaskNotificationsButPreservesRuntimeService() {
+    @Test public void resumingWithoutAVisibleThreadDoesNotSilenceCompletion() {
+        CodexNotificationReceiver.setAppForeground(true);
+        CodexNotificationReceiver.setVisibleThread("thread-one");
+        CodexNotificationReceiver.setAppForeground(false);
+        CodexNotificationReceiver.setAppForeground(true);
         new CodexNotificationReceiver().onReceive(context,
             Engine.taskNotificationIntent(context, "completed", "Done", "Task finished", "thread-one", ""));
-        manager.createNotificationChannel(new android.app.NotificationChannel("runtime", "Runtime", NotificationManager.IMPORTANCE_LOW));
-        manager.notify(9001, new android.app.Notification.Builder(context, "runtime").setSmallIcon(android.R.drawable.ic_dialog_info).build());
-        CodexNotificationReceiver.clearTaskNotifications(context);
         assertEquals(1, shadowOf(manager).size());
-        assertNotNull(shadowOf(manager).getNotification(9001));
     }
 
     @Test public void staleForegroundPreferenceCannotSilenceANewBackgroundProcess() {

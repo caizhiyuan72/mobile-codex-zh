@@ -99,6 +99,8 @@ public class EngineTurnCompletionTest {
     }
 
     @Test public void completedTurnRetainsSuccessfulNotification() throws Exception {
+        notifyEvent("item/completed", obj("threadId", "remote-thread", "turnId", "turn-one",
+            "item", obj("id", "answer", "type", "agentMessage", "text", "Exported report.pdf.")));
         complete(obj("id", "turn-one", "status", "completed", "error", JSONObject.NULL));
 
         Intent notification = lastTaskNotification();
@@ -106,7 +108,39 @@ public class EngineTurnCompletionTest {
         assertEquals("답변 완료", notification.getStringExtra("title"));
         assertEquals("Codex가 작업을 마쳤습니다.", notification.getStringExtra("message"));
         assertFalse(state.getBoolean("busy"));
+        assertEquals(1, state.getJSONArray("messages").length());
+        assertEquals("Exported report.pdf.", state.getJSONArray("messages").getJSONObject(0).getString("text"));
         assertTrue(errors.isEmpty());
+    }
+
+    @Test public void completionWithoutFinalReplyPersistsAnAppNotice() throws Exception {
+        session.getJSONArray("messages").put(obj("id", "earlier-answer", "role", "assistant",
+            "text", "Earlier reply", "completedTurnId", "earlier-turn"));
+        notifyEvent("item/completed", obj("threadId", "remote-thread", "turnId", "turn-one",
+            "item", obj("id", "progress", "type", "agentMessage", "phase", "commentary", "text", "Checking files.")));
+
+        complete(obj("id", "turn-one", "status", "completed"));
+
+        assertEquals("작업 종료", lastTaskNotification().getStringExtra("title"));
+        assertFalse(state.getBoolean("busy"));
+        assertEquals("completionNotice", state.getJSONArray("messages").getJSONObject(2).getString("kind"));
+        JSONArray saved = new JSONArray(Utf8Files.read(new File(application.getFilesDir(), "sessions.json").toPath()));
+        assertEquals("앱 알림: 작업이 끝났지만 최종 답변을 받지 못했습니다.",
+            saved.getJSONObject(0).getJSONArray("messages").getJSONObject(2).getString("text"));
+    }
+
+    @Test public void completionMergesFinalReplyFromTurnItemsWithoutDuplicatingTheStream() throws Exception {
+        notifyEvent("item/agentMessage/delta", obj("threadId", "remote-thread", "turnId", "turn-one",
+            "itemId", "answer", "delta", "Saved"));
+
+        complete(obj("id", "turn-one", "status", "completed", "items", array(
+            obj("id", "progress", "type", "agentMessage", "phase", "commentary", "text", "Checking files."),
+            obj("id", "answer", "type", "agentMessage", "phase", "final_answer", "text", "Saved report.pdf."))));
+
+        assertEquals("답변 완료", lastTaskNotification().getStringExtra("title"));
+        JSONArray messages = state.getJSONArray("messages");
+        assertEquals(1, messages.length());
+        assertEquals("Saved report.pdf.", messages.getJSONObject(0).getString("text"));
     }
 
     @Test public void failedTurnWithoutErrorObjectStillReportsFailure() throws Exception {
@@ -175,6 +209,29 @@ public class EngineTurnCompletionTest {
         notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "obsolete", "status", "failed", "error", transportConflict())));
         assertFalse(session.has("conversationFailure"));
         assertEquals("turn-one", runningTurns().get("local-thread"));
+    }
+
+    @Test public void cpuAndSubagentsSurviveDetachmentUntilLastTurnFinishes() throws Exception {
+        notifyEvent("turn/started", obj("threadId", "remote-thread", "turn", obj("id", "turn-one")));
+        android.os.PowerManager.WakeLock cpu = (android.os.PowerManager.WakeLock)get("taskCpu");
+        assertTrue(cpu.isHeld());
+        engine.detach((Engine.Ui)get("ui"));
+        JSONObject spawn = obj("threadId", "remote-thread", "turnId", "turn-one", "item", obj("id", "spawn", "type", "collabAgentToolCall",
+            "senderThreadId", "remote-thread", "status", "completed", "tool", "spawnAgent", "receiverThreadIds", array("child", "child-two")));
+        notifyEvent("item/completed", spawn); notifyEvent("item/completed", spawn);
+        notifyEvent("turn/completed", obj("threadId", "child", "turn", obj("id", "child-turn", "status", "completed")));
+        CompletableFuture<JSONObject> restored = new CompletableFuture<>();
+        engine.handle("state", obj(), (value,error) -> restored.complete(value));
+        JSONObject usage = restored.get(5, TimeUnit.SECONDS).getJSONObject("subagentUsage");
+        assertEquals(2, usage.getInt("total")); assertEquals(1, usage.getInt("running"));
+        assertTrue(cpu.isHeld());
+        JSONObject background = obj("id", "bg", "sessionVersion", 2, "codexThreadId", "bg-remote", "messages", array());
+        set("sessions", array(session, background));
+        notifyEvent("turn/started", obj("threadId", "bg-remote", "turn", obj("id", "bg-turn")));
+        notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "turn-one", "status", "interrupted")));
+        assertTrue(cpu.isHeld()); assertEquals(2, session.getJSONObject("subagentUsage").getInt("total"));
+        notifyEvent("turn/completed", obj("threadId", "bg-remote", "turn", obj("id", "bg-turn", "status", "completed")));
+        assertFalse(cpu.isHeld());
     }
 
     private JSONObject transportConflict() {

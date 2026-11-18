@@ -75,6 +75,11 @@ public final class Engine {
     /** Turn ids are scoped to their server thread. The UI may move to another
      * conversation while an earlier thread continues in the same app-server. */
     private final Map<String, String> runningTurns = new HashMap<>();
+    private final Map<String, TurnAgents> turnAgents = new HashMap<>();
+    private final Set<String> retryingStreams = new HashSet<>();
+    private record SummaryTurn(String threadId, String turnId) {}
+    private final Map<SummaryTurn, TaskSummary> taskSummaries = new HashMap<>();
+    private final boolean taskSummariesEnabled;
     private String toolRequestThread = "";
     private String permissionMode, approvalMode;
     private boolean chatIconsEnabled = true;
@@ -83,10 +88,14 @@ public final class Engine {
         event(name, data);
         if (name.equals("terminal.state") && !data.optBoolean("running") && !io.isShutdown()) io.execute(this::stopServiceIfIdle);
     });
-    private String status = t("시작할 준비가 됐습니다"), threadId = "", turnId = "", serverThreadId = "";
+    private String status = t("시작할 준비가 됐습니다"), turnId = "", serverThreadId = "";
+    private volatile String threadId = "";
     private String serverInstructions = "";
     private String authState = "unconfigured", authError = "";
-    private boolean autoRestorePaused;
+    private final android.content.SharedPreferences runtimeRecovery;
+    private final android.os.PowerManager.WakeLock taskCpu;
+    private long renewCpuAfter;
+    private boolean startingTurn;
     private final ApiProviders apiProviders;
     private final GitHubAuth githubAuth;
     private final GitHubCredentials githubCredentials;
@@ -110,7 +119,14 @@ public final class Engine {
         this(context, providers, null);
     }
     Engine(Context context, ApiProviders providers, GitHubAuth github) {
+        this(context, providers, github, BuildConfig.APPLICATION_ID.endsWith(".fresh"));
+    }
+    Engine(Context context, ApiProviders providers, GitHubAuth github, boolean taskSummariesEnabled) {
         this.context = context;
+        runtimeRecovery = context.getSharedPreferences("runtime-recovery", 0);
+        taskCpu = context.getSystemService(android.os.PowerManager.class).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:turn");
+        taskCpu.setReferenceCounted(false);
+        this.taskSummariesEnabled = taskSummariesEnabled;
         permissionMode = context.getSharedPreferences("settings", 0).getString("permissions", "workspace-write");
         approvalMode = context.getSharedPreferences("settings", 0).getString("approvalMode", "auto-review");
         documents = new DocumentStore(context);
@@ -139,14 +155,47 @@ public final class Engine {
     public void attach(Ui ui) {
         this.ui = ui;
         io.execute(() -> {
+            if (this.ui != ui) return;
             publish();
             if (pendingApproval != null && !pendingApproval.decision.isDone()) ui.approval(pendingApproval);
             requests.forEach((key, request) -> event("server.request", obj("key", key, "method", request.method, "params", requestUiParams(request))));
         });
     }
     public void detach(Ui ui) { if (this.ui == ui) this.ui = null; }
-    /** API configuration refresh is local and never polls ChatGPT accounts or subscription quotas. */
-    public void restoreAccount() { io.execute(() -> { refreshApiState(); publish(); }); }
+    String visibleThreadId() { return threadId; }
+    void restoreVisibleThread(String savedId) {
+        if (savedId.isBlank()) return;
+        io.execute(() -> {
+            if (active != null || ready || sessionStore.recoveryRequired()) return;
+            JSONObject saved = session(savedId);
+            if (saved == null || saved.optBoolean("deletionPending")) return;
+            try { resume(savedId); } catch (Exception ignored) { }
+        });
+    }
+    void resumeForeground(Ui owner) {
+        attach(owner);
+        io.execute(() -> {
+            if (ui != owner) return;
+            refreshApiState();
+            String scope = apiProviders.scope();
+            if (!scope.isBlank() && scope.equals(runtimeRecovery.getString("scope", ""))
+                    && !sessionStore.recoveryRequired() && !healthyTransport()) {
+                try {
+                    start(false);
+                    if (active != null && sessionProviderMatches(active) && active.optString("workspaceKey").equals(documents.key())
+                            && documents.workspace().optBoolean("available")) resumeRemote(false);
+                } catch (Exception failure) {
+                    runtimeRecovery.edit().putString("scope", scope).apply();
+                    error("runtime.start", obj("message", unwrap(failure).getMessage()), failure);
+                }
+            }
+            publish();
+        });
+    }
+    private boolean healthyTransport() {
+        return ready && (testTransport != null || (process != null && process.isAlive() && rpc != null && !rpc.isClosed()));
+    }
+    private void rememberRuntime() { runtimeRecovery.edit().putString("scope", apiProviders.scope()).apply(); }
     private void refreshApiState() {
         authState = apiProviders.configured() ? "configured" : "unconfigured";
         authError = "";
@@ -196,7 +245,10 @@ public final class Engine {
             "apiMigrationError", apiProviders.snapshot().optString("apiMigrationError"),
             "github", githubAuth.status().optJSONObject("github"),
             "models", models, "workspace", documents.workspace(), "projects", documents.projects(), "sessions", summaries,
-            "threadId", threadId, "turnId", turnId,
+            "threadId", threadId, "turnId", turnId, "liveTaskActivity", BuildConfig.APPLICATION_ID.endsWith(".fresh"),
+            "streamRetrying", retryingStreams.contains(threadId),
+            "subagentUsage", turnAgents.containsKey(threadId) ? turnAgents.get(threadId).snapshot()
+                : active == null ? JSONObject.NULL : uiJsonCopy(active.optJSONObject("subagentUsage")),
             "conversationFailure", active == null ? JSONObject.NULL : uiJsonCopy(active.optJSONObject("conversationFailure")),
             "turnDiff", active == null ? "" : active.optString("turnDiff"), "messages", snapshotMessages(),
             "messageHistory", messageHistory(active == null ? null : active.optJSONArray("messages"), snapshotMessageStart()),
@@ -240,7 +292,19 @@ public final class Engine {
         }
         return obj("hasMore", start > 0, "beforeId", beforeId, "total", total);
     }
-    private void publish() { event("state", snapshot()); }
+    private void publish() { if (ui != null || !observers.isEmpty()) event("state", snapshot()); }
+    private void syncTaskCpu() {
+        if (!startingTurn && runningTurns.isEmpty()) {
+            if (taskCpu.isHeld()) taskCpu.release();
+            renewCpuAfter = 0;
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (renewCpuAfter == 0 || now >= renewCpuAfter) {
+            taskCpu.acquire(TimeUnit.MINUTES.toMillis(60));
+            renewCpuAfter = now + TimeUnit.MINUTES.toMillis(5);
+        }
+    }
     private void persist() {
         try { persistSessions(sessions); }
         catch (IOException e) { error("sessions.save", obj("message", t("대화 기록을 저장하지 못했습니다."))); }
@@ -278,6 +342,10 @@ public final class Engine {
                     session.put("codexThreadId", session.optString("id")); session.put("sessionVersion", 2); changed = true;
                 }
                 if (session.optBoolean("deletionPending")) continue;
+                if (session.has("inFlightTurn") && !runningTurns.containsKey(session.optString("id"))) {
+                    session.put("conversationFailure", obj("code", "runtime_disconnected", "turnId", session.remove("inFlightTurn")));
+                    session.put("approvalPending", false); changed = true;
+                }
                 if (!session.has("workspaceKey")) {
                     String key = documents.restoreProjectKey(session.optString("id"), "", session.optString("workspace"));
                     session.put("workspaceKey", key);
@@ -417,7 +485,7 @@ public final class Engine {
                     }
                     case "state" -> reply.complete(snapshot(), null);
                     case "phone.stop" -> { publish(); reply.complete(snapshot(), null); }
-                    case "runtime.start" -> { autoRestorePaused = false; start(); event("diagnostics.cleared", obj("operation", "start")); reply.complete(snapshot(), null); }
+                    case "runtime.start" -> { start(); event("diagnostics.cleared", obj("operation", "start")); reply.complete(snapshot(), null); }
                     case "providers.list" -> reply.complete(apiProviders.snapshot(), null);
                     case "providers.save" -> {
                         boolean replacingActive = !args.optString("id").isBlank() && args.optString("id").equals(apiProviders.activeId());
@@ -462,7 +530,7 @@ public final class Engine {
                         ensureRuntimeSettingsIdle(); linux.remove(); serverThreadId = "";
                         publish(); reply.complete(linux.status(), null);
                     }
-                    case "runtime.stop" -> { autoRestorePaused = true; linux.cancel(); stopNow(); reply.complete(snapshot(), null); }
+                    case "runtime.stop" -> { linux.cancel(); stopNow(); reply.complete(snapshot(), null); }
                     case "permissions.set" -> {
                         ensureEngineIdle();
                         String mode = args.getString("mode");
@@ -568,9 +636,12 @@ public final class Engine {
                     case "documents.projects" -> reply.complete(obj("projects", documents.projects()), null);
                     case "chat.icons.set" -> { setChatIconsEnabled(args.getBoolean("enabled")); reply.complete(obj("ok", true), null); }
                     case "chat.send" -> { requireChatScope(args); if (args.has("chatIconsEnabled")) setChatIconsEnabled(args.getBoolean("chatIconsEnabled"));
-                        send(args.optString("text", ""), args.optString("model", ""), args.optString("effort", ""),
+                        startingTurn = true;
+                        try { syncTaskCpu(); send(args.optString("text", ""), args.optString("model", ""), args.optString("effort", ""),
                         args.optJSONArray("attachments"), args.optJSONArray("skills"), args.optJSONArray("mentions"),
-                        args.has("fastMode") ? args.getBoolean("fastMode") : null); reply.complete(obj("ok", true), null); }
+                        args.has("fastMode") ? args.getBoolean("fastMode") : null); }
+                        finally { startingTurn = false; syncTaskCpu(); }
+                        reply.complete(obj("ok", true), null); }
                     case "chat.history" -> reply.complete(history(args), null);
                     case "chat.steer" -> { steer(args); reply.complete(obj("ok", true), null); }
                     case "chat.new" -> {
@@ -652,12 +723,36 @@ public final class Engine {
     }
     void reconcileService() { if (!io.isShutdown()) io.execute(this::stopServiceIfIdle); }
     private void clearRunningState() {
+        boolean lostTurn = false;
+        for (var turn : runningTurns.entrySet()) {
+            JSONObject target = session(turn.getKey());
+            if (target == null) continue;
+            try {
+                target.remove("inFlightTurn");
+                target.put("conversationFailure", obj("code", "runtime_disconnected", "turnId", turn.getValue()));
+                lostTurn = true;
+            } catch (org.json.JSONException ignored) { }
+        }
+        if (!taskSummaries.isEmpty()) {
+            for (Map.Entry<SummaryTurn, TaskSummary> entry : taskSummaries.entrySet()) {
+                SummaryTurn key = entry.getKey();
+                JSONObject target = session(key.threadId());
+                if (target != null && key.turnId().equals(runningTurns.get(key.threadId())))
+                    appendTaskSummary(target, entry.getValue(), key.turnId(), "interrupted", false);
+            }
+            taskSummaries.clear();
+            lostTurn = true;
+        }
+        turnAgents.clear();
+        retryingStreams.clear();
         runningTurns.clear();
+        syncTaskCpu();
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject value = sessions.optJSONObject(i);
             if (value != null) try { value.put("approvalPending", false); } catch (Exception ignored) {}
         }
         busy = false; turnId = "";
+        if (lostTurn) persist();
     }
     private void start() throws Exception {
         start(true);
@@ -672,13 +767,13 @@ public final class Engine {
         boolean replacing = false, spawnAttempted = false;
         try {
             diagnostic.stage("runtime_prepare");
-            autoRestorePaused = false;
             if (testTransport != null) {
                 ready = true;
                 if (restoreConversation) restoreConversation();
+                rememberRuntime();
                 return;
             }
-            if (ready && process != null && process.isAlive() && rpc != null && !rpc.isClosed()) {
+            if (healthyTransport()) {
                 if (restoreConversation) retryPendingDeletions();
                 publish();
                 return;
@@ -755,6 +850,7 @@ public final class Engine {
             diagnostic.stage("conversation_restore");
             if (restoreConversation) restoreConversation();
             diagnostic.ready();
+            rememberRuntime();
             publish();
         } catch (Exception e) {
             // Keep nested measurements from this exact operation, not a recovery attempt.
@@ -857,6 +953,8 @@ public final class Engine {
             + ". When the user asks which model you are, report that exact requested model id."
             + " Current app GitHub login: " + githubAuth.agentStatus()
             + ". GitHub permissions cover public repositories and workflows; private repository access is not granted."
+            + " After using tools, send a final reply stating what actually happened. For file work, briefly report the deliverable, its verified name and location, and what you checked and the result."
+            + " Say which relevant checks were skipped or could not be run. Respect requests to skip a check, and never report an unrun check as passed."
             + linuxInstructions(linux.status()) + ChatIconInstructions.forEnabled(chatIconsEnabled);
     }
     static String linuxInstructions(JSONObject state) {
@@ -1126,6 +1224,7 @@ public final class Engine {
             if (!actualModel.isEmpty()) params.put("model", actualModel);
             if (!effort.isEmpty()) params.put("effort", effort);
             if (serviceTierForTurn != null) params.put("serviceTierForTurn", serviceTierForTurn);
+            long turnStartedAt = System.currentTimeMillis();
             JSONObject turn = call("turn/start", params).optJSONObject("turn");
             if (candidate != null) { active = candidate; threadId = candidateLocalId; serverThreadId = candidateRemoteId; sessions.put(active); }
             else {
@@ -1139,7 +1238,7 @@ public final class Engine {
             active.getJSONArray("messages").put(message);
             if (turn != null) {
                 String startedTurn = turn.optString("id", "");
-                if (!startedTurn.isBlank()) runningTurns.put(targetLocal, startedTurn);
+                if (!startedTurn.isBlank()) trackTurn(targetLocal, startedTurn, turnStartedAt);
             }
             syncCurrentTurn();
             persist(); publish();
@@ -1273,11 +1372,54 @@ public final class Engine {
             }
         }
     }
+    private void observeAgent(String method, JSONObject params) throws Exception {
+        if (turnAgents.isEmpty()) return;
+        String sender = params.optString("threadId");
+        JSONObject spawned = method.equals("thread/started") ? params.optJSONObject("thread") : null;
+        if (spawned != null) sender = spawned.optString("parentThreadId", "");
+        if (sender.isBlank()) return;
+        for (var entry : turnAgents.entrySet()) {
+            TurnAgents agents = entry.getValue();
+            JSONObject parent = session(entry.getKey());
+            if (parent == null) continue;
+            String root = codexThreadId(parent);
+            boolean child = agents.contains(sender);
+            if (!sender.equals(root) && !child) continue;
+            boolean changed = false;
+            if (spawned != null) {
+                String id = spawned.optString("id", "");
+                if (!id.equals(root) && !id.equals(sender)) changed = agents.spawned(id);
+            } else if (method.equals("item/completed") && (child || agents.turn.equals(params.optString("turnId")))) {
+                changed = agents.item(params.optJSONObject("item"), root, sender);
+            } else if (child && (method.equals("turn/started") || method.equals("turn/completed"))) {
+                changed = agents.setActive(sender, method.equals("turn/started"));
+            } else if (child && method.equals("thread/status/changed")) {
+                JSONObject status = params.optJSONObject("status");
+                if (status != null) switch (status.optString("type")) {
+                    case "active" -> changed = agents.setActive(sender, true);
+                    case "idle", "systemError", "notLoaded" -> changed = agents.setActive(sender, false);
+                }
+            }
+            if (changed) {
+                saveAgentTotal(parent, agents);
+                if (entry.getKey().equals(threadId)) publish();
+            }
+            return;
+        }
+    }
+    private void saveAgentTotal(JSONObject parent, TurnAgents agents) throws Exception {
+        JSONObject old = parent.optJSONObject("subagentUsage");
+        if (old != null && old.optInt("total") == agents.total() && agents.turn.equals(old.optString("turnId"))) return;
+        parent.put("subagentUsage", obj("turnId", agents.turn, "total", agents.total()));
+        persist();
+    }
     private void onNotification(String method, JSONObject p) {
         Object previousOperation = diagnosticOperation;
         diagnosticOperation = new Object();
         try {
             if (method.startsWith("thread/realtime/") || method.startsWith("account/")) return;
+            if (method.equals("thread/started") || method.equals("thread/status/changed") || method.equals("item/completed")
+                    || method.equals("turn/started") || method.equals("turn/completed")) observeAgent(method, p);
             if (method.equals("serverRequest/resolved")) {
                 Object id = p.opt("requestId");
                 requests.entrySet().removeIf(entry -> {
@@ -1293,10 +1435,13 @@ public final class Engine {
                 return;
             }
             String remoteEventThreadId = p.optString("threadId");
+            if (!runningTurns.isEmpty()) syncTaskCpu();
             boolean implicitCurrentThread = remoteEventThreadId.isBlank();
             String eventThreadId = implicitCurrentThread ? threadId : localIdForCodexThread(remoteEventThreadId);
             JSONObject target = implicitCurrentThread ? active : (eventThreadId.isBlank() ? null : session(eventThreadId));
             boolean currentThread = implicitCurrentThread || eventThreadId.equals(threadId);
+            if ((method.equals("item/agentMessage/delta") || method.equals("item/started") || method.equals("item/completed"))
+                    && p.optString("turnId").equals(runningTurns.get(eventThreadId)) && retryingStreams.remove(eventThreadId) && currentThread) publish();
             if (method.equals("item/agentMessage/delta") && target != null) {
                 String id = p.optString("itemId");
                 JSONObject previous = active;
@@ -1311,9 +1456,13 @@ public final class Engine {
                 JSONObject previous = active;
                 try {
                     active = target;
-                    if (item != null) imageHandled = withWorkspace(target.optString("workspaceKey"), () -> recordImages(item, completed, p.optString("turnId", turnId)));
+                    if (item != null) imageHandled = withWorkspace(target.optString("workspaceKey"), () -> {
+                        TaskSummary summary = taskSummary(eventThreadId, p.optString("turnId"));
+                        if (summary != null) summary.item(item, completed, projectDirectory());
+                        return recordImages(item, completed, p.optString("turnId", turnId));
+                    });
                     if (!imageHandled && completed && item != null && "agentMessage".equals(item.optString("type"))) {
-                        message(item.getString("id")).put("text", item.optString("text"));
+                        recordAgentMessage(item, p.optString("turnId", runningTurns.getOrDefault(eventThreadId, "")));
                         messageHandled = true;
                     }
                 } finally { active = previous; }
@@ -1324,7 +1473,7 @@ public final class Engine {
             } else if (method.equals("turn/started")) {
                 JSONObject turn = p.optJSONObject("turn"); String started = turn == null ? "" : turn.optString("id");
                 if (!eventThreadId.isBlank() && !started.isBlank()) {
-                    runningTurns.put(eventThreadId, started);
+                    trackTurn(eventThreadId, started, System.currentTimeMillis());
                     if (target != null) target.remove("conversationFailure");
                 }
                 syncCurrentTurn(); publish();
@@ -1335,8 +1484,19 @@ public final class Engine {
                 // Only the tracked top-level turn can finish a user task. Replayed,
                 // child-thread and stray item completions must never notify again.
                 if (target == null || eventThreadId.isBlank() || runningId == null
-                        || completedId.isBlank() || !completedId.equals(runningId)) return;
+                        || completedId.isBlank() || !completedId.equals(runningId)
+                        || "inProgress".equals(completedTurn.optString("status"))) return;
                 runningTurns.remove(eventThreadId);
+                target.remove("inFlightTurn"); retryingStreams.remove(eventThreadId);
+                syncTaskCpu();
+                TurnAgents finishedAgents = turnAgents.remove(eventThreadId);
+                if (finishedAgents != null) {
+                    JSONArray finalItems = completedTurn.optJSONArray("items");
+                    String root = codexThreadId(target);
+                    for (int index = 0; finalItems != null && index < finalItems.length(); index++)
+                        finishedAgents.item(finalItems.optJSONObject(index), root, root);
+                    if (finishedAgents.total() > 0) saveAgentTotal(target, finishedAgents);
+                }
                 if (target != null) target.put("approvalPending", false);
                 syncCurrentTurn();
                 JSONObject turn = p.optJSONObject("turn");
@@ -1344,6 +1504,20 @@ public final class Engine {
                 boolean interrupted = "interrupted".equals(completionStatus);
                 JSONObject error = turn == null ? null : turn.optJSONObject("error");
                 boolean failed = !interrupted && ("failed".equals(completionStatus) || error != null);
+                TaskSummary summary = taskSummaries.remove(new SummaryTurn(eventThreadId, completedId));
+                if (summary == null && taskSummariesEnabled) summary = new TaskSummary(Long.MAX_VALUE);
+                if (summary != null) {
+                    JSONArray items = turn.optJSONArray("items");
+                    File directory = target.optString("workspaceKey").equals(documents.key()) ? projectDirectory() : null;
+                    for (int i = 0; items != null && i < items.length(); i++) {
+                        JSONObject item = items.optJSONObject(i);
+                        if (item != null) summary.item(item, true, directory);
+                    }
+                }
+                boolean successful = "completed".equals(completionStatus) && !failed;
+                boolean missingReply = successful && !finishReply(target, turn, summary == null || summary.isEmpty());
+                if (summary != null) appendTaskSummary(target, summary, completedId,
+                    interrupted ? "interrupted" : failed ? "failed" : completionStatus, successful && !missingReply);
                 if (failed) {
                     String failureCode = ConversationFailure.code(error);
                     target.put("conversationFailure", obj("code", failureCode, "turnId", completedId));
@@ -1353,9 +1527,6 @@ public final class Engine {
                         && "completed".equals(completionStatus) && error == null)
                     event("diagnostics.cleared", obj("operation", "chat", "_scope", eventThreadId));
                 if (failed) error("chat.send", obj("threadId", eventThreadId, "message", ConversationFailure.message(ConversationFailure.code(error))), new DiagnosticFailure.RpcFailure("", error));
-                taskNotification(interrupted ? "interrupted" : failed ? "failed" : "completed",
-                    interrupted ? t("작업 중지됨") : failed ? t("작업 실패") : t("답변 완료"),
-                    interrupted ? t("Codex 작업이 중지되었습니다.") : failed ? t("Codex 작업이 실패했습니다.") : t("Codex가 작업을 마쳤습니다."), eventThreadId, "");
                 if (currentThread && pendingApproval != null) pendingApproval.decision.complete(false);
                 if (target != null) {
                     JSONObject previous = active;
@@ -1370,11 +1541,18 @@ public final class Engine {
                     } finally { active = previous; }
                 }
                 persist(); publish();
+                taskNotification(interrupted ? "interrupted" : failed ? "failed" : "completed",
+                    interrupted ? t("작업 중지됨") : failed ? t("작업 실패") : missingReply ? t("작업 종료") : t("답변 완료"),
+                    interrupted ? t("Codex 작업이 중지되었습니다.") : failed ? t("Codex 작업이 실패했습니다.")
+                        : missingReply ? t("작업이 끝났지만 최종 답변을 받지 못했습니다.") : t("Codex가 작업을 마쳤습니다."), eventThreadId, "");
             } else if (method.equals("error")) {
                 JSONObject error = p.optJSONObject("error");
                 // Retried stream failures are progress, not a completed failed task.
                 // Never forward arbitrary HTTP bodies (which can contain credentials).
-                if (p.optBoolean("willRetry")) return;
+                if (p.optBoolean("willRetry")) {
+                    if (p.optString("turnId").equals(runningTurns.get(eventThreadId)) && retryingStreams.add(eventThreadId) && currentThread) publish();
+                    return;
+                }
                 error("chat.send", obj("threadId", eventThreadId, "message", ConversationFailure.message(ConversationFailure.code(error))), new DiagnosticFailure.RpcFailure("", error));
             } else if (target != null && currentThread) {
                 event("agent.event", obj("threadId", eventThreadId, "method", method, "params", p));
@@ -1447,6 +1625,61 @@ public final class Engine {
         }
         JSONObject m = obj("id", id, "role", "assistant", "text", ""); messages.put(m); return m;
     }
+    private void recordAgentMessage(JSONObject item, String completedTurnId) throws Exception {
+        message(item.getString("id")).put("text", item.optString("text"))
+            .put("completedTurnId", completedTurnId).put("phase", item.optString("phase", ""));
+    }
+    private void trackTurn(String localThread, String id, long startedAt) throws org.json.JSONException {
+        String previous = runningTurns.put(localThread, id);
+        syncTaskCpu();
+        if (!id.equals(previous) || !turnAgents.containsKey(localThread)) {
+            turnAgents.put(localThread, new TurnAgents(id));
+            JSONObject target = session(localThread);
+            retryingStreams.remove(localThread);
+            if (target != null) { target.remove("subagentUsage"); target.put("inFlightTurn", id); }
+        }
+        if (taskSummariesEnabled) {
+            if (previous != null && !previous.equals(id)) taskSummaries.remove(new SummaryTurn(localThread, previous));
+            taskSummaries.computeIfAbsent(new SummaryTurn(localThread, id), ignored -> new TaskSummary(startedAt));
+        }
+    }
+    private TaskSummary taskSummary(String localThread, String id) {
+        if (!taskSummariesEnabled || id.isBlank() || !id.equals(runningTurns.get(localThread))) return null;
+        return taskSummaries.computeIfAbsent(new SummaryTurn(localThread, id), ignored -> new TaskSummary(Long.MAX_VALUE));
+    }
+    private void appendTaskSummary(JSONObject target, TaskSummary summary, String id, String status, boolean finalReply) {
+        JSONObject message = summary.message(id, status, finalReply);
+        JSONArray messages = target.optJSONArray("messages");
+        if (message == null || messages == null) return;
+        for (int i = messages.length() - 1; i >= 0; i--) {
+            JSONObject previous = messages.optJSONObject(i);
+            if (previous != null && message.optString("id").equals(previous.optString("id"))) return;
+        }
+        messages.put(message);
+    }
+    private boolean finishReply(JSONObject target, JSONObject turn, boolean emitNotice) throws Exception {
+        String completedTurnId = turn.getString("id");
+        JSONObject previous = active;
+        try {
+            active = target;
+            JSONArray items = turn.optJSONArray("items");
+            for (int index = 0; items != null && index < items.length(); index++) {
+                JSONObject item = items.optJSONObject(index);
+                if (item != null && "agentMessage".equals(item.optString("type"))
+                        && !item.optString("id").isBlank() && !item.optString("text").isBlank()
+                        && !"commentary".equals(item.optString("phase"))) recordAgentMessage(item, completedTurnId);
+            }
+            JSONArray messages = target.getJSONArray("messages");
+            for (int index = messages.length() - 1; index >= 0; index--) {
+                JSONObject message = messages.optJSONObject(index);
+                if (message != null && completedTurnId.equals(message.optString("completedTurnId"))
+                        && !"commentary".equals(message.optString("phase")) && !message.optString("text").isBlank()) return true;
+            }
+            if (emitNotice) messages.put(obj("id", "completion-" + completedTurnId, "role", "assistant", "kind", "completionNotice",
+                "text", t("앱 알림: 작업이 끝났지만 최종 답변을 받지 못했습니다.")));
+            return false;
+        } finally { active = previous; }
+    }
     private void onRequest(Object id, String method, JSONObject p) { onRequest(rpc, id, method, p); }
     private void onRequest(RpcClient connection, Object id, String method, JSONObject p) {
         try {
@@ -1471,7 +1704,8 @@ public final class Engine {
             if (requestSession == null) throw new IOException(t("대화 작업을 찾을 수 없습니다."));
             String requestWorkspaceKey = requestSession.optString("workspaceKey");
             String tool = p.getString("tool"); JSONObject args = p.getJSONObject("arguments");
-            event("tool", obj("threadId", requestThreadId, "name", tool, "path", args.optString("path", args.optString("query", ""))));
+            event("tool", obj("threadId", requestThreadId, "turnId", p.optString("turnId"), "itemId", p.optString("callId"),
+                "name", tool, "path", args.optString("path", args.optString("query", ""))));
             String previousToolThread = toolRequestThread;
             toolRequestThread = requestThreadId;
             try { withWorkspace(requestWorkspaceKey, () -> {
@@ -1480,7 +1714,10 @@ public final class Engine {
                         throw new IOException(t("읽기 전용 모드에서는 화면 조회만 가능합니다. 조작하려면 작업 권한을 변경해 주세요."));
                     connection.respond(id, PhoneUseService.execute(context, tool, args));
                 } else if (ToolCatalog.WRITE.contains(tool)) {
+                    TaskSummary summary = taskSummary(requestThreadId, p.optString("turnId"));
                     mutate(tool, args, false, (result, error) -> {
+                        if (summary != null && error == null && result != null)
+                            summary.committed(result, documents.workspace().optString("name"), documents.directDirectory());
                         try { connection.respond(id, ToolCatalog.result(error == null, error == null ? result.toString() : error.getMessage())); }
                         catch (IOException ignored) {}
                     });
@@ -1538,10 +1775,11 @@ public final class Engine {
         linux.cancel();
         // Closing approval first allows a pending action to resolve without changes.
         Approval approval = pendingApproval; if (approval != null) approval.decision.complete(false);
-        io.execute(() -> { autoRestorePaused = true; stopNow(); });
+        io.execute(this::stopNow);
     }
     private void stopNow() { stopTerminalProcess(); stopCodex(); }
     private void stopCodex() {
+        runtimeRecovery.edit().remove("scope").apply();
         PhoneUseService.stopControl();
         if (pendingApproval != null) pendingApproval.decision.complete(false);
         Process old = process; process = null;

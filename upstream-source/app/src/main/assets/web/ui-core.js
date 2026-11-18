@@ -160,6 +160,9 @@
   }
   // Only public activity metadata and tool output belong in the transcript UI.
   // Reasoning text, summaries, encrypted content and arbitrary event payloads do not.
+  function toolActivityKind(tool) {
+    return /write|edit|patch|mutate|create|mkdir|rename|move|delete/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
+  }
   function taskActivity(name, data = {}) {
     const params = data.params || {}, item = params.item || {};
     const method = String(data.method || ''), type = String(item.type || '');
@@ -167,26 +170,33 @@
     if (name === 'message.delta') return {kind:'responding', key:'', detail:'', output:''};
     if (name === 'tool') {
       const tool = String(data.name || '');
-      const kind = /write|edit|patch|mutate/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
-      return {kind, key:'', detail:[tool.replace(/^mobile_/, ''), data.path].filter(Boolean).join(' · '), output:''};
+      return {kind:toolActivityKind(tool), key:String(data.itemId || ''), detail:[tool.replace(/^mobile_/, ''), data.path].filter(Boolean).join(' · '), output:''};
     }
+    if (name === 'server.request' && method.includes('requestApproval'))
+      return {kind:method.includes('commandExecution') ? 'command' : method.includes('fileChange') ? 'editing' : 'tool',
+        key:key || String(data.key || ''), detail:String(params.command || ''), output:'', approval:true, reason:String(params.reason || '')};
     if (name !== 'agent.event') return null;
     if (/reasoning/i.test(type) || /\/reasoning\//i.test(method))
       return {kind:'thinking', key:'', detail:'', output:''};
-    if (method === 'item/commandExecution/outputDelta')
-      return {kind:'command', key, detail:'', output:String(params.delta || ''), append:true};
+    if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta')
+      return {kind:method.includes('fileChange') ? 'editing' : 'command', key, detail:'', output:String(params.delta || ''), append:true};
     if (method === 'turn/diff/updated') return {kind:'editing', key:'turn-diff', detail:'', output:String(params.diff || ''), completed:true};
     if (method !== 'item/started' && method !== 'item/completed') return null;
     const completed = method === 'item/completed';
     if (type === 'agentMessage') return {kind:'responding', key:'', detail:'', output:''};
-    if (type === 'commandExecution') return {kind:'command', key, detail:String(item.command || ''), output:String(item.aggregatedOutput || ''), completed, failed:item.status === 'failed' || (item.exitCode != null && Number(item.exitCode) !== 0)};
-    if (type === 'fileChange') return {kind:'editing', key, detail:(item.changes || []).map(change => change.path).filter(Boolean).join(', '), output:(item.changes || []).map(change => [change.path, change.diff].filter(Boolean).join('\n')).join('\n\n'), completed, failed:item.status === 'failed'};
+    const interrupted = item.status === 'declined' || item.status === 'interrupted';
+    if (type === 'commandExecution') {
+      const actions = Array.isArray(item.commandActions) ? item.commandActions : [];
+      const kind = actions.length && actions.every(action => action.type === 'read' || action.type === 'listFiles') ? 'reading' :
+        actions.length && actions.every(action => action.type === 'search') ? 'searching' : 'command';
+      return {kind, key, detail:String(item.command || ''), output:String(item.aggregatedOutput || ''), completed, interrupted, failed:item.status === 'failed' || (item.exitCode != null && Number(item.exitCode) !== 0)};
+    }
+    if (type === 'fileChange') return {kind:'editing', key, detail:(item.changes || []).map(change => change.path).filter(Boolean).join(', '), output:(item.changes || []).map(change => [change.path, change.diff].filter(Boolean).join('\n')).join('\n\n'), completed, interrupted, failed:item.status === 'failed'};
     if (type === 'mcpToolCall' || type === 'dynamicToolCall') {
       const result = item.result || {}, tool = String(item.tool || item.name || '');
       const content = type === 'dynamicToolCall' ? item.contentItems || [] : result.content || [];
       const output = typeof result === 'string' ? result : content.filter(part => part.type === 'text' || part.type === 'inputText').map(part => part.text || '').join('\n');
-      const kind = /write|edit|patch|mutate/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
-      return {kind, key, detail:[item.server, tool].filter(Boolean).join(' · '), output, completed, failed:item.status === 'failed' || item.success === false || !!item.error};
+      return {kind:toolActivityKind(tool), key, detail:[item.server, tool].filter(Boolean).join(' · '), output, completed, interrupted, failed:item.status === 'failed' || item.success === false || !!item.error};
     }
     if (type === 'webSearch') return {kind:'searching', key, detail:String(item.query || ''), output:'', completed};
     return null;
