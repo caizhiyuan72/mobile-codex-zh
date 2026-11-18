@@ -7,6 +7,7 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.content.res.Resources;
 import android.graphics.Color;
 import android.net.Uri;
 import android.provider.Settings;
@@ -34,13 +35,13 @@ public final class MainActivity extends Activity implements Engine.Ui {
     static boolean isPackagedLogoPath(String path) {
         return "/codex-logo.png".equals(path);
     }
-    static WebResourceResponse packagedLogoResponse(AssetManager assets, Uri uri) {
+    static WebResourceResponse packagedLogoResponse(Resources resources, Uri uri) {
         if (!"https".equals(uri.getScheme()) || !HOST.equals(uri.getHost()) || !isPackagedLogoPath(uri.getPath())) {
             return deniedResponse();
         }
         try {
             return new WebResourceResponse("image/png", null, 200, "OK",
-                Map.of("Cache-Control", "private, max-age=86400", "X-Content-Type-Options", "nosniff"), assets.open("web/codex-logo.png"));
+                Map.of("Cache-Control", "no-store", "X-Content-Type-Options", "nosniff"), resources.openRawResource(R.drawable.mobile_codex_logo));
         } catch (Exception e) {
             return deniedResponse();
         }
@@ -148,7 +149,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     catch (Exception e) { return denied(); }
                 }
                 if (isPackagedLogoPath(path)) {
-                    return packagedLogoResponse(getAssets(), uri);
+                    return packagedLogoResponse(getResources(), uri);
                 }
                 return packagedUiResponse(getAssets(), uri);
             }
@@ -169,7 +170,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 runOnUiThread(request::deny);
             }
             @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
-                new AlertDialog.Builder(MainActivity.this).setTitle("Codex CN").setMessage(message)
+                new AlertDialog.Builder(MainActivity.this).setTitle(t("Codex CN")).setMessage(message)
                     .setPositiveButton(t("확인"), (dialog, which) -> result.confirm())
                     .setNegativeButton(t("취소"), (dialog, which) -> result.cancel())
                     .setOnCancelListener(dialog -> result.cancel()).show();
@@ -482,7 +483,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     PhoneUseService.stopControl(); PhoneUseService.closeFloatingForUpdate();
                     Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".updates", file);
                     Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).putExtra(Intent.EXTRA_RETURN_RESULT, true);
-                    install.setClipData(ClipData.newRawUri("Mobile Codex update", uri));
+                    install.setClipData(ClipData.newRawUri(t("Mobile Codex") + " update", uri));
                     startActivityForResult(install, INSTALL_UPDATE); respond(requestId, obj("ok", true), null);
                 } catch (Exception error) { updates.installEnded(); respond(requestId, null, error); }
             }));

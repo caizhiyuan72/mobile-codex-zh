@@ -84,18 +84,27 @@ public class ChatIconAssetTest {
     }
 
     @Test public void packagedLogoPassesTheWebViewRouteAndOpens() throws Exception {
-        AssetManager assets = RuntimeEnvironment.getApplication().getAssets();
-        WebResourceResponse response = MainActivity.packagedLogoResponse(assets,
+        var resources = RuntimeEnvironment.getApplication().getResources();
+        WebResourceResponse response = MainActivity.packagedLogoResponse(resources,
             Uri.parse("https://appassets.androidplatform.net/codex-logo.png"));
         assertEquals(200, response.getStatusCode());
         assertEquals("image/png", response.getMimeType());
-        assertArrayEquals("codex-logo.png", new byte[]{(byte)137,80,78,71,13,10,26,10}, response.getData().readNBytes(8));
+        try (var body = response.getData(); var expected = resources.openRawResource(R.drawable.mobile_codex_logo)) {
+            byte[] bytes = body.readAllBytes();
+            assertArrayEquals(expected.readAllBytes(), bytes);
+            assertArrayEquals("PNG header", new byte[]{(byte)137,80,78,71,13,10,26,10}, java.util.Arrays.copyOf(bytes, 8));
+            if ("fresh".equals(BuildConfig.BUILD_TYPE)) {
+                var portrait = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                assertEquals(192, portrait.getWidth());
+                assertEquals(192, portrait.getHeight());
+            }
+        }
         for (String url : new String[]{
                 "https://appassets.androidplatform.net/codex-logo.png/extra",
                 "https://appassets.androidplatform.net/logo.png",
                 "http://appassets.androidplatform.net/codex-logo.png",
                 "https://evil.example/codex-logo.png"}) {
-            WebResourceResponse denied = MainActivity.packagedLogoResponse(assets, Uri.parse(url));
+            WebResourceResponse denied = MainActivity.packagedLogoResponse(resources, Uri.parse(url));
             assertEquals(url, 403, denied.getStatusCode());
         }
     }

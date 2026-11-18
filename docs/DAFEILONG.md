@@ -1,6 +1,6 @@
 # 大肥龙独立安装版
 
-应用名为“大肥龙”，包名 `dev.mobilecodex.app.zhcnv3.fresh`，源码版本 `0.3.9-cn.10` / `81`。它使用独立签名，可与 V5 和 Codex CN API 同时安装，无需旧版私钥。铺满桌面图标的角色原图保存在 `upstream-source/icon-pack/dafeilong/white-original.png`，可用 `node upstream-source/tools/prepare_fresh_icon.mjs` 重新生成适配版。
+应用名为“大肥龙”，包名 `dev.mobilecodex.app.zhcnv3.fresh`，源码版本 `0.3.9-cn.10` / `81`。它使用独立签名，可与 V5 和 Codex CN API 同时安装，无需旧版私钥。`upstream-source/icon-pack/dafeilong/` 中的 `white-original.png` 用于桌面图标，`in-app-original.png` 用于首页、侧栏和悬浮窗头像。运行 `node upstream-source/tools/prepare_fresh_icon.mjs` 可重新生成这两套资源。通知小图标使用单色龙角轮廓。
 
 构建目标为 `testFreshUnitTest lintFresh assembleFresh`。CI 核对实际 APK 名称、包名、版本、ARM64、minSdk 29、非调试配置、ZIP 对齐及全部 Web 资源，提供 unsigned 构建附件和经过实际重建验证的下载套件。附件名为 `dafeilong-fresh-build-<commit>` 和 `dafeilong-fresh-download-kit-<commit>`。unsigned 文件不能安装。
 

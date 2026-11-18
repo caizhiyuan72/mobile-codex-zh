@@ -76,6 +76,7 @@ final class FloatingChat implements Engine.Ui {
     private ImageView faceView(int size) {
         ImageView view = new ImageView(service); view.setScaleType(ImageView.ScaleType.CENTER_CROP);
         GradientDrawable circle = new GradientDrawable(); circle.setShape(GradientDrawable.OVAL); circle.setColor(Color.WHITE);
+        if (!AppLanguage.brandName().isEmpty()) view.setImageResource(R.drawable.mobile_codex_logo);
         view.setBackground(circle); view.setClipToOutline(true); view.setLayoutParams(new LinearLayout.LayoutParams(size, size)); return view;
     }
     /** Built-in character faces, cropped from the chat stickers (1254px squares). */
@@ -97,7 +98,7 @@ final class FloatingChat implements Engine.Ui {
     private void updateFace() {
         if (bubbleFace == null) return;
         String next = faceName();
-        if (!next.equals(face)) { face = next; android.graphics.Bitmap bitmap = faceBitmap(next); bubbleFace.setImageBitmap(bitmap); headerFace.setImageBitmap(bitmap); }
+        if (AppLanguage.brandName().isEmpty() && !next.equals(face)) { face = next; android.graphics.Bitmap bitmap = faceBitmap(next); bubbleFace.setImageBitmap(bitmap); headerFace.setImageBitmap(bitmap); }
         GradientDrawable dot = new GradientDrawable(); dot.setShape(GradientDrawable.OVAL); dot.setStroke(dp(2), surface());
         dot.setColor(attention ? Color.rgb(245,158,11) : state.optBoolean("busy") ? Color.rgb(47,124,246) : Color.rgb(16,163,127));
         bubbleDot.setBackground(dot);
@@ -119,7 +120,7 @@ final class FloatingChat implements Engine.Ui {
         LinearLayout header = new LinearLayout(service); header.setGravity(Gravity.CENTER_VERTICAL);
         headerFace = faceView(dp(32)); header.addView(headerFace);
         LinearLayout titles = new LinearLayout(service); titles.setOrientation(LinearLayout.VERTICAL); titles.setPadding(dp(10), 0, dp(4), 0);
-        TextView title = new TextView(service); title.setText("Codex"); title.setTextSize(15); title.setTextColor(text()); title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); titles.addView(title);
+        TextView title = new TextView(service); title.setText(t("Codex")); title.setTextSize(15); title.setTextColor(text()); title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); titles.addView(title);
         status = new TextView(service); status.setTextColor(text2()); status.setTextSize(12); status.setMaxLines(2); status.setEllipsize(TextUtils.TruncateAt.END); titles.addView(status);
         header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
         TextView app = pill(t("앱에서 열기"), false, this::openApp); app.setMinHeight(dp(32)); app.setTextSize(12); header.addView(app, new LinearLayout.LayoutParams(-2, dp(32)));
@@ -274,7 +275,7 @@ final class FloatingChat implements Engine.Ui {
             else if(name.equals("state")) {
                 String next=scope(copy); if(!next.equals(scope)) { saveDraft(); scope=next; binding=true; input.setText(drafts.getString(draftKey(scope),"")); binding=false; }
                 state=copy; JSONArray messages=copy.optJSONArray("messages"); StringBuilder text=new StringBuilder();
-                if(messages!=null) for(int i=Math.max(0,messages.length()-4);i<messages.length();i++){JSONObject m=messages.optJSONObject(i); if(m!=null) text.append(m.optString("role").equals("user")?t("나: "):m.optString("agentName","Codex")+": ").append(m.optString("text")).append("\n\n");}
+                if(messages!=null) for(int i=Math.max(0,messages.length()-4);i<messages.length();i++){JSONObject m=messages.optJSONObject(i); if(m!=null) text.append(m.optString("role").equals("user")?t("나: "):m.optString("agentName",t("Codex"))+": ").append(m.optString("text")).append("\n\n");}
                 transcriptText=text.length()>12000?text.substring(text.length()-12000):text.toString(); display();
             } else if(name.equals("message.delta")) { transcriptText+=copy.optString("delta"); if(transcriptText.length()>12000)transcriptText=transcriptText.substring(transcriptText.length()-12000); transcript.setText(transcriptText); }
             else if(name.equals("server.request")) { attention = true; status.setText(t("앱에서 승인 / 질문을 확인해 주세요.")); updateFace(); }

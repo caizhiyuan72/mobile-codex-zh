@@ -38,7 +38,11 @@ test('subagent counts restore from the current turn, then show only the final to
  assert.equal(counter.textContent,'本轮已启动子代理：3 · 运行中：1');
  w.mobileCodexEvent('state',{...state,busy:false,turnId:'',subagentUsage:{turnId:'one',total:3}});
  assert.equal(counter.textContent,'本轮已启动子代理：3');
- w.mobileCodexEvent('state',{...state,turnId:'two'});assert.equal(counter.textContent,'本轮已启动子代理：0');
+ w.mobileCodexEvent('state',{...state,turnId:'two'});assert.equal(counter.hidden,true);assert.equal(counter.textContent,'');
+ w.mobileCodexEvent('state',{...state,turnId:'two',subagentUsage:{turnId:'two',total:0,running:0}});
+ assert.equal(counter.hidden,true);assert.equal(counter.textContent,'');
+ w.mobileCodexEvent('state',{...state,turnId:'two',subagentUsage:{turnId:'two',total:1,running:0}});
+ assert.equal(counter.hidden,false);assert.equal(counter.textContent,'本轮已启动子代理：1 · 运行中：0');
  w.mobileCodexEvent('state',{...state,threadId:'other',busy:false,subagentUsage:null});assert.equal(counter.hidden,true);
 });
 

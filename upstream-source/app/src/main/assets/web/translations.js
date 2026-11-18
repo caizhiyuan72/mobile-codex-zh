@@ -292,6 +292,8 @@ window.MobileCodexEnglish = {
   "“{name}”을 프로젝트 목록에서 제거할까요?\n\n폴더와 파일은 삭제되지 않습니다. 이 프로젝트의 기존 대화는 “연결 해제된 프로젝트”에 남아 폴더를 다시 연결할 수 있습니다.": "Remove “{name}” from the project list?\n\nThe folder and files will not be deleted. Existing conversations remain under “Disconnected projects”, where you can reconnect the folder.",
   "대화 관리": "Manage conversation",
   "이름 변경": "Rename",
+  "대화 삭제": "Delete chat",
+  "“{title}” 대화를 삭제할까요?": "Delete “{title}”?",
   "대화 이름 변경": "Rename conversation",
   "새 제목을 입력하세요.": "Enter a new title.",
   "대화 이름을 변경했습니다.": "Conversation renamed.",
@@ -1270,5 +1272,12 @@ window.MobileCodexEnglish = {
   "실패한 도구 작업": "Failed tool calls",
   "종료 결과를 받지 못한 도구 작업": "Tool calls with no completion result",
   "일부 도구 기록 생략": "Some tool records were omitted",
-  "종료 코드": "Exit code"
+  "종료 코드": "Exit code",
+  "이 대화에는 진행 중인 Codex 작업이 없습니다.": "There is no active Codex task in this chat.",
+  "Codex 작업이 실패했습니다.": "The Codex task failed.",
+  "Codex가 작업을 마쳤습니다.": "Codex finished the task.",
+  "Codex 작업의 승인이 필요합니다.": "A Codex task needs approval.",
+  "Codex 작업 알림": "Codex task notifications",
+  "Codex 작업 폴더를 열 수 없습니다.": "Unable to open the Codex workspace.",
+  "Codex 작업 폴더 안의 경로만 사용할 수 있습니다.": "Only paths inside the Codex workspace are allowed."
 };

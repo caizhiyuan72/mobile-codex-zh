@@ -209,6 +209,7 @@
     });
   }
   function sidebar(open) {
+    if (!open) closeSessionCard();
     const wasOpen = document.body.classList.contains('sidebar-open');
     document.body.classList.toggle('sidebar-open', open); $('scrim').hidden = !open;
     if (matchMedia('(max-width:760px)').matches) {
@@ -332,7 +333,7 @@
   const projectWorkBusy = () => !!state.busy || (state.sessions || []).some(session => !!session.busy);
   const generalFolderAvailable = (workspace = state.workspace) => !workspace?.selected && (workspace?.hasLocalFolder === true || workspace?.available === true);
   const workspaceFilesAvailable = (workspace = state.workspace) => workspace?.selected ? workspace.available !== false : generalFolderAvailable(workspace);
-  const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('작업 폴더 선택')) : (workspace.name || 'Codex');
+  const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('작업 폴더 선택')) : (workspace.name || L.brand('Codex'));
   function updateSend() {
     renderConversationFailure();
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
@@ -1274,7 +1275,7 @@
     return chosen ? characterState.packs.find(p => p.id === chosen && p.valid !== false) || null : null;
   }
   function agentSpeaker(m) {
-    const name = m.agent ? (m.agentName || m.agent) : 'Codex', label = node('div', null, 'agent-speaker');
+    const name = m.agent ? (m.agentName || m.agent) : L.brand('Codex'), label = node('div', null, 'agent-speaker');
     const avatar = node('span', name.slice(0, 1), 'agent-avatar'); avatar.dataset.agent = m.agent || 'codex'; avatar.setAttribute('aria-hidden', 'true');
     label.append(avatar, node('strong', name)); return label;
   }
@@ -1693,25 +1694,98 @@
     $('project-actions').replaceChildren(...actions);
     show('project-actions-dialog');
   }
-  function sessionAction(session) {
-    $('session-actions-title').textContent = session.title || t('대화 관리');
-    const action = (label, fn, cls) => button(label, async () => { close('session-actions-dialog'); await fn(); }, cls);
-    $('session-actions').replaceChildren(
-      action(t('이름 변경'), async () => {
-        const title = await input(t('대화 이름 변경'), t('새 제목을 입력하세요.'), session.title || '');
-        if (title && title.trim()) {
-          await call('chat.rename', {id: session.id, title: title.trim()});
+  let sessionCard = null;
+  const sessionEdits = new Set();
+  function closeSessionCard(restoreFocus = false) {
+    if (!sessionCard) return false;
+    const {card, menu, scroller, originalScrollTop, cardScrollTop} = sessionCard;
+    const restoreScroll = Math.abs(scroller.scrollTop - cardScrollTop) < 1;
+    sessionCard = null;
+    card.remove();
+    menu.setAttribute('aria-expanded', 'false');
+    menu.removeAttribute('aria-controls');
+    if (restoreFocus && menu.isConnected) menu.focus({preventScroll:true});
+    if (restoreScroll) scroller.scrollTop = originalScrollTop;
+    return true;
+  }
+  function openSessionCard(session, row, menu) {
+    const same = sessionCard?.id === session.id;
+    closeSessionCard();
+    if (same || sessionEdits.has(session.id)) return;
+    const card = node('div', null, 'session-card');
+    card.id = 'session-card';
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', session.title || t('대화 관리'));
+    const scroller = $('sidebar').querySelector('.sidebar-scroll');
+    sessionCard = {id:session.id, card, menu, mode:'actions', scroller, originalScrollTop:scroller.scrollTop};
+    row.append(card);
+    menu.setAttribute('aria-expanded', 'true');
+    menu.setAttribute('aria-controls', card.id);
+    drawSessionCard();
+  }
+  function drawSessionCard() {
+    const selected = sessionCard;
+    const session = (state.sessions || []).find(item => item.id === selected.id);
+    if (!session) { closeSessionCard(); return; }
+    const {card, mode, id} = selected;
+    const actions = node('div', null, 'session-card-actions');
+    const cancel = button(t('취소'), () => closeSessionCard(true));
+    const change = next => {
+      const scrollTop = selected.scroller.scrollTop;
+      if (Math.abs(scrollTop - selected.cardScrollTop) >= 1) selected.originalScrollTop = scrollTop;
+      selected.mode = next;
+      drawSessionCard();
+    };
+    const reveal = () => {
+      card.scrollIntoView?.({block:'nearest'});
+      selected.cardScrollTop = selected.scroller.scrollTop;
+    };
+    async function submit(title) {
+      if (selected !== sessionCard || sessionEdits.has(id)) return;
+      const current = (state.sessions || []).find(item => item.id === id);
+      if (!current || (mode === 'delete' && sessionWorkBusy(current))) return;
+      sessionEdits.add(id);
+      for (const control of card.querySelectorAll('button,input')) control.disabled = true;
+      try {
+        if (mode === 'delete') {
+          const result = await call('chat.delete', {id});
+          toast(result.deletionPending ? t('삭제 요청을 저장했습니다. Codex에 연결되면 원본 기록도 삭제합니다.') : t('대화를 삭제했습니다.'));
+        } else {
+          await call('chat.rename', {id, title});
           toast(t('대화 이름을 변경했습니다.'));
         }
-      }),
-      action(t('삭제'), async () => {
-        if (confirm('"' + (session.title || t('대화')) + t('" 대화를 삭제할까요?'))) {
-          const result = await call('chat.delete', {id: session.id});
-          toast(result.deletionPending ? t('삭제 요청을 저장했습니다. Codex에 연결되면 원본 기록도 삭제합니다.') : t('대화를 삭제했습니다.'));
+        if (selected === sessionCard) closeSessionCard(true);
+      } catch (error) {
+        if (selected === sessionCard) {
+          for (const control of card.querySelectorAll('button,input')) control.disabled = false;
+          const remove = card.querySelector('[data-session-delete]');
+          if (remove) remove.disabled = sessionWorkBusy((state.sessions || []).find(item => item.id === id) || current);
         }
-      }, 'secondary-button danger')
-    );
-    show('session-actions-dialog');
+        toast(error.message);
+      } finally { sessionEdits.delete(id); }
+    }
+    card.replaceChildren();
+    if (mode === 'rename') {
+      const field = node('input');
+      field.setAttribute('aria-label', t('대화 이름 변경'));
+      field.value = session.title || '';
+      const save = () => { const title = field.value.trim(); if (title) return submit(title); field.focus(); };
+      field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); save(); } });
+      actions.append(cancel, button(t('저장'), save));
+      card.append(field, actions);
+      field.focus({preventScroll:true}); field.select(); reveal();
+      return;
+    }
+    const confirm = mode === 'delete';
+    if (confirm) card.append(node('p', t('“{title}” 대화를 삭제할까요?', {title:session.title || t('대화')})));
+    const first = confirm ? cancel : button(t('이름 변경'), () => change('rename'));
+    const remove = node('button', t('대화 삭제'), 'secondary-button danger');
+    remove.type = 'button';
+    remove.addEventListener('click', confirm ? () => submit() : () => change('delete'));
+    remove.dataset.sessionDelete = '';
+    remove.disabled = sessionWorkBusy(session);
+    actions.append(first, remove); card.append(actions);
+    first.focus({preventScroll:true}); reveal();
   }
   function sessionRow(session) {
     const active = session.id === state.threadId;
@@ -1721,7 +1795,9 @@
     if (session.approvalPending) b.append(node('span', '!', 'session-approval-indicator'));
     else if (session.busy) b.append(node('span', '', 'session-progress-indicator'));
     b.title = session.workspace || t('일반 대화');
-    const menu = button('', () => sessionAction(session), 'icon-button session-more');
+    row.dataset.sessionId = session.id;
+    const menu = button('', () => openSessionCard(session, row, menu), 'icon-button session-more');
+    menu.setAttribute('aria-expanded', 'false');
     menu.setAttribute('aria-label', (session.title || t('대화')) + t(' 관리'));
     menu.append(icon('more'));
     row.append(b, menu);
@@ -1800,7 +1876,7 @@
     const usage = state.subagentUsage, counter = $('subagent-usage');
     const liveUsage = anyBusy && usage && usage.turnId === state.turnId;
     const totalAgents = liveUsage || !anyBusy ? usage?.total || 0 : 0;
-    counter.hidden = !anyBusy && !totalAgents;
+    counter.hidden = totalAgents === 0;
     const countLabel = counter.hidden ? '' : t('이번 작업에서 시작한 하위 에이전트: {count}', {count:totalAgents}) +
       (liveUsage && totalAgents && Number.isInteger(usage.running) ? ' · ' + t('실행 중: {count}', {count:usage.running}) : '');
     if (counter.textContent !== countLabel) counter.textContent = countLabel;
@@ -1827,14 +1903,35 @@
     if (selectedChange) $('change-restore').disabled = restoringChange || !selectedChange.data.canRestore || !!state.busy || state.permissions === 'read-only';
     const navigationKey = JSON.stringify([state.projects, state.sessions, state.workspace, state.threadId, !!state.busy, L.language()]);
     if (navigationKey !== navigationSignature) {
+      const scroller = $('sidebar').querySelector('.sidebar-scroll');
+      let scrollTop = scroller.scrollTop;
+      const focused = sessionCard?.card.contains(document.activeElement) ? document.activeElement : null;
       navigationSignature = navigationKey; renderProjects();
-    if ($('project-actions-dialog')?.open) $('project-actions').querySelectorAll('button').forEach(button => { button.disabled = button.projectBlocked(); });
-    if ($('project-link-dialog')?.open) $('project-link-choices').querySelectorAll('button').forEach(button => { button.disabled = projectWorkBusy() || projectLinkPending; });
-    $('sessions').replaceChildren();
-    const projectWorkspaceKeys = new Set((state.projects || []).flatMap(projectKeys));
-    const sessionWorkspaceKey = session => session.workspaceKey || (typeof session.workspace === 'string' ? session.workspace : '');
-    for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)))) $('sessions').append(sessionRow(session));
-    if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
+      if ($('project-actions-dialog')?.open) $('project-actions').querySelectorAll('button').forEach(button => { button.disabled = button.projectBlocked(); });
+      if ($('project-link-dialog')?.open) $('project-link-choices').querySelectorAll('button').forEach(button => { button.disabled = projectWorkBusy() || projectLinkPending; });
+      $('sessions').replaceChildren();
+      const projectWorkspaceKeys = new Set((state.projects || []).flatMap(projectKeys));
+      const sessionWorkspaceKey = session => session.workspaceKey || (typeof session.workspace === 'string' ? session.workspace : '');
+      for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)))) $('sessions').append(sessionRow(session));
+      if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
+      if (sessionCard) {
+        const current = (state.sessions || []).find(session => session.id === sessionCard.id);
+        const row = current && [...$('sidebar').querySelectorAll('.session-row')].find(row => row.dataset.sessionId === current.id);
+        if (row) {
+          const {card} = sessionCard;
+          const menu = row.querySelector('.session-more');
+          sessionCard.menu = menu;
+          menu.setAttribute('aria-expanded', 'true'); menu.setAttribute('aria-controls', card.id);
+          const remove = card.querySelector('[data-session-delete]');
+          if (remove) remove.disabled = sessionEdits.has(current.id) || sessionWorkBusy(current);
+          row.append(card);
+          focused?.focus({preventScroll:true});
+        } else {
+          if (Math.abs(scrollTop - sessionCard.cardScrollTop) < 1) scrollTop = sessionCard.originalScrollTop;
+          closeSessionCard();
+        }
+      }
+      scroller.scrollTop = scrollTop;
     }
     const key = JSON.stringify([state.apiActive || '', state.models]);
     if (key !== modelKey) {
@@ -2354,6 +2451,7 @@
     if (dictationState.phase !== 'idle') { call('voice.cancel').catch(error => toast(error.message)); return true; }
     const id = dialogs.at(-1);
     if (id) { dismiss(id); return true; }
+    if (closeSessionCard(true)) return true;
     if (document.body.classList.contains('sidebar-open')) { sidebar(false); return true; }
     if (!$('file-panel').hidden) { setFilePanelOpen(false); return true; }
     saveDraft(); return false;
@@ -2391,6 +2489,9 @@
   });
   wireSheetGestures();
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => dismiss(b.dataset.close)));
+  document.addEventListener('click', event => {
+    if (sessionCard && !event.target.closest('.session-card, .session-more')) closeSessionCard();
+  }, true);
   document.querySelectorAll('.sidebar-toggle').forEach(b => b.addEventListener('click', () => { if (matchMedia('(max-width:760px)').matches) sidebar(!document.body.classList.contains('sidebar-open')); else document.body.classList.toggle('sidebar-collapsed'); }));
   document.querySelectorAll('[data-prompt]').forEach(b => b.addEventListener('click', () => { $('prompt').value = b.dataset.prompt; saveDraft(); sizeComposer(); $('prompt').focus(); }));
   for (const [buttonId, listId] of [['toggle-projects','projects'], ['toggle-history','sessions']]) {
@@ -2604,7 +2705,7 @@
   let subagentBusy=false;
   function subagentPrerequisite() {
     if (!configuredApi()) return '请先配置并选择 API 服务商。';
-    if (!state.ready) return '请先启动 Codex 运行时。';
+    if (!state.ready) return L.brand('请先启动 Codex 运行时。');
     if (state.busy) return '当前任务结束后可更改配置。';
     const model = state.models.find(model => (model.model || model.id) === $('model').value);
     if (!model) return '请先选择可用模型。';
@@ -2627,7 +2728,7 @@
   }
   async function cnLoadSubagents() {
     const el=$('subagents-status');
-    el.textContent='正在读取 Codex 本地配置…';
+    el.textContent=L.brand('正在读取 Codex 本地配置…');
     try{
       const cfg=await call('config.read');
       const prefs=cnReadAgentPrefs(cfg?.content||'');
@@ -2654,20 +2755,20 @@
       content=cnSetTomlSection(content,'agents',{enabled:String(enabled),max_concurrent_threads_per_session:null,max_threads:String(limit)});
       if(content===read.content){status.textContent='设置没有变化；仍需实际发送任务验证。';return;}
       await call('config.save',{content});
-      status.textContent='配置已保存，正在重新连接 Codex…';
+      status.textContent=L.brand('配置已保存，正在重新连接 Codex…');
       await call('runtime.start');
       const check=await call('config.read');
       const actual=cnReadAgentPrefs(check?.content||'');
       if(actual.active!==enabled||actual.limit!==limit)throw new Error('保存后复查结果不一致');
       status.textContent=enabled?'已启用多智能体配置（最多 '+limit+' 个）。请使用测试任务验证 spawn_agent 是否可调用。':'已停用多智能体配置。';
-    }catch(error){status.textContent='未确认启用成功：'+errorText(error)+ '。可在「Codex 设置编辑」中检查。';}
+    }catch(error){status.textContent='未确认启用成功：'+errorText(error)+ L.brand('。可在「Codex 设置编辑」中检查。');}
     finally{subagentBusy=false;syncSubagentControls();}
   }
   on('subagents-refresh',cnLoadSubagents);
   on('subagents-save',cnSaveSubagents);
   on('subagents-test',()=>{
     const reason = subagentPrerequisite(); if (reason) { $('subagents-status').textContent = reason; return; }
-    const task='请使用 Codex 原生 spawn_agent 派遣两个子智能体：一个检查当前项目的代码结构，一个只读检查潜在问题。等待它们完成并汇总结果。请报告是否真正调用了 spawn_agent；如果不可用，明确说明，不要假装创建了子智能体。';
+    const task=L.brand('请使用 Codex 原生 spawn_agent 派遣两个子智能体：一个检查当前项目的代码结构，一个只读检查潜在问题。等待它们完成并汇总结果。请报告是否真正调用了 spawn_agent；如果不可用，明确说明，不要假装创建了子智能体。');
     $('prompt').value=task;saveDraft();sizeComposer();close('settings-dialog');$('prompt').focus();
     toast('测试提示词已填入，确认后手动点击发送。');
   });

@@ -39,11 +39,12 @@ final class AppLanguage {
         String choice = choice(context);
         return choice.equals("system") ? context.getResources().getConfiguration().getLocales().get(0) : Locale.forLanguageTag(choice);
     }
+    static String brandName() { return "fresh".equals(BuildConfig.BUILD_TYPE) ? "大肥龙" : ""; }
     static void configure(Context context) {
         String language = locale(context).getLanguage();
-        Texts.configure(language.equals("ko"), language.equals("zh") ? chinese : english);
+        Texts.configure(language.equals("ko"), language.equals("zh") ? chinese : english, brandName());
     }
-    static JSONObject snapshot(Context context) { return obj("choice", choice(context), "systemLanguage", context.getResources().getConfiguration().getLocales().get(0).toLanguageTag()); }
+    static JSONObject snapshot(Context context) { return obj("brandName", brandName(), "choice", choice(context), "systemLanguage", context.getResources().getConfiguration().getLocales().get(0).toLanguageTag()); }
     @android.annotation.SuppressLint("ApplySharedPref")
     static void set(Context context, String value) throws java.io.IOException {
         if (!Set.of("system", "zh-CN", "en", "ko").contains(value)) throw new IllegalArgumentException("Unsupported language");

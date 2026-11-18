@@ -29,7 +29,7 @@ function setup(overrides = {}, options = {}) {
       w.mobileCodexEvent('response',{id:m.id,result});
     } catch(error) { w.mobileCodexEvent('response',{id:m.id,error:error.message}); }
   });}};
-  w.Native.locale = () => JSON.stringify({choice:options.language || 'ko',systemLanguage:options.systemLanguage || 'ko'});
+  w.Native.locale = () => JSON.stringify({brandName:options.brandName,choice:options.language || 'ko',systemLanguage:options.systemLanguage || 'ko'});
   w.Native.textSize = () => JSON.stringify({percent:options.textSize ?? 100});
   w.eval(fs.readFileSync(root+'translations.js','utf8')); w.eval(fs.readFileSync(root+'translations-zh.js','utf8')); w.eval(fs.readFileSync(root+'locale.js','utf8'));
   w.eval(fs.readFileSync(root+'ui-core.js','utf8')); w.eval(fs.readFileSync(root+'reasoning-policy.js','utf8')); w.eval(fs.readFileSync(root+'app.js','utf8'));
@@ -922,30 +922,64 @@ test('markdown tables render as scrollable table elements',async()=>{
  assert.deepEqual(cells,['1열','값1','2열','값2']);
 });
 
-test('session actions allow renaming and deleting sessions via protocol calls',async()=>{
+test('mobile session cards keep history open for renaming, cancelling and consecutive deletions by ID',async()=>{
+ const sessions=[{id:'one',title:'Same'},{id:'two',title:'Same'},{id:'three',title:'Other'}];
+ const projects=[{key:'other',name:'Other project'}];
  const {w,calls,snapshot}=setup({
-  'chat.rename':({args})=>({...snapshot,sessions:[{id:'s1',title:args.title}]}),
-  'chat.delete':()=>({...snapshot,sessions:[]})
- });
- await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'s1',title:'처음 제목'}]});
- const row=d.querySelector('.session-row');assert.ok(row);
- const more=row.querySelector('.session-more');assert.ok(more);
- more.click();await tick();
- assert.ok(d.getElementById('session-actions-dialog').open);
- const renameBtn=[...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='이름 변경');
- assert.ok(renameBtn);
- renameBtn.click();await tick();
- assert.ok(d.getElementById('input-dialog').open);
- d.getElementById('input-value').value='새로운 대화 제목';
- d.getElementById('input-confirm').click();await tick();
- assert.deepEqual(calls.find(c=>c.action==='chat.rename').args,{id:'s1',title:'새로운 대화 제목'});
+  'chat.rename':({args})=>{sessions.find(s=>s.id===args.id).title=args.title;update();return {};},
+  'chat.delete':({args})=>{sessions.splice(sessions.findIndex(s=>s.id===args.id),1);update();return {};}
+ },{mobile:true,confirm:()=>{throw Error('Unexpected native dialog');}});
+ const update=()=>w.mobileCodexEvent('state',{...snapshot,sessions:[...sessions],projects});
+ await tick();update();const d=w.document;
+ const more=id=>d.querySelector(`[data-session-id="${id}"] .session-more`);
+ const card=()=>d.querySelector('.session-card');
+ const action=async(label)=>{[...card().querySelectorAll('button')].find(b=>b.textContent===label).click();await tick();};
+ d.querySelector('main .sidebar-toggle').click();
+ d.querySelector('.tree-toggle').click();await tick();
+ const scroller=d.querySelector('.sidebar-scroll');scroller.scrollTop=120;
+ more('two').click();await tick();
+ assert.equal(card().parentElement.dataset.sessionId,'two');
+ await action('대화 삭제');assert.equal(calls.some(c=>c.action==='chat.delete'),false);
+ assert.equal(w.mobileCodexBack(),true);assert.equal(card(),null);
+ assert.equal(d.body.classList.contains('sidebar-open'),true);assert.equal(d.activeElement,more('two'));
+ more('one').click();await tick();await action('이름 변경');
+ const field=card().querySelector('input');field.value='Changed';
+ sessions[2].busy=true;update();assert.equal(card().querySelector('input'),field);assert.equal(field.value,'Changed');
+ await action('저장');assert.deepEqual(calls.find(c=>c.action==='chat.rename').args,{id:'one',title:'Changed'});
+ for(const id of ['two','one']) {
+  more(id).click();await tick();await action('대화 삭제');await action('대화 삭제');
+  assert.equal(d.body.classList.contains('sidebar-open'),true);assert.equal(scroller.scrollTop,120);
+  assert.equal(d.querySelector('.tree-toggle').getAttribute('aria-expanded'),'false');assert.equal(card(),null);
+ }
+ assert.deepEqual(calls.filter(c=>c.action==='chat.delete').map(c=>c.args.id),['two','one']);
+ assert.equal(calls.some(c=>c.action==='chat.resume'),false);
+});
 
- more.click();await tick();
- const deleteBtn=[...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제');
- assert.ok(deleteBtn);
- deleteBtn.click();await tick();
- assert.deepEqual(calls.find(c=>c.action==='chat.delete').args,{id:'s1'});
+test('cancelling a refreshed delete card returns to the last intentional scroll position',async()=>{
+ const {w,snapshot}=setup({}, {mobile:true});await tick();
+ const d=w.document, scroller=d.querySelector('.sidebar-scroll');
+ const update=title=>w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'target',title}]});
+ update('Target');d.querySelector('main .sidebar-toggle').click();
+ w.HTMLElement.prototype.scrollIntoView=function(){if(this.matches('.session-card'))scroller.scrollTop+=45;};
+ scroller.scrollTop=100;d.querySelector('.session-more').click();await tick();
+ assert.equal(scroller.scrollTop,145);
+ scroller.scrollTop=170;update('Renamed');assert.equal(scroller.scrollTop,170);
+ d.querySelector('[data-session-delete]').click();await tick();assert.equal(scroller.scrollTop,215);
+ assert.equal(w.mobileCodexBack(),true);assert.equal(scroller.scrollTop,170);
+});
+
+test('delete card follows busy changes, keeps failed deletion retryable, and guards duplicate submissions',async()=>{
+ let rejectDelete;const {w,snapshot,calls}=setup({'chat.delete':()=>new Promise((resolve,reject)=>{rejectDelete=reject;})},{mobile:true});
+ await tick();const d=w.document;
+ const update=busy=>w.mobileCodexEvent('state',{...snapshot,threadId:'target',busy,sessions:[{id:'target',title:'Target'}]});
+ update(false);d.querySelector('main .sidebar-toggle').click();d.querySelector('.session-more').click();await tick();
+ const remove=()=>d.querySelector('[data-session-delete]');update(true);assert.equal(remove().disabled,true);
+ update(false);remove().click();await tick();update(true);assert.equal(remove().disabled,true);
+ update(false);remove().click();remove().click();await tick();assert.equal(remove().disabled,true);
+ rejectDelete(Error('Deletion failed'));await tick();assert.equal(remove().disabled,false);
+ assert.equal(d.querySelector('#toast').textContent,'Deletion failed');assert.ok(d.body.classList.contains('sidebar-open'));
+ assert.equal(calls.filter(c=>c.action==='chat.delete').length,1);
+ d.querySelector('.session-card button').click();await tick();assert.equal(remove(),null);
 });
 
 test('table escaped pipes preserve header and body cells including inline code',async()=>{
@@ -989,7 +1023,8 @@ test('offline deletion is reported as pending instead of claiming the original i
  const {w,snapshot}=setup({'chat.delete':()=>({deletionPending:true})});await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'s',title:'Offline'}]});
  d.querySelector('.session-more').click();await tick();
- [...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제').click();await tick();
+ d.querySelector('[data-session-delete]').click();await tick();
+ d.querySelector('[data-session-delete]').click();await tick();
  assert.match(d.getElementById('toast').textContent,/삭제 요청을 저장/);
  assert.match(d.getElementById('toast').textContent,/연결되면 원본 기록도 삭제/);
  w.mobileCodexEvent('state',{...snapshot,sessions:[],pendingDeletionCount:1});
@@ -1298,6 +1333,41 @@ test('system locale uses Chinese fallback and catalog copies match',async()=>{
  const {w}=setup({}, {language:'system',systemLanguage:'ja-JP'});await tick();
  assert.equal(w.document.documentElement.lang,'zh-CN');assert.match(w.document.getElementById('prompt').placeholder,/Codex/);
  assert.deepEqual(JSON.parse(JSON.stringify(w.MobileCodexEnglish)), JSON.parse(fs.readFileSync('app/src/main/assets/translations-en.json','utf8')));
+});
+test('welcome logo is visible before startup and fresh portraits retain their colors in dark mode',()=>{
+ const dom=new JSDOM(fs.readFileSync(root+'index.html','utf8'),{url:'https://appassets.androidplatform.net',runScripts:'outside-only'});
+ opened.push(dom);
+ const {window}=dom, doc=window.document;
+ for(const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+  const style=doc.createElement('style');style.textContent=fs.readFileSync(root+link.getAttribute('href'),'utf8');doc.head.append(style);
+ }
+ doc.documentElement.dataset.theme='dark';
+ assert.notEqual(window.getComputedStyle(doc.querySelector('.welcome-mark')).display,'none');
+ const images=[doc.querySelector('.welcome-mark img'), doc.querySelector('.brand img')];
+ for(const image of images)assert.equal(window.getComputedStyle(image).filter,'brightness(0) invert(1)');
+ window.Native={locale:()=>JSON.stringify({brandName:'大肥龙'})};
+ window.eval(fs.readFileSync(root+'locale.js','utf8'));
+ for(const image of images)assert.ok(['','none'].includes(window.getComputedStyle(image).filter));
+});
+test('fresh identity reaches Chinese, English and Korean UI without changing user text or runtime IDs',async()=>{
+ const {w,snapshot}=setup({}, {language:'zh-CN',brandName:'大肥龙'});await tick();
+ const d=w.document, prompt=d.getElementById('prompt'), draft='Ask Codex about gpt-codex and .codex/AGENTS.md';
+ assert.equal(d.title,'大肥龙');assert.equal(prompt.placeholder,'询问大肥龙');
+ for(const el of d.querySelectorAll('.brand img,.welcome-mark img'))assert.equal(el.alt,'大肥龙');
+ assert.equal(d.getElementById('sidebar-brand-name').textContent,'大肥龙');
+ assert.match(d.getElementById('subagents-title').textContent,/大肥龙/);
+ const message={id:'identity',role:'assistant',text:draft};
+ w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,name:'Codex'},messages:[message]});
+ prompt.value=draft;prompt.dispatchEvent(new w.Event('input'));
+ for(const language of ['en','ko','zh-CN']) {
+  const select=d.getElementById('language');select.value=language;select.dispatchEvent(new w.Event('change'));await tick();await tick();
+  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,name:'Codex'},messages:[message]});
+  assert.match(prompt.placeholder,/大肥龙/);assert.match(prompt.getAttribute('aria-label'),/大肥龙/);
+  assert.match(d.getElementById('welcome-description').textContent,/大肥龙/);
+  assert.equal(d.getElementById('project-label').textContent,'Codex');assert.equal(prompt.value,draft);
+  assert.equal(d.querySelector('[data-id="identity"] p').textContent,draft);
+  assert.equal(d.getElementById('update-repository').value,'caizhiyuan72/mobile-codex-zh');
+ }
 });
 test('inline dictation displays partial text, supports done and cancel, and cannot auto-send',async()=>{
  const {w,calls}=setup({}, {language:'en'});await tick();const d=w.document;
@@ -1629,7 +1699,8 @@ test('deleting unrelated projects and conversations remains available during Cod
   d.querySelector('[data-project-menu-key="a"]').click();await tick();assert.equal(removal().disabled,true);
   d.getElementById('project-actions-dialog').close();
   [...d.querySelectorAll('.session-more')].find(b=>b.getAttribute('aria-label')==='B chat 관리').click();await tick();
-  [...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제').click();await tick();
+  d.querySelector('[data-session-delete]').click();await tick();
+ d.querySelector('[data-session-delete]').click();await tick();
   assert.deepEqual(calls.find(c=>c.action==='chat.delete').args,{id:'b-chat'});
  }
 });

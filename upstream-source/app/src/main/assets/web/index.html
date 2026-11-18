@@ -49,7 +49,7 @@
   </defs></svg>
   <div id="scrim" class="scrim" hidden></div>
   <aside id="sidebar" class="sidebar">
-    <div class="sidebar-top"><div class="sidebar-identity"><div class="brand"><img src="codex-logo.png" alt="Codex CN"><span id="sidebar-brand-name" class="sr-only">Codex</span><span class="mobile-tag" aria-hidden="true">mobile</span></div></div><button class="icon-button sidebar-toggle" aria-label="사이드바 접기"><svg><use href="#i-menu"/></svg></button></div>
+    <div class="sidebar-top"><div class="sidebar-identity"><div class="brand"><img src="codex-logo.png?v=2" alt="Codex CN"><span id="sidebar-brand-name" class="sr-only">Codex</span><span class="mobile-tag" aria-hidden="true">mobile</span></div></div><button class="icon-button sidebar-toggle" aria-label="사이드바 접기"><svg><use href="#i-menu"/></svg></button></div>
     <div class="sidebar-scroll">
     <button id="new-chat" class="nav-button"><svg><use href="#i-edit"/></svg>새 대화<span class="keyhint">+</span></button>
     <div class="section-title"><span>프로젝트</span><span class="section-actions"><button id="add-project" class="icon-button" aria-label="프로젝트 추가"><svg><use href="#i-plus"/></svg></button><button id="toggle-projects" class="icon-button section-toggle" type="button" aria-label="收起项目" aria-controls="projects" aria-expanded="true"><svg><use href="#i-down"/></svg></button></span></div>
@@ -65,7 +65,7 @@
       <section class="conversation">
         <div id="chat-scroll" class="chat-scroll">
           <div id="welcome" class="welcome">
-            <div id="welcome-character" class="welcome-character"></div><div class="welcome-mark"><img src="codex-logo.png" alt="Codex CN"></div>
+            <div id="welcome-character" class="welcome-character" hidden></div><div class="welcome-mark"><img src="codex-logo.png?v=2" alt="Codex CN"></div>
             <h1 id="welcome-title">어떤 작업을 할까요?</h1>
             <p id="welcome-description">아이디어부터 코드, 기기의 파일까지. Codex와 함께 작업하세요.</p>
             <div class="onboarding" id="onboarding" hidden>
@@ -149,7 +149,6 @@
     <button class="primary-button sheet-done" data-close="options-dialog">완료</button>
   </dialog>
   <dialog id="file-actions-dialog" class="sheet-dialog" aria-labelledby="file-actions-title"><button type="button" class="sheet-grip" data-close="file-actions-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="file-actions-title">파일 관리</h2><button class="icon-button" data-close="file-actions-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="file-actions"></div></dialog>
-  <dialog id="session-actions-dialog" class="sheet-dialog" aria-labelledby="session-actions-title"><button type="button" class="sheet-grip" data-close="session-actions-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="session-actions-title">대화 관리</h2><button class="icon-button" data-close="session-actions-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="session-actions"></div></dialog>
   <dialog id="project-actions-dialog" class="sheet-dialog" aria-labelledby="project-actions-title"><button type="button" class="sheet-grip" data-close="project-actions-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="project-actions-title">프로젝트 관리</h2><button class="icon-button" data-close="project-actions-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="project-actions" class="project-actions"></div></dialog>
   <dialog id="project-link-dialog" class="sheet-dialog" aria-labelledby="project-link-title"><button type="button" class="sheet-grip" data-close="project-link-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="project-link-title">프로젝트 연결</h2><button class="icon-button" data-close="project-link-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><p id="project-link-description" class="muted"></p><div id="project-link-choices" class="project-actions"></div></dialog>
   <dialog id="tool-menu-dialog" class="sheet-dialog" aria-labelledby="tool-menu-title"><button type="button" class="sheet-grip" data-close="tool-menu-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="tool-menu-title">도구</h2><button class="icon-button" data-close="tool-menu-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="tool-menu" class="project-actions"><button id="show-terminal" class="nav-button"><svg><use href="#i-code"/></svg>터미널</button><button id="show-tools-panel" class="nav-button"><svg><use href="#i-settings"/></svg>플러그인 · 스킬 · MCP</button><button id="show-changes" class="nav-button"><svg><use href="#i-edit"/></svg>변경 사항</button><button id="show-recovery" class="nav-button"><svg><use href="#i-clock"/></svg>복구 사본</button></div></dialog>

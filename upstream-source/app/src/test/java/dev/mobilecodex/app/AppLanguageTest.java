@@ -12,6 +12,15 @@ import static org.junit.Assert.*;
 @Config(sdk=29, application=Application.class, qualifiers="en")
 public class AppLanguageTest {
     @After public void cleanup(){Texts.configure(true,java.util.Map.of());}
+    @Test public void installedBrandAppliesToBundledStatusAndNotificationLabelsOnly() {
+        var labels = java.util.Map.of("Codex 작업 알림", "Codex 任务通知");
+        Texts.configure(false, labels, "大肥龙");
+        assertEquals("大肥龙任务通知", Texts.t("Codex 작업 알림"));
+        assertEquals("大肥龙", Texts.t("Codex CN"));
+        assertEquals("Note about Codex in .codex/config.toml", Texts.t("Note about Codex in .codex/config.toml"));
+        Texts.configure(false, labels);
+        assertEquals("Codex 任务通知", Texts.t("Codex 작업 알림"));
+    }
     @Test public void deviceDefaultAndExplicitChoiceAreAppliedAndPersisted()throws Exception{
         var context=RuntimeEnvironment.getApplication();AppLanguage.initialize(context);
         assertEquals("zh-CN",AppLanguage.choice(context));assertEquals("设置",Texts.t("설정"));

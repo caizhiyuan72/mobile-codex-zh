@@ -26,7 +26,7 @@ public final class DocumentStore {
     private static final int BACKUP_LIMIT = 32 * 1024 * 1024;
     private final Context context;
     private Uri tree;
-    private String label = "Codex";
+    private String label = t("Codex");
     private ProjectRegistry projects;
     private final File backups, generalRoot;
     private static final String[] COLUMNS = {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
@@ -37,7 +37,7 @@ public final class DocumentStore {
         backups = new File(context.getFilesDir(), "recovery");
         backups.mkdirs();
         // Preserve the long-standing physical workspace path so an upgrade never
-        // hides or moves existing files. "Codex" is its user-facing name.
+        // hides or moves existing files. Only its display name follows the app brand.
         generalRoot = new File(context.getFilesDir(), "workspace");
         generalRoot.mkdirs();
         String registry = context.getSharedPreferences("projects", 0).getString("registry", "");
@@ -93,7 +93,7 @@ public final class DocumentStore {
         staged.select(key);
         commitProjects(staged);
         ProjectRegistry.Project project = projects.selected();
-        tree = null; label = project == null ? "Codex" : project.name;
+        tree = null; label = project == null ? t("Codex") : project.name;
         try { activate(project); } catch (Exception ignored) { tree = null; }
         return workspace();
     }
@@ -143,7 +143,7 @@ public final class DocumentStore {
         boolean current = key != null && key.equals(projects.selectedKey());
         ProjectRegistry.Project removed = staged.remove(key);
         commitProjects(staged);
-        if (current) { tree = null; label = "Codex"; }
+        if (current) { tree = null; label = t("Codex"); }
         return obj("key", removed.key, "name", removed.name);
     }
     /** Persists a display-name change without renaming the physical folder or changing its key. */
@@ -185,7 +185,7 @@ public final class DocumentStore {
     }
     public synchronized JSONObject workspace() {
         ProjectRegistry.Project project = projects.selected();
-        if (project == null) return obj("selected", false, "name", "Codex", "key", "", "projectId", "",
+        if (project == null) return obj("selected", false, "name", t("Codex"), "key", "", "projectId", "",
             "hasLocalFolder", true, "available", generalAvailable(), "defaultWorkspace", true);
         return obj("selected", true, "name", projects.displayName(project.key),
             "key", project == null ? "" : project.key, "projectId", project == null ? "" : projects.projectId(project.key),

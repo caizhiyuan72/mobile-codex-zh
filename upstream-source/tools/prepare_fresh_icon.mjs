@@ -29,3 +29,10 @@ for (let y = 0; y < size; y++) {
 const output = resolve(root, 'app/src/fresh/res/drawable-nodpi/dafeilong_artwork.png');
 await mkdir(dirname(output), {recursive:true});
 await writeFile(output, PNG.sync.write(canvas, {colorType:2}));
+
+// No launcher overscan for the in-app avatar: the entire square is visible.
+const avatar = PNG.sync.read(await readFile(resolve(root, 'icon-pack/dafeilong/in-app-original.png')));
+const portrait = await resize(new ImageData(new Uint8ClampedArray(avatar.data), avatar.width, avatar.height), {
+  width:192, height:192, method:'lanczos3', premultiply:true, linearRGB:true
+});
+await writeFile(resolve(dirname(output), 'mobile_codex_logo.png'), PNG.sync.write(portrait, {colorType:2}));
