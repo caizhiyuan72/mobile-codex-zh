@@ -97,6 +97,9 @@ public final class Engine {
     private final android.os.PowerManager.WakeLock taskCpu;
     private final Handler powerHandler = new Handler(Looper.getMainLooper());
     private final Runnable renewTaskLease = this::renewTaskCpu;
+    private final TurnWifiLease turnWifi;
+    private TurnMonitor turnMonitor;
+    private long nextWatchdogRestart;
     private boolean taskLeaseActive;
     private boolean startingTurn;
     private final ApiProviders apiProviders;
@@ -129,6 +132,7 @@ public final class Engine {
         runtimeRecovery = context.getSharedPreferences("runtime-recovery", 0);
         taskCpu = context.getSystemService(android.os.PowerManager.class).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:turn");
         taskCpu.setReferenceCounted(false);
+        turnWifi = new TurnWifiLease(context);
         this.taskSummariesEnabled = taskSummariesEnabled;
         permissionMode = context.getSharedPreferences("settings", 0).getString("permissions", "workspace-write");
         approvalMode = context.getSharedPreferences("settings", 0).getString("approvalMode", "auto-review");
@@ -304,11 +308,44 @@ public final class Engine {
         boolean needed = startingTurn || !runningTurns.isEmpty();
         if (taskLeaseActive == needed) return;
         taskLeaseActive = needed;
+        turnWifi.update(needed);
         if (needed) {
+            turnMonitor = new TurnMonitor();
+            turnMonitor.schedule();
             renewTaskCpu();
         } else {
+            powerHandler.removeCallbacks(turnMonitor);
+            turnMonitor = null;
             powerHandler.removeCallbacks(renewTaskLease);
             if (taskCpu.isHeld()) taskCpu.release();
+        }
+    }
+    private final class TurnMonitor implements Runnable {
+        private AppServerWatchdog watchdog;
+        void schedule() { powerHandler.postDelayed(this, AppServerWatchdog.INTERVAL_MS); }
+        @Override public void run() {
+            if (!io.isShutdown()) io.execute(this::check);
+        }
+        private void check() {
+            // A queued check from before stop, engine replacement or the last turn's completion.
+            if (turnMonitor != this) return;
+            turnWifi.update(true);
+            if (ready && rpc != null && process != null && !runningTurns.isEmpty()) {
+                if (!process.isAlive() || rpc.isClosed()) {
+                    codexDisconnected(process, rpc, null, new RuntimeFailure.Tail());
+                } else if (!requests.isEmpty() || (pendingApproval != null && !pendingApproval.decision.isDone())
+                        || android.os.SystemClock.elapsedRealtime() < nextWatchdogRestart) {
+                    watchdog = null;
+                } else {
+                    if (watchdog == null || watchdog.connection != rpc)
+                        watchdog = new AppServerWatchdog(rpc);
+                    if (watchdog.unresponsive()) {
+                        nextWatchdogRestart = android.os.SystemClock.elapsedRealtime() + AppServerWatchdog.COOLDOWN_MS;
+                        codexDisconnected(process, rpc, new IOException("本地引擎连续三次未响应健康检查。"), new RuntimeFailure.Tail());
+                    }
+                }
+            }
+            if (turnMonitor == this) schedule();
         }
     }
     private synchronized void renewTaskCpu() {
@@ -901,6 +938,7 @@ public final class Engine {
             "processAlive", launched.isAlive(), "exitCode", exitCode, "stderrCategory", stderrTail.category()),
             hasRunningTurns() ? "chat.send" : "runtime.start");
         if (launched.isAlive()) launched.destroyForcibly();
+        if (connection != null && !connection.isClosed()) connection.close();
         PhoneUseService.stopControl();
         process = null; rpc = null;
         requests.forEach((key, value) -> event("server.resolved", obj("key", key)));

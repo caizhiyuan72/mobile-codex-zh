@@ -13,10 +13,11 @@
 
 - `cd upstream-source && node --test --test-concurrency=2 tests/*.test.cjs`：275 项通过。
 - `python3 tools/measure_runtime_stream.py`：手机自带 Codex 0.162.1 在本机回环假服务上交替测 6 组。最后一个 SSE 事件发出到客户端报告完成，中位数 `codex exec` 8.6 ms、`app-server` 10.4 ms。未测在线模型吞吐、APK 端到端延迟或锁屏速度。
-- 手机没有 Java。上一版 `f2290dd` 已通过 GitHub Actions 的 Android 单测、lint 和 APK 构建。本轮仍需用新版 APK 做真机锁屏对照。
+- 手机没有 Java。上一版 `e038c45` 已通过 GitHub Actions 的 Android 单测、lint 和 APK 构建。手机上的独立 Codex 进程在模拟服务商静默 19 秒期间回答了 3 次本地健康查询，原任务随后完成，服务商只收到 1 个请求。新版 APK 的 1 分钟和 10 分钟真机锁屏对照仍待完成。
 
 ## 代码入口
 
 - `Engine.java` 和 `EngineService.java` 在任务进行期间每 5 分钟续订 15 分钟的 CPU 唤醒锁，最后一轮结束后释放。系统重建前台服务或引擎意外退出时，后台只对仍有任务且服务商配置匹配的运行时尝试恢复一次。原任务的结束状态未知时保留提示，避免重复执行工具。
+- `AppServerWatchdog.java` 每 15 秒检查本地引擎。连续 3 次只读探测超时才恢复，任意协议消息重置计数，等待审批期间暂停判定。`TurnWifiLease.java` 在默认网络为 Wi-Fi 且有任务时申请保持连接，Android 14 起使用系统网络请求，任务结束时释放。
 - `TurnAgents.java`、`app.js`：每轮子代理去重、运行状态、聊天计数。`TaskSummary.java` 是之前未提交的任务汇总实现。
 - `EngineRuntimeRecoveryTest.java`、`EngineTurnCompletionTest.java`、`tests/api-only-ui.test.cjs`、`tests/stream-render.test.cjs`：相关回归。两组本地测量脚本在 `upstream-source/tools/measure_*`。
