@@ -72,6 +72,7 @@ jobs:
     timeout-minutes: 45
     env:
       API_SIGNING_CONFIGURED: ${{ secrets.CODEX_CN_API_SIGNING_JSON != '' }}
+      FRESH_SIGNING_CONFIGURED: ${{ secrets.DAFEILONG_SIGNING_JSON != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -264,6 +265,19 @@ jobs:
           path: fresh-build-artifacts/
           if-no-files-found: error
           retention-days: 14
+      - name: Sign 大肥龙 with its permanent dedicated key
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.FRESH_SIGNING_CONFIGURED == 'true'
+        env:
+          DAFEILONG_SIGNING_JSON: ${{ secrets.DAFEILONG_SIGNING_JSON }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/sign_api_apk.py --edition fresh --bundle ../fresh-build-artifacts --build-tools "$ANDROID_HOME/build-tools/35.0.0" --output ../fresh-signed-artifacts
+      - uses: actions/upload-artifact@v4
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.FRESH_SIGNING_CONFIGURED == 'true'
+        with:
+          name: dafeilong-signed-${{ github.sha }}
+          path: fresh-signed-artifacts/
+          if-no-files-found: error
+          retention-days: 30
       - name: Sign API update with its existing installation key
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.API_SIGNING_CONFIGURED == 'true'
         env:

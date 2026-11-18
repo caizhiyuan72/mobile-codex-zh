@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign a verified API parallel bundle with its existing installation key."""
+"""Sign a verified Android bundle with the selected edition's pinned key."""
 import argparse
 import base64
 import binascii
@@ -14,6 +14,7 @@ import tempfile
 import zipfile
 
 SECRET_NAME = 'CODEX_CN_API_SIGNING_JSON'
+VARIANT = 'parallel'
 POLICY = json.loads(Path(__file__).with_name('parallel-release-policy.json').read_text())
 EXPECTED_CERT_SHA256 = POLICY['signingCertificateSha256'][0]
 MAX_CREDENTIAL_BYTES = 64 * 1024
@@ -22,6 +23,17 @@ MAX_APK_BYTES = 512 * 1024 * 1024
 
 class SigningError(RuntimeError):
     pass
+
+
+def configure_edition(edition):
+    global SECRET_NAME, VARIANT, POLICY, EXPECTED_CERT_SHA256
+    if edition not in ('api', 'fresh'):
+        raise SigningError('Unknown signing edition.')
+    VARIANT = 'fresh' if edition == 'fresh' else 'parallel'
+    SECRET_NAME = 'DAFEILONG_SIGNING_JSON' if edition == 'fresh' else 'CODEX_CN_API_SIGNING_JSON'
+    policy_file = 'fresh-release-policy.json' if edition == 'fresh' else 'parallel-release-policy.json'
+    POLICY = json.loads(Path(__file__).with_name(policy_file).read_text())
+    EXPECTED_CERT_SHA256 = POLICY['signingCertificateSha256'][0]
 
 
 def strict_object(pairs):
@@ -40,7 +52,7 @@ def file_hash(path):
 
 def read_credentials(raw):
     if not raw:
-        raise SigningError('Configure CODEX_CN_API_SIGNING_JSON with the existing API signing key.')
+        raise SigningError('Configure ' + SECRET_NAME + ' with this edition\'s signing key.')
     try:
         if len(raw) > 2 * ((MAX_CREDENTIAL_BYTES + 2) // 3 * 4) + 1024:
             raise ValueError()
@@ -97,7 +109,7 @@ def validate_bundle(bundle):
             raise ValueError()
         info = json.loads(manifest.read_text(), object_pairs_hook=strict_object)
         if (not isinstance(info, dict) or info.get('package') != POLICY['applicationId']
-                or info.get('variant') != 'parallel' or info.get('label') != POLICY['applicationLabel']
+                or info.get('variant') != VARIANT or info.get('label') != POLICY['applicationLabel']
                 or info.get('signed') is not False
                 or type(info.get('versionCode')) is not int or info['versionCode'] < 1
                 or not isinstance(info.get('versionName'), str)
@@ -109,7 +121,7 @@ def validate_bundle(bundle):
         for field in ('apkSha256', 'sourceSha256'):
             if not isinstance(info.get(field), str) or not re.fullmatch(r'[0-9a-f]{64}', info[field]):
                 raise ValueError()
-        if info.get('apk') != f"mobile-codex-{info['versionName']}-parallel-arm64-unsigned.apk":
+        if info.get('apk') != f"mobile-codex-{info['versionName']}-{VARIANT}-arm64-unsigned.apk":
             raise ValueError()
         if info.get('source') != f"mobile-codex-{info['versionName']}-source.tar.gz":
             raise ValueError()
@@ -178,7 +190,8 @@ def sign_bundle(bundle, build_tools, output, raw):
     if not output.parent.is_dir():
         raise SigningError('Signed artifact parent folder is missing.')
     env = dict(os.environ)
-    env.pop(SECRET_NAME, None)
+    for secret_name in ('CODEX_CN_API_SIGNING_JSON', 'DAFEILONG_SIGNING_JSON'):
+        env.pop(secret_name, None)
     verify_apk_identity(apk, info, build_tools, env)
     payload = payload_hashes(apk)
     if file_hash(apk) != info['apkSha256']:
@@ -189,7 +202,7 @@ def sign_bundle(bundle, build_tools, output, raw):
         private_file(cert_path, certificate)
         with tempfile.TemporaryDirectory(prefix='.api-signed-', dir=output.parent) as stage_directory:
             stage = Path(stage_directory)
-            signed_name = f"mobile-codex-{info['versionName']}-parallel-arm64.apk"
+            signed_name = f"mobile-codex-{info['versionName']}-{VARIANT}-arm64.apk"
             signed_apk = stage / signed_name
             signer = str(build_tools / 'apksigner')
             checked_run([signer, 'sign', '--key', str(key_path), '--cert', str(cert_path),
@@ -218,10 +231,12 @@ def sign_bundle(bundle, build_tools, output, raw):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--bundle', type=Path, required=True, help='Unsigned parallel build artifact folder')
+    parser.add_argument('--edition', choices=('api', 'fresh'), default='api')
+    parser.add_argument('--bundle', type=Path, required=True, help='Unsigned build artifact folder')
     parser.add_argument('--build-tools', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True, help='New signed artifact folder')
     args = parser.parse_args()
+    configure_edition(args.edition)
     try:
         sign_bundle(args.bundle, args.build_tools, args.output, os.environ.get(SECRET_NAME, ''))
     except SigningError as error:

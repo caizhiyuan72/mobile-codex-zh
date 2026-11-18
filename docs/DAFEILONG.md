@@ -2,6 +2,10 @@
 
 应用名为“大肥龙”，包名 `dev.mobilecodex.app.zhcnv3.fresh`，源码版本 `0.3.9-cn.9` / `80`。它是用户要求的新 APP，使用单独的新密钥签名，可与 V5 和 Codex CN API 同时安装，无需旧版私钥。
 
-构建目标为 `testFreshUnitTest lintFresh assembleFresh`。CI 核对实际 APK 名称、包名、版本、ARM64、minSdk 29、非调试配置、ZIP 对齐及全部 Web 资源，提供 unsigned 构建附件和经过实际重建验证的下载套件。附件名为 `dafeilong-fresh-build-<commit>` 和 `dafeilong-fresh-download-kit-<commit>`。安装前需完成新签名并核对签名与内容；unsigned 文件不能安装。
+构建目标为 `testFreshUnitTest lintFresh assembleFresh`。CI 核对实际 APK 名称、包名、版本、ARM64、minSdk 29、非调试配置、ZIP 对齐及全部 Web 资源，提供 unsigned 构建附件和经过实际重建验证的下载套件。附件名为 `dafeilong-fresh-build-<commit>` 和 `dafeilong-fresh-download-kit-<commit>`。unsigned 文件不能安装。
+
+永久签名材料保存在仓库 Actions Secret `DAFEILONG_SIGNING_JSON`，结构与 API 版签名工具一致，但采用独立的 RSA 3072 位新密钥。公开证书固定在 `fresh-release-policy.json`，SHA-256 为 `ecfc26efdc5cb36beb7a8773f73c105c8fe72fc03e634399f46f7d462d567b94`。受信任的 push 或手动构建自动签名，输出可安装附件 `dafeilong-signed-<commit>`；PR 不读取密钥，不签名。构建只读取已有 Secret，不会每次生成新密钥。
+
+后续制作“大肥龙”更新直接运行同一工作流，无需再寻找旧 V5 私钥。递增应用版本后，使用相同包名和已保存的新密钥升级。不要删除或覆盖该 Secret。GitHub Secret 不能下载原值，额外的加密恢复备份保存在生成密钥的应用私有存储，密码与备份分开保存；不要清除唯一备份。
 
 首次启动需要重新设置服务商和 API 密钥、授权项目文件夹。应用数据按包名隔离，旧对话仍在旧版中。后续“大肥龙”更新应沿用其新签名密钥；旧 API 版的固定证书只适用于 `.next`，不适用于此独立应用。

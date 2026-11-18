@@ -27,6 +27,33 @@ class ApiSigningTests(unittest.TestCase):
     def certificate_pin(self):
         return patch.object(signing, 'EXPECTED_CERT_SHA256', hashlib.sha256(self.certificate).hexdigest())
 
+    def test_fresh_signing_requires_its_own_package_bundle_and_certificate(self):
+        api_pin = signing.EXPECTED_CERT_SHA256
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, info = self.make_bundle(Path(directory))
+            try:
+                signing.configure_edition('fresh')
+                self.assertEqual(signing.SECRET_NAME, 'DAFEILONG_SIGNING_JSON')
+                self.assertNotEqual(signing.EXPECTED_CERT_SHA256, api_pin)
+                with self.assertRaises(signing.SigningError):
+                    signing.verify_certificate('Signer #1 certificate SHA-256 digest: ' + api_pin)
+                with self.assertRaises(signing.SigningError):
+                    signing.validate_bundle(bundle)
+
+                apk = bundle / info['apk']
+                fresh_apk = apk.with_name(apk.name.replace('-parallel-', '-fresh-'))
+                apk.rename(fresh_apk)
+                info.update(package='dev.mobilecodex.app.zhcnv3.fresh', label='大肥龙',
+                            variant='fresh', apk=fresh_apk.name)
+                (bundle / 'build-info.json').write_text(json.dumps(info))
+                self.assertEqual(signing.validate_bundle(bundle)[1], fresh_apk.resolve())
+
+                signing.configure_edition('api')
+                with self.assertRaises(signing.SigningError):
+                    signing.validate_bundle(bundle)
+            finally:
+                signing.configure_edition('api')
+
     def test_credentials_require_strict_schema_limited_base64_and_existing_certificate(self):
         with self.certificate_pin():
             self.assertEqual(signing.read_credentials(self.secret()), (self.private_key, self.certificate))

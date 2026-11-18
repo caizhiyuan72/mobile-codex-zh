@@ -10,6 +10,8 @@ import subprocess
 import zipfile
 from apk_download_kit import make_kit, reconstruct
 
+POLICY = json.loads(Path(__file__).with_name('fresh-release-policy.json').read_text())
+
 
 def digest(path):
     with path.open('rb') as stream:
@@ -30,15 +32,16 @@ def main():
     tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
     badging = subprocess.check_output([str(tools / 'aapt'), 'dump', 'badging', str(apk)], text=True)
     identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
-    package = 'dev.mobilecodex.app.zhcnv3.fresh'
+    package = POLICY['applicationId']
+    label = POLICY['applicationLabel']
     if not identity or (identity.group(1), int(identity.group(2)), identity.group(3)) != (package, original['versionCode'], original['versionName']):
         raise ValueError('Unexpected fresh APK identity')
-    if "application-label:'大肥龙'" not in badging:
+    if f"application-label:'{label}'" not in badging.splitlines():
         raise ValueError('Fresh app label must be 大肥龙')
     abis = re.search(r'^native-code: (.+)$', badging, re.M)
-    if not abis or re.findall(r"'([^']+)'", abis.group(1)) != ['arm64-v8a']:
+    if not abis or re.findall(r"'([^']+)'", abis.group(1)) != [POLICY['abi']]:
         raise ValueError('Fresh APK must contain only ARM64 libraries')
-    if re.search(r'^application-debuggable', badging, re.M) or "sdkVersion:'29'" not in badging.splitlines():
+    if re.search(r'^application-debuggable', badging, re.M) or f"sdkVersion:'{POLICY['minimumSdk']}'" not in badging.splitlines():
         raise ValueError('Fresh APK must be non-debuggable with minSdk 29')
     subprocess.run([str(tools / 'zipalign'), '-c', '-P', '16', '4', str(apk)], check=True)
     with zipfile.ZipFile(apk) as archive:
@@ -47,7 +50,7 @@ def main():
                 raise ValueError('Fresh APK web asset differs from source: ' + asset.name)
     for filename in [original['source'], original['signer']]:
         shutil.copyfile(Path('../parallel-build-artifacts') / filename, out / filename)
-    info = {**original, 'variant':'fresh', 'package':package, 'label':'大肥龙',
+    info = {**original, 'variant':'fresh', 'package':package, 'label':label,
             'apk':name, 'apkBytes':apk.stat().st_size, 'apkSha256':digest(apk), 'signed':False}
     (out / 'build-info.json').write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')
     (out / 'SHA256SUMS').write_text(''.join(info[field] + '  ' + info[name] + '\n'
