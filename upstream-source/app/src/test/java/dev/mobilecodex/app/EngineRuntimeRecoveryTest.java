@@ -86,9 +86,9 @@ public class EngineRuntimeRecoveryTest {
         field("process", child); field("rpc", rpc);
         // Exercise production replacement, not a reset helper. Stop at the absent native
         // binary in the test environment; transport cleanup happens before that check.
-        Method start = Engine.class.getDeclaredMethod("start", boolean.class, boolean.class);
+        Method start = Engine.class.getDeclaredMethod("start", boolean.class);
         start.setAccessible(true);
-        try { start.invoke(engine, false, false); fail("No native runtime should launch in this test"); }
+        try { start.invoke(engine, false); fail("No native runtime should launch in this test"); }
         catch (InvocationTargetException expected) { assertTrue(expected.getCause() instanceof IOException); }
         assertEquals("", field("serverThreadId"));
         assertEquals("local-saved", field("threadId"));
@@ -143,8 +143,8 @@ public class EngineRuntimeRecoveryTest {
         field("process", child); field("rpc", rpc);
         @SuppressWarnings("unchecked") Map<String,String> turns = (Map<String,String>)field("runningTurns");
         turns.put("local-saved", "still-running");
-        Method start = Engine.class.getDeclaredMethod("start", boolean.class, boolean.class); start.setAccessible(true);
-        start.invoke(engine, false, false);
+        Method start = Engine.class.getDeclaredMethod("start", boolean.class); start.setAccessible(true);
+        start.invoke(engine, false);
         assertEquals("remote-saved", field("serverThreadId"));
         assertEquals("still-running", turns.get("local-saved"));
         assertSame(child, field("process")); assertFalse(rpc.isClosed());
