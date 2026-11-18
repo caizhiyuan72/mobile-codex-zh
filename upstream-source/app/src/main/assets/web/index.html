@@ -75,6 +75,12 @@
             <div class="suggestions" id="suggestions" hidden><button data-prompt="이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘."><svg><use href="#i-folder"/></svg>폴더 살펴보기</button><button data-prompt="이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘."><svg><use href="#i-edit"/></svg>프로젝트 이해하기</button><button data-prompt="이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘."><svg><use href="#i-search"/></svg>변경 사항 검토</button></div>
           </div>
           <div id="messages" class="messages" aria-live="polite"></div>
+          <section id="conversation-failure" class="conversation-failure" role="status" aria-live="polite" hidden>
+            <strong>本次请求未完成</strong>
+            <p id="conversation-failure-message"></p>
+            <div class="conversation-failure-actions"><button id="conversation-failure-copy" class="secondary-button" type="button">复制说明</button><button id="conversation-failure-new" class="secondary-button" type="button">打开新对话</button></div>
+            <small>新对话保留当前项目选择，任务进度需自行补充。</small>
+          </section>
 
           <div id="activity" class="activity" hidden><span id="activity-character" class="activity-character"></span><span class="pulse-dot"></span><span id="activity-text">작업 중</span></div>
         </div>

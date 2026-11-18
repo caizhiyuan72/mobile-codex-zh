@@ -918,3 +918,9 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 .composer-actions > .send-button[hidden] { display: none !important; }
 #stop.send-button { color: #fff; background: #d73a49; }
 #stop.send-button svg { fill: currentColor; stroke: none; }
+
+.conversation-failure { max-width:var(--content-width); margin:var(--s-3) auto; padding:var(--s-4); border:1px solid var(--border-strong); border-radius:var(--r-md); background:var(--danger-fill); color:var(--text); overflow-wrap:anywhere; }
+.conversation-failure[hidden] { display:none !important; }
+.conversation-failure p { margin:var(--s-2) 0 var(--s-3); }
+.conversation-failure small { display:block; margin-top:var(--s-3); color:var(--text-2); }
+.conversation-failure-actions { display:flex; flex-wrap:wrap; gap:var(--s-2); }

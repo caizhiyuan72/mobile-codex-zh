@@ -51,6 +51,11 @@ android {
             applicationIdSuffix '.next'
             matchingFallbacks = ['release']
         }
+        fresh {
+            initWith release
+            applicationIdSuffix '.fresh'
+            matchingFallbacks = ['release']
+        }
     }
     testOptions { unitTests { returnDefaultValues = true; includeAndroidResources = true } }
     lint { abortOnError true }

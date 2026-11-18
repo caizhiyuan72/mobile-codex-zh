@@ -25,7 +25,7 @@ bash gradlew testParallelUnitTest lintParallel assembleParallel
 
 运行前须按工程说明准备 ARM64 runtime/devtools。根 CI 在原包名的 Debug/Release 检查通过后，执行并行版单元测试、lint 和打包；附上对应提交的源码、身份、哈希，以及由 Google Android SDK build-tools 35.0.0 转换的 Android 可执行 apksigner。
 
-CI 产物仍未签名。下载后使用单独、长期保存的本地签名密钥签名，并通过 apksigner 验证，再把最终 APK 交付用户。私钥不得进入源码、构建附件或公开仓库。后续并行版更新须保持 `.next` 包名和该签名。
+CI 始终保留 unsigned 产物。按[固定密钥自动签名说明](API_SIGNING.md)配置 GitHub Secret 后，受信任的 push 或手动构建还会输出独立的 signed 附件；PR 和未配置 Secret 的构建不会签名。也可继续使用现有本地密钥签名并通过 apksigner 验证。私钥不得进入源码、构建附件或公开仓库。后续并行版更新须保持 `.next` 包名和该签名。
 
 若已有同运行时的源码构建 APK，可使用 CI 的 `parallel-download-kit`，通过 `tools/apk_download_kit.py reconstruct` 复用其中逐段校验过的压缩运行时文件。重建结果必须与完整并行 APK 的 SHA-256 完全相同；该步骤只减少传输量，不修改 APK。相应源码可用固定提交的 `git archive --format=tar.gz` 取得，并核对 `build-info.json` 中的源码哈希；完整源码同时保留在完整构建附件中。
 

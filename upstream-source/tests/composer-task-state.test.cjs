@@ -133,3 +133,51 @@ test('a rejected steering request keeps the draft and the active Stop button', a
   assert.equal(prompt.value, 'Do not lose this instruction');
   assertStopReachable(w);
 });
+
+test('failed conversations show a persistent safe explanation and open a new chat in the same project', async () => {
+  const {w, calls, snapshot} = setup({conversationFailure:{code:'encrypted_transport_changed',message:'private upstream body'}});
+  await tick();
+  const panel = w.document.getElementById('conversation-failure');
+  assert.equal(panel.hidden, false);
+  assert.match(panel.textContent, /HTTP 409/);
+  assert.equal(panel.textContent.includes('private upstream body'), false);
+  w.mobileCodexEvent('state', snapshot);
+  assert.equal(panel.hidden, false);
+  w.document.getElementById('conversation-failure-new').click(); await tick();
+  const created = calls.filter(call => call.action === 'chat.new');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].args.workspaceKey, 'project');
+  assert.equal(calls.some(call => call.action === 'chat.send' || call.action === 'sessions.delete'), false);
+
+});
+
+test('failure panel follows the selected conversation and stays hidden during retry or after recovery', async () => {
+  const {w, snapshot} = setup({conversationFailure:{code:'upstream_conflict'}}); await tick();
+  const panel = w.document.getElementById('conversation-failure');
+  assert.equal(panel.hidden, false);
+  w.mobileCodexEvent('state', {...snapshot,busy:true});
+  assert.equal(panel.hidden, true);
+  w.mobileCodexEvent('state', {...snapshot,threadId:'other',conversationFailure:null});
+  assert.equal(panel.hidden, true);
+  w.mobileCodexEvent('state', snapshot);
+  assert.equal(panel.hidden, false);
+  w.mobileCodexEvent('state', {...snapshot,conversationFailure:null});
+  assert.equal(panel.hidden, true);
+  assert.equal(w.document.getElementById('conversation-failure-message').textContent, '');
+});
+
+test('a pending resend prevents the failure action from switching chats and a rejected resend keeps the draft', async () => {
+  let rejectSend;
+  const pending = new Promise((_, reject) => { rejectSend = reject; });
+  const {w} = setup({conversationFailure:{code:'upstream_connection'}}, {'chat.send':() => pending}); await tick();
+  const prompt = w.document.getElementById('prompt');
+  const newChat = w.document.getElementById('conversation-failure-new');
+  prompt.value = 'Continue the existing task'; prompt.dispatchEvent(new w.Event('input'));
+  w.document.getElementById('composer').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await tick();
+  assert.equal(newChat.disabled, true);
+  rejectSend(new Error('Request failed')); await tick();
+  assert.equal(newChat.disabled, false);
+  assert.equal(prompt.value, 'Continue the existing task');
+  assert.equal(w.document.getElementById('conversation-failure').hidden, false);
+});

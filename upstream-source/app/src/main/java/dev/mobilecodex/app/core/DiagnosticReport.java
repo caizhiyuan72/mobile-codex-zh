@@ -31,9 +31,12 @@ public final class DiagnosticReport {
     }
     private static long time(JSONObject source, String key) { return Math.max(-1, Math.min(600000, source.optLong(key, -1))) / 100 * 100; }
     public static JSONObject build(JSONObject source, String version, int api, String abi, String manufacturer, String deviceClass, String ramClass, String pageSize) {
+        // Keep the deployed relay's vocabulary for local conflict categories.
+        String errorCode = source.optString("errorCode");
+        if ("encrypted_transport_changed".equals(errorCode) || "upstream_conflict".equals(errorCode)) errorCode = "upstream_connection";
         JSONObject value = obj("schema", 2, "reportId", UUID.randomUUID().toString(),
             "appVersion", version != null && version.matches("(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})") ? version : "unknown", "runtime", "codex_01621",
-            "errorCode", choice(source.optString("errorCode"), "operation_failed", "initialize_timeout", "start_failure", "transport_closed",
+            "errorCode", choice(errorCode, "operation_failed", "initialize_timeout", "start_failure", "transport_closed",
                 "request_timeout", "permission_denied", "invalid_response", "storage_failure", "io_failure", "login_failed",
                 "rpc_invalid_request", "rpc_method_missing", "rpc_internal", "rpc_rejected", "turn_failed", "context_limit", "usage_limit",
                 "upstream_connection", "upstream_auth", "upstream_bad_request", "upstream_internal", "sandbox_failure"),

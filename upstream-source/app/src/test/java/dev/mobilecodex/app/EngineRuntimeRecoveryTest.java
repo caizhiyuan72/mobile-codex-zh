@@ -112,6 +112,7 @@ public class EngineRuntimeRecoveryTest {
         assertFalse(child.alive);
     }
     @Test public void nextSendResumesSameThreadBeforeTurnAndKeepsHistory() throws Exception {
+        session.put("conversationFailure", obj("code", "upstream_conflict", "turnId", "previous"));
         replaceUnavailableTransport(new Child(false), connection());
         List<String> calls = new ArrayList<>();
         engine.setTestTransport((method, params) -> {
@@ -135,6 +136,7 @@ public class EngineRuntimeRecoveryTest {
         assertEquals(2, session.getJSONArray("messages").length());
         assertEquals("keep history", session.getJSONArray("messages").getJSONObject(0).getString("text"));
         assertEquals(1, ((JSONArray)field("sessions")).length());
+        assertFalse(session.has("conversationFailure"));
     }
     @Test public void healthyTransportDoesNotDiscardLoadedThreadOrRunningTurn() throws Exception {
         Child child = new Child(true); RpcClient rpc = connection();

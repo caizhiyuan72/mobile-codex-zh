@@ -197,6 +197,7 @@ public final class Engine {
             "github", githubAuth.status().optJSONObject("github"),
             "models", models, "workspace", documents.workspace(), "projects", documents.projects(), "sessions", summaries,
             "threadId", threadId, "turnId", turnId,
+            "conversationFailure", active == null ? JSONObject.NULL : uiJsonCopy(active.optJSONObject("conversationFailure")),
             "turnDiff", active == null ? "" : active.optString("turnDiff"), "messages", snapshotMessages(),
             "messageHistory", messageHistory(active == null ? null : active.optJSONArray("messages"), snapshotMessageStart()),
             "fastMode", active != null && active.optBoolean("fastMode"),
@@ -1133,6 +1134,7 @@ public final class Engine {
             }
             if (!candidateInstructions.isEmpty()) serverInstructions = candidateInstructions;
             if (fastMode != null) active.put("fastMode", fastMode);
+            active.remove("conversationFailure");
             JSONObject message = userMessage(text, attachmentIds, skills, mentions);
             active.getJSONArray("messages").put(message);
             if (turn != null) {
@@ -1321,7 +1323,10 @@ public final class Engine {
                 target.put("turnDiff", p.optString("diff")); persist(); publish();
             } else if (method.equals("turn/started")) {
                 JSONObject turn = p.optJSONObject("turn"); String started = turn == null ? "" : turn.optString("id");
-                if (!eventThreadId.isBlank() && !started.isBlank()) runningTurns.put(eventThreadId, started);
+                if (!eventThreadId.isBlank() && !started.isBlank()) {
+                    runningTurns.put(eventThreadId, started);
+                    if (target != null) target.remove("conversationFailure");
+                }
                 syncCurrentTurn(); publish();
             } else if (method.equals("turn/completed")) {
                 JSONObject completedTurn = p.optJSONObject("turn");
@@ -1339,11 +1344,15 @@ public final class Engine {
                 boolean interrupted = "interrupted".equals(completionStatus);
                 JSONObject error = turn == null ? null : turn.optJSONObject("error");
                 boolean failed = !interrupted && ("failed".equals(completionStatus) || error != null);
+                if (failed) {
+                    String failureCode = ConversationFailure.code(error);
+                    target.put("conversationFailure", obj("code", failureCode, "turnId", completedId));
+                } else if (!interrupted) target.remove("conversationFailure");
                 if (currentThread && (interrupted || failed)) status = interrupted ? t("작업 중지됨") : t("작업 실패");
                 if (target != null && !eventThreadId.isBlank() && !completedId.isBlank() && completedId.equals(runningId)
                         && "completed".equals(completionStatus) && error == null)
                     event("diagnostics.cleared", obj("operation", "chat", "_scope", eventThreadId));
-                if (failed) error("chat.send", obj("threadId", eventThreadId, "message", error == null ? t("작업 실패") : error.optString("message", t("작업 실패"))), new DiagnosticFailure.RpcFailure("", error));
+                if (failed) error("chat.send", obj("threadId", eventThreadId, "message", ConversationFailure.message(ConversationFailure.code(error))), new DiagnosticFailure.RpcFailure("", error));
                 taskNotification(interrupted ? "interrupted" : failed ? "failed" : "completed",
                     interrupted ? t("작업 중지됨") : failed ? t("작업 실패") : t("답변 완료"),
                     interrupted ? t("Codex 작업이 중지되었습니다.") : failed ? t("Codex 작업이 실패했습니다.") : t("Codex가 작업을 마쳤습니다."), eventThreadId, "");
@@ -1363,7 +1372,10 @@ public final class Engine {
                 persist(); publish();
             } else if (method.equals("error")) {
                 JSONObject error = p.optJSONObject("error");
-                error("chat.send", obj("threadId", eventThreadId, "message", error == null ? t("Codex 요청 오류") : error.optString("message", t("Codex 요청 오류"))), new DiagnosticFailure.RpcFailure("", error));
+                // Retried stream failures are progress, not a completed failed task.
+                // Never forward arbitrary HTTP bodies (which can contain credentials).
+                if (p.optBoolean("willRetry")) return;
+                error("chat.send", obj("threadId", eventThreadId, "message", ConversationFailure.message(ConversationFailure.code(error))), new DiagnosticFailure.RpcFailure("", error));
             } else if (target != null && currentThread) {
                 event("agent.event", obj("threadId", eventThreadId, "method", method, "params", p));
             }

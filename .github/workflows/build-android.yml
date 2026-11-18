@@ -2,9 +2,9 @@ name: Build API edition from source
 
 on:
   push:
-    paths: ['upstream-source/**', '.github/workflows/build-android.yml']
+    paths: ['upstream-source/**', 'signing-setup/**', '.github/workflows/build-android.yml']
   pull_request:
-    paths: ['upstream-source/**', '.github/workflows/build-android.yml']
+    paths: ['upstream-source/**', 'signing-setup/**', '.github/workflows/build-android.yml']
   workflow_dispatch:
 
 permissions:
@@ -40,6 +40,18 @@ jobs:
       - run: python3 -m pip install -r tools/requirements-devtools.txt
       - name: Test packaging and tooling logic
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Verify one-time signing setup without real keys
+        run: |
+          npm ci --prefix ../signing-setup --ignore-scripts --no-audit --no-fund
+          python3 ../signing-setup/setup_api_signing.py --self-test
+          python3 -m unittest discover -s ../signing-setup -p 'test_*.py'
+          python3 ../signing-setup/make_bundle.py --output ../api-signing-setup.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-signing-setup
+          path: api-signing-setup.zip
+          if-no-files-found: error
+          retention-days: 14
       - name: Check API edition layouts in Chromium
         run: |
           npx playwright install --with-deps chromium
@@ -58,6 +70,8 @@ jobs:
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      API_SIGNING_CONFIGURED: ${{ secrets.CODEX_CN_API_SIGNING_JSON != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -158,8 +172,8 @@ jobs:
           path: build-artifacts/
           if-no-files-found: error
           retention-days: 14
-      - name: Test and compile the parallel migration edition
-        run: bash gradlew --no-daemon --build-cache testParallelUnitTest lintParallel assembleParallel
+      - name: Test and compile the parallel and independent fresh editions
+        run: bash gradlew --no-daemon --build-cache testParallelUnitTest lintParallel assembleParallel testFreshUnitTest lintFresh assembleFresh
       - name: Collect parallel APK and Android-compatible signing tool
         env:
           BUILD_COMMIT: ${{ github.sha }}
@@ -232,6 +246,35 @@ jobs:
         with:
           name: codex-cn-api-parallel-build-${{ github.sha }}
           path: parallel-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect independently installable 大肥龙 APK
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/collect_fresh_apk.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dafeilong-fresh-download-kit-${{ github.sha }}
+          path: fresh-download-kit/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dafeilong-fresh-build-${{ github.sha }}
+          path: fresh-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Sign API update with its existing installation key
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.API_SIGNING_CONFIGURED == 'true'
+        env:
+          CODEX_CN_API_SIGNING_JSON: ${{ secrets.CODEX_CN_API_SIGNING_JSON }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/sign_api_apk.py --bundle ../parallel-build-artifacts --build-tools "$ANDROID_HOME/build-tools/35.0.0" --output ../signed-build-artifacts
+      - uses: actions/upload-artifact@v4
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.API_SIGNING_CONFIGURED == 'true'
+        with:
+          name: codex-cn-api-signed-${{ github.sha }}
+          path: signed-build-artifacts/
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4

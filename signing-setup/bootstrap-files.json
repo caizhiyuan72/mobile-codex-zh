@@ -1,0 +1,7 @@
+{
+  "crypto-helper.cjs": "9b0cdebec34c7158fce6471946c8fdb63e0922b41e8bd5be971d6d0101887c5f",
+  "node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js": "828884732c06fa4443688b33ceb4ab42e6e1b99200e4749be375faa289e94158",
+  "node_modules/libsodium-wrappers/package.json": "b13b20e6311fc6ada9213b2a0fca98654ef7bc1c5d172f5b6d27a60b58f9b4c0",
+  "node_modules/libsodium/dist/modules/libsodium.js": "0a66b0fdfbbe6b089c74f0c653258855787a343d179d5ad50b07af846c38d213",
+  "node_modules/libsodium/package.json": "c547d904257a8831d16c6a5e26907b68ba4f73b0fe546be0414e44a477feeb18"
+}

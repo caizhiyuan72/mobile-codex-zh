@@ -59,6 +59,22 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { target.hidden = true; }, 5500);
   }
 
+  function renderConversationFailure() {
+    const messages = {
+      encrypted_transport_changed:'服务商拒绝恢复此对话（HTTP 409）：加密会话传输发生变化。长对话的自动压缩也可能因此失败。请联系服务商检查会话路由；原记录已保留，可先打开新对话。',
+      upstream_conflict:'服务商返回会话冲突（HTTP 409）。请联系服务商检查会话状态；原记录已保留，可先打开新对话。',
+      context_limit:'此对话的上下文已达到上限，本次请求未完成。可稍后重试，或打开新对话并补充任务进度；原记录已保留。',
+      upstream_connection:'与服务商的连接在重试后仍未完成。请稍后重试；如果只有这条对话持续失败，可先打开新对话，原记录已保留。',
+      usage_limit:'服务商的用量或速率限制使本次请求未完成。请检查额度或稍后重试。',
+      upstream_auth:'服务商拒绝了身份验证，请在设置中检查 API 密钥。',
+      upstream_bad_request:'服务商拒绝了本次请求，请检查模型和 API 配置。原对话记录已保留。'
+    };
+    const failure = state.conversationFailure;
+    $('conversation-failure').hidden = !failure || !!state.busy;
+    $('conversation-failure-message').textContent = failure ? (messages[failure.code] || '本次请求失败。请检查连接与服务商状态后重试，原对话记录已保留。') : '';
+    $('conversation-failure-new').disabled = !!state.busy || !!sending;
+  }
+
   function ensureNotificationSettings() {
     const toggle = $('chat-icons-toggle')?.closest('.settings-row');
     if (!toggle) return;
@@ -317,6 +333,7 @@
   const workspaceFilesAvailable = (workspace = state.workspace) => workspace?.selected ? workspace.available !== false : generalFolderAvailable(workspace);
   const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('작업 폴더 선택')) : (workspace.name || 'Codex');
   function updateSend() {
+    renderConversationFailure();
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
     $('send').disabled = ((!$('prompt').value.trim() && !(draftContext.attachments || []).length) || !!sending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false));
@@ -2190,6 +2207,8 @@
     on(buttonId, () => { const expanded = button.getAttribute('aria-expanded') !== 'true'; apply(expanded); localStorage.setItem(key, expanded ? 'expanded' : 'collapsed'); });
   }
   on('scrim', () => sidebar(false)); on('new-chat', async () => newChat(''));
+  on('conversation-failure-copy', () => copyText($('conversation-failure-message').textContent, $('conversation-failure-copy'), '复制说明', '已复制'));
+  on('conversation-failure-new', () => newChat(state.workspace?.key || ''));
   on('add-project', addProject);
   ['choose-folder', 'header-project'].forEach(id => on(id, () => pickFolder()));
   $('project-link-dialog').addEventListener('close', () => {

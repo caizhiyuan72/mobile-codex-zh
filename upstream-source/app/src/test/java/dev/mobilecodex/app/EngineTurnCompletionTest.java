@@ -3,6 +3,7 @@ package dev.mobilecodex.app;
 import android.app.Application;
 import android.content.Intent;
 import dev.mobilecodex.app.core.Texts;
+import dev.mobilecodex.app.core.ConversationFailure;
 import dev.mobilecodex.app.core.Utf8Files;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -115,17 +116,70 @@ public class EngineTurnCompletionTest {
         assertEquals("작업 실패", lastTaskNotification().getStringExtra("title"));
         assertEquals("작업 실패", state.getString("status"));
         assertEquals(1, errors.size());
-        assertEquals("작업 실패", errors.get(0).getString("message"));
+        assertEquals(ConversationFailure.message("turn_failed"), errors.get(0).getString("message"));
+        assertEquals("turn_failed", state.getJSONObject("conversationFailure").getString("code"));
     }
 
     @Test public void failureDetailsRemainVisibleAndLegacyCompletionStillWorks() throws Exception {
         complete(obj("id", "turn-one", "error", obj("message", "Usage limit reached")));
         assertEquals("failed", lastTaskNotification().getStringExtra("kind"));
-        assertEquals("Usage limit reached", errors.get(0).getString("message"));
+        assertEquals(ConversationFailure.message("turn_failed"), errors.get(0).getString("message"));
 
         runningTurns().put("local-thread", "turn-two");
         complete(obj("id", "turn-two"));
         assertEquals("completed", lastTaskNotification().getStringExtra("kind"));
+        assertFalse(session.has("conversationFailure"));
+        assertTrue(state.isNull("conversationFailure"));
+    }
+
+    @Test public void transportConflictPersistsOnlyFixedCodeAndKeepsOriginalThreadAndHistory() throws Exception {
+        session.getJSONArray("messages").put(obj("id", "old", "role", "user", "text", "Keep task progress"));
+        complete(obj("id", "turn-one", "status", "failed", "error", transportConflict()));
+
+        assertEquals("local-thread", state.getString("threadId"));
+        assertEquals("remote-thread", session.getString("codexThreadId"));
+        assertFalse(state.getBoolean("busy"));
+        JSONObject failure = state.getJSONObject("conversationFailure");
+        assertEquals("encrypted_transport_changed", failure.getString("code"));
+        assertEquals("turn-one", failure.getString("turnId"));
+        assertEquals(2, failure.length());
+        assertEquals(ConversationFailure.message("encrypted_transport_changed"), errors.get(0).getString("message"));
+        String stored = Utf8Files.read(new File(application.getFilesDir(), "sessions.json").toPath());
+        assertTrue(stored.contains("encrypted_transport_changed"));
+        assertTrue(stored.contains("Keep task progress"));
+        assertFalse(stored.contains("fixture-secret"));
+        assertFalse(errors.toString().contains("fixture-secret"));
+    }
+
+    @Test public void retriedStreamErrorDoesNotFinishOrMarkTheTaskFailed() throws Exception {
+        notifyEvent("error", obj("threadId", "remote-thread", "turnId", "turn-one", "willRetry", true,
+            "error", transportConflict()));
+        assertEquals("turn-one", runningTurns().get("local-thread"));
+        assertFalse(session.has("conversationFailure"));
+        assertTrue(errors.isEmpty());
+        assertEquals(0, taskNotificationCount());
+        complete(obj("id", "turn-one", "status", "completed"));
+        assertTrue(state.isNull("conversationFailure"));
+    }
+
+    @Test public void failedBackgroundTurnAndStrayCompletionsCannotReplaceVisibleFailure() throws Exception {
+        JSONObject background = obj("id", "background-local", "sessionVersion", 2,
+            "codexThreadId", "background-remote", "messages", array());
+        set("sessions", array(session, background));
+        runningTurns().put("background-local", "background-turn");
+        notifyCompletion("background-remote", obj("id", "background-turn", "status", "failed", "error", transportConflict()));
+        assertEquals("encrypted_transport_changed", background.getJSONObject("conversationFailure").getString("code"));
+        assertTrue(state.isNull("conversationFailure"));
+        assertTrue(state.getBoolean("busy"));
+        assertEquals("background-local", errors.get(0).getString("threadId"));
+        notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "obsolete", "status", "failed", "error", transportConflict())));
+        assertFalse(session.has("conversationFailure"));
+        assertEquals("turn-one", runningTurns().get("local-thread"));
+    }
+
+    private JSONObject transportConflict() {
+        return obj("message", "HTTP 409: The proven encrypted agent transport changed. fixture-secret",
+            "codexErrorInfo", obj("httpConnectionFailed", obj("httpStatusCode", 409)));
     }
 
     @Test public void interruptedBackgroundTurnLeavesVisibleTaskRunning() throws Exception {
