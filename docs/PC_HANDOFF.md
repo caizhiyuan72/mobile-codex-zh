@@ -13,10 +13,10 @@
 
 - `cd upstream-source && node --test --test-concurrency=2 tests/*.test.cjs`：275 项通过。
 - `python3 tools/measure_runtime_stream.py`：手机自带 Codex 0.162.1 在本机回环假服务上交替测 6 组。最后一个 SSE 事件发出到客户端报告完成，中位数 `codex exec` 8.6 ms、`app-server` 10.4 ms。未测在线模型吞吐、APK 端到端延迟或锁屏速度。
-- 该机没有 Java，Gradle 未运行，桌面先核验 Android 编译及原生回归。手机当前安装的 APK 不包含本分支新改动。
+- 手机没有 Java。上一版 `f2290dd` 已通过 GitHub Actions 的 Android 单测、lint 和 APK 构建。本轮仍需用新版 APK 做真机锁屏对照。
 
 ## 代码入口
 
-- `Engine.java`、`EngineService.java`、`MainActivity.java`、`AndroidManifest.xml`：任务、前台服务、CPU 唤醒锁、恢复与断线状态。锁随任务获取，最后一轮结束释放；持续收到进度时续期，长时间完全静默会超时。
+- `Engine.java` 和 `EngineService.java` 在任务进行期间每 5 分钟续订 15 分钟的 CPU 唤醒锁，最后一轮结束后释放。系统重建前台服务或引擎意外退出时，后台只对仍有任务且服务商配置匹配的运行时尝试恢复一次。原任务的结束状态未知时保留提示，避免重复执行工具。
 - `TurnAgents.java`、`app.js`：每轮子代理去重、运行状态、聊天计数。`TaskSummary.java` 是之前未提交的任务汇总实现。
 - `EngineRuntimeRecoveryTest.java`、`EngineTurnCompletionTest.java`、`tests/api-only-ui.test.cjs`、`tests/stream-render.test.cjs`：相关回归。两组本地测量脚本在 `upstream-source/tools/measure_*`。

@@ -6,7 +6,8 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
-import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.*;
@@ -94,7 +95,9 @@ public final class Engine {
     private String authState = "unconfigured", authError = "";
     private final android.content.SharedPreferences runtimeRecovery;
     private final android.os.PowerManager.WakeLock taskCpu;
-    private long renewCpuAfter;
+    private final Handler powerHandler = new Handler(Looper.getMainLooper());
+    private final Runnable renewTaskLease = this::renewTaskCpu;
+    private boolean taskLeaseActive;
     private boolean startingTurn;
     private final ApiProviders apiProviders;
     private final GitHubAuth githubAuth;
@@ -166,7 +169,7 @@ public final class Engine {
     void restoreVisibleThread(String savedId) {
         if (savedId.isBlank()) return;
         io.execute(() -> {
-            if (active != null || ready || sessionStore.recoveryRequired()) return;
+            if (active != null || sessionStore.recoveryRequired()) return;
             JSONObject saved = session(savedId);
             if (saved == null || saved.optBoolean("deletionPending")) return;
             try { resume(savedId); } catch (Exception ignored) { }
@@ -177,20 +180,24 @@ public final class Engine {
         io.execute(() -> {
             if (ui != owner) return;
             refreshApiState();
-            String scope = apiProviders.scope();
-            if (!scope.isBlank() && scope.equals(runtimeRecovery.getString("scope", ""))
-                    && !sessionStore.recoveryRequired() && !healthyTransport()) {
-                try {
-                    start(false);
-                    if (active != null && sessionProviderMatches(active) && active.optString("workspaceKey").equals(documents.key())
-                            && documents.workspace().optBoolean("available")) resumeRemote(false);
-                } catch (Exception failure) {
-                    runtimeRecovery.edit().putString("scope", scope).apply();
-                    error("runtime.start", obj("message", unwrap(failure).getMessage()), failure);
-                }
-            }
+            recoverRememberedRuntime(true);
             publish();
         });
+    }
+    private void recoverRememberedRuntime(boolean fromActivity) {
+        if (healthyTransport() || sessionStore.recoveryRequired()) return;
+        String scope = apiProviders.scope();
+        if (scope.isBlank() || !scope.equals(runtimeRecovery.getString("scope", ""))) return;
+        if (!fromActivity && !scope.equals(runtimeRecovery.getString("backgroundScope", ""))) return;
+        runtimeRecovery.edit().remove("backgroundScope").apply();
+        try {
+            start(false, fromActivity);
+            if (active != null && sessionProviderMatches(active) && active.optString("workspaceKey").equals(documents.key())
+                    && documents.workspace().optBoolean("available")) resumeRemote(false);
+        } catch (Exception failure) {
+            runtimeRecovery.edit().putString("scope", scope).apply();
+            error("runtime.start", obj("message", unwrap(failure).getMessage()), failure);
+        }
     }
     private boolean healthyTransport() {
         return ready && (testTransport != null || (process != null && process.isAlive() && rpc != null && !rpc.isClosed()));
@@ -293,17 +300,22 @@ public final class Engine {
         return obj("hasMore", start > 0, "beforeId", beforeId, "total", total);
     }
     private void publish() { if (ui != null || !observers.isEmpty()) event("state", snapshot()); }
-    private void syncTaskCpu() {
-        if (!startingTurn && runningTurns.isEmpty()) {
+    private synchronized void syncTaskCpu() {
+        boolean needed = startingTurn || !runningTurns.isEmpty();
+        if (taskLeaseActive == needed) return;
+        taskLeaseActive = needed;
+        if (needed) {
+            renewTaskCpu();
+        } else {
+            powerHandler.removeCallbacks(renewTaskLease);
             if (taskCpu.isHeld()) taskCpu.release();
-            renewCpuAfter = 0;
-            return;
         }
-        long now = SystemClock.elapsedRealtime();
-        if (renewCpuAfter == 0 || now >= renewCpuAfter) {
-            taskCpu.acquire(TimeUnit.MINUTES.toMillis(60));
-            renewCpuAfter = now + TimeUnit.MINUTES.toMillis(5);
-        }
+    }
+    private synchronized void renewTaskCpu() {
+        if (!taskLeaseActive) return;
+        taskCpu.acquire(TimeUnit.MINUTES.toMillis(15));
+        powerHandler.removeCallbacks(renewTaskLease);
+        powerHandler.postDelayed(renewTaskLease, TimeUnit.MINUTES.toMillis(5));
     }
     private void persist() {
         try { persistSessions(sessions); }
@@ -721,7 +733,12 @@ public final class Engine {
     boolean hasForegroundWork() {
         return ready || (process != null && process.isAlive()) || terminal.busy() || linux.status().optBoolean("busy");
     }
-    void reconcileService() { if (!io.isShutdown()) io.execute(this::stopServiceIfIdle); }
+    void reconcileService() {
+        if (!io.isShutdown()) io.execute(() -> {
+            recoverRememberedRuntime(false);
+            stopServiceIfIdle();
+        });
+    }
     private void clearRunningState() {
         boolean lostTurn = false;
         for (var turn : runningTurns.entrySet()) {
@@ -895,6 +912,7 @@ public final class Engine {
             + (diagnosis.isEmpty() ? "" : t(" 진단 단서: ") + diagnosis + ".") + t(" 다시 연결해 주세요.");
         if (pendingApproval != null) pendingApproval.decision.complete(false);
         publish();
+        recoverRememberedRuntime(false);
         stopServiceIfIdle();
     }
     private JSONObject call(String method, JSONObject params) throws Exception { return call(method, params, 65); }
@@ -1435,7 +1453,6 @@ public final class Engine {
                 return;
             }
             String remoteEventThreadId = p.optString("threadId");
-            if (!runningTurns.isEmpty()) syncTaskCpu();
             boolean implicitCurrentThread = remoteEventThreadId.isBlank();
             String eventThreadId = implicitCurrentThread ? threadId : localIdForCodexThread(remoteEventThreadId);
             JSONObject target = implicitCurrentThread ? active : (eventThreadId.isBlank() ? null : session(eventThreadId));
@@ -1487,6 +1504,7 @@ public final class Engine {
                         || completedId.isBlank() || !completedId.equals(runningId)
                         || "inProgress".equals(completedTurn.optString("status"))) return;
                 runningTurns.remove(eventThreadId);
+                if (runningTurns.isEmpty()) runtimeRecovery.edit().remove("backgroundScope").apply();
                 target.remove("inFlightTurn"); retryingStreams.remove(eventThreadId);
                 syncTaskCpu();
                 TurnAgents finishedAgents = turnAgents.remove(eventThreadId);
@@ -1630,6 +1648,7 @@ public final class Engine {
             .put("completedTurnId", completedTurnId).put("phase", item.optString("phase", ""));
     }
     private void trackTurn(String localThread, String id, long startedAt) throws org.json.JSONException {
+        if (runningTurns.isEmpty()) runtimeRecovery.edit().putString("backgroundScope", apiProviders.scope()).apply();
         String previous = runningTurns.put(localThread, id);
         syncTaskCpu();
         if (!id.equals(previous) || !turnAgents.containsKey(localThread)) {
@@ -1779,7 +1798,7 @@ public final class Engine {
     }
     private void stopNow() { stopTerminalProcess(); stopCodex(); }
     private void stopCodex() {
-        runtimeRecovery.edit().remove("scope").apply();
+        runtimeRecovery.edit().remove("scope").remove("backgroundScope").apply();
         PhoneUseService.stopControl();
         if (pendingApproval != null) pendingApproval.decision.complete(false);
         Process old = process; process = null;

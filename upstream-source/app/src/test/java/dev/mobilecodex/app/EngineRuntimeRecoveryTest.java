@@ -169,4 +169,50 @@ public class EngineRuntimeRecoveryTest {
         engine.resumeForeground(owner); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
         assertFalse((boolean)field("ready")); assertEquals(List.of("thread/resume"), calls);
     }
+
+    @Test public void backgroundEofConsumesOneRecoveryWithoutStartingAnotherTurn() throws Exception {
+        var recovery = RuntimeEnvironment.getApplication().getSharedPreferences("runtime-recovery", 0);
+        recovery.edit().putString("scope", session.getString("apiScope")).commit();
+        Method track = Engine.class.getDeclaredMethod("trackTurn", String.class, String.class, long.class);
+        track.setAccessible(true);
+        track.invoke(engine, "local-saved", "interrupted-turn", 1L);
+        assertEquals(session.getString("apiScope"), recovery.getString("backgroundScope", ""));
+        List<String> calls = new ArrayList<>();
+        engine.setTestTransport((method, params) -> { calls.add(method); return obj(); });
+        Child child = new Child(false); field("process", child);
+        engine.io.submit(() -> engine.codexDisconnected(child, null, null, new RuntimeFailure.Tail())).get(5, TimeUnit.SECONDS);
+        assertEquals(List.of("thread/resume"), calls);
+        assertTrue((boolean)field("ready"));
+        assertFalse(recovery.contains("backgroundScope"));
+        assertEquals("runtime_disconnected", session.getJSONObject("conversationFailure").getString("code"));
+        field("ready", false);
+        engine.reconcileService(); engine.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        assertFalse((boolean)field("ready")); assertEquals(List.of("thread/resume"), calls);
+    }
+
+    @Test public void recreatedServiceRecoversOnlyAnActiveMatchingProviderBeforeUiReturns() throws Exception {
+        var app = RuntimeEnvironment.getApplication();
+        var recovery = app.getSharedPreferences("runtime-recovery", 0);
+        String scope = session.getString("apiScope");
+        session.put("inFlightTurn", "lost");
+        ((dev.mobilecodex.app.core.SessionStore)field("sessionStore")).save(array(session));
+        Engine recreated = new Engine(app, (ApiProviders)field("apiProviders"));
+        List<String> calls = new ArrayList<>();
+        recreated.setTestTransport((method, params) -> { calls.add(method); return obj(); });
+        try {
+            recovery.edit().putString("scope", scope).putString("backgroundScope", "other").commit();
+            recreated.reconcileService(); recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            assertFalse(recreated.hasForegroundWork());
+            recovery.edit().putString("backgroundScope", scope).commit();
+            recreated.reconcileService(); recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            assertTrue(recreated.hasForegroundWork());
+            recreated.restoreVisibleThread("local-saved");
+            recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            assertEquals("local-saved", recreated.visibleThreadId());
+            assertTrue(calls.isEmpty());
+            recreated.stop(); recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            recreated.reconcileService(); recreated.io.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            assertFalse(recreated.hasForegroundWork());
+        } finally { recreated.io.shutdownNow(); }
+    }
 }

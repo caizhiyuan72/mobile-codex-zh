@@ -20,11 +20,13 @@ public final class EngineService extends Service {
         startForeground(21, notification);
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        Engine engine = ((MobileCodexApp) getApplication()).engine();
         if (intent != null && "stop".equals(intent.getAction())) {
-            ((MobileCodexApp) getApplication()).engine().stop();
+            engine.stop();
+            return START_NOT_STICKY;
         }
-        ((MobileCodexApp) getApplication()).engine().reconcileService();
-        return START_NOT_STICKY;
+        engine.reconcileService();
+        return START_STICKY;
     }
     @Override public void onDestroy() {
         // Explicit stop requests own process shutdown. A stale service callback must

@@ -216,6 +216,9 @@ public class EngineTurnCompletionTest {
         android.os.PowerManager.WakeLock cpu = (android.os.PowerManager.WakeLock)get("taskCpu");
         assertTrue(cpu.isHeld());
         engine.detach((Engine.Ui)get("ui"));
+        cpu.release();
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(5));
+        assertTrue("Quiet turns renew the lease with no UI or progress events", cpu.isHeld());
         JSONObject spawn = obj("threadId", "remote-thread", "turnId", "turn-one", "item", obj("id", "spawn", "type", "collabAgentToolCall",
             "senderThreadId", "remote-thread", "status", "completed", "tool", "spawnAgent", "receiverThreadIds", array("child", "child-two")));
         notifyEvent("item/completed", spawn); notifyEvent("item/completed", spawn);
@@ -231,6 +234,7 @@ public class EngineTurnCompletionTest {
         notifyEvent("turn/completed", obj("threadId", "remote-thread", "turn", obj("id", "turn-one", "status", "interrupted")));
         assertTrue(cpu.isHeld()); assertEquals(2, session.getJSONObject("subagentUsage").getInt("total"));
         notifyEvent("turn/completed", obj("threadId", "bg-remote", "turn", obj("id", "bg-turn", "status", "completed")));
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(5));
         assertFalse(cpu.isHeld());
     }
 
