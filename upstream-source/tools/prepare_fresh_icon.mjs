@@ -35,4 +35,8 @@ const avatar = PNG.sync.read(await readFile(resolve(root, 'icon-pack/dafeilong/i
 const portrait = await resize(new ImageData(new Uint8ClampedArray(avatar.data), avatar.width, avatar.height), {
   width:192, height:192, method:'lanczos3', premultiply:true, linearRGB:true
 });
-await writeFile(resolve(dirname(output), 'mobile_codex_logo.png'), PNG.sync.write(portrait, {colorType:2}));
+const avatarPng = PNG.sync.write(portrait, {colorType:2});
+await writeFile(resolve(dirname(output), 'mobile_codex_logo.png'), avatarPng);
+const rawAvatar = resolve(root, 'app/src/fresh/res/raw/web_logo.png');
+await mkdir(dirname(rawAvatar), {recursive:true});
+await writeFile(rawAvatar, avatarPng);
