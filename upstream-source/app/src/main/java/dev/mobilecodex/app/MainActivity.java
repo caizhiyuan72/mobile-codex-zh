@@ -41,7 +41,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         }
         try {
             return new WebResourceResponse("image/png", null, 200, "OK",
-                Map.of("Cache-Control", "no-store", "X-Content-Type-Options", "nosniff"), resources.openRawResource(R.drawable.mobile_codex_logo));
+                Map.of("Cache-Control", "no-store", "X-Content-Type-Options", "nosniff"), resources.openRawResource(R.raw.web_logo));
         } catch (Exception e) {
             return deniedResponse();
         }

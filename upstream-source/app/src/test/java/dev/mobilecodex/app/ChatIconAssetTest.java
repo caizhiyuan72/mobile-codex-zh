@@ -89,7 +89,7 @@ public class ChatIconAssetTest {
             Uri.parse("https://appassets.androidplatform.net/codex-logo.png"));
         assertEquals(200, response.getStatusCode());
         assertEquals("image/png", response.getMimeType());
-        try (var body = response.getData(); var expected = resources.openRawResource(R.drawable.mobile_codex_logo)) {
+        try (var body = response.getData(); var expected = resources.openRawResource(R.raw.web_logo)) {
             byte[] bytes = body.readAllBytes();
             assertArrayEquals(expected.readAllBytes(), bytes);
             assertArrayEquals("PNG header", new byte[]{(byte)137,80,78,71,13,10,26,10}, java.util.Arrays.copyOf(bytes, 8));
