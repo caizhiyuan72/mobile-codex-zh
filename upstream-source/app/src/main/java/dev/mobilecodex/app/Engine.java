@@ -18,7 +18,7 @@ import java.util.concurrent.*;
 import dev.mobilecodex.app.core.*;
 import static dev.mobilecodex.app.core.Json.*;
 
-/** Owns one local app-server process, outside Activity/WebView lifecycle. */
+/** Owns local app-server processes outside the Activity/WebView lifecycle. */
 public final class Engine {
     // Only used on the engine queue; each action/notification gets a fresh identity.
     private Object diagnosticOperation = new Object();
@@ -71,6 +71,9 @@ public final class Engine {
     private final ChangeReview changes;
     private Process process;
     private RpcClient rpc;
+    private String draftProviderId = "", runtimeScope = "", eventScope = "";
+    private record ParkedRuntime(Process process, RpcClient connection, File home) {}
+    private final Map<String, ParkedRuntime> parkedRuntimes = new HashMap<>();
     private TestTransport testTransport;
     private volatile boolean ready, busy;
     /** Turn ids are scoped to their server thread. The UI may move to another
@@ -137,7 +140,7 @@ public final class Engine {
     private final PersonalInstructions instructions;
     private final DevTools devTools;
     private final LinuxRuntime linux;
-    private record PendingRequest(RpcClient connection, Object id, String method, JSONObject params) {}
+    private record PendingRequest(RpcClient connection, Object id, String method, JSONObject params, String scope) {}
 
     public Engine(Context context) { this(context, null); }
     Engine(Context context, ApiProviders providers) {
@@ -158,6 +161,8 @@ public final class Engine {
         catch (IOException e) { throw new IllegalStateException(t("Codex 홈을 준비하지 못했습니다."), e); }
         try { apiProviders = providers == null ? new ApiProviders(context) : providers; }
         catch (IOException error) { throw new IllegalStateException("无法读取 API 服务商设置。", error); }
+        draftProviderId = apiProviders.activeId();
+        runtimeScope = providerScope();
         authState = apiProviders.configured() ? "configured" : "unconfigured";
         processHome = codexHome.root();
         instructions = new PersonalInstructions(codexHome);
@@ -205,7 +210,7 @@ public final class Engine {
     }
     private void recoverRememberedRuntime(boolean fromActivity) {
         if (healthyTransport() || sessionStore.recoveryRequired()) return;
-        String scope = apiProviders.scope();
+        String scope = providerScope();
         if (scope.isBlank() || !scope.equals(runtimeRecovery.getString("scope", ""))) return;
         if (!fromActivity && !scope.equals(runtimeRecovery.getString("backgroundScope", ""))) return;
         runtimeRecovery.edit().remove("backgroundScope").apply();
@@ -221,11 +226,39 @@ public final class Engine {
     private boolean healthyTransport() {
         return ready && (testTransport != null || (process != null && process.isAlive() && rpc != null && !rpc.isClosed()));
     }
-    private void rememberRuntime() { runtimeRecovery.edit().putString("scope", apiProviders.scope()).apply(); }
+    private String providerScope() { return active == null ? apiProviders.scope(draftProviderId) : active.optString("apiScope"); }
+    private String providerId() {
+        if (active == null) return draftProviderId;
+        String scope = providerScope();
+        int separator = scope.indexOf(':');
+        return separator < 0 ? "" : scope.substring(0, separator);
+    }
+    private boolean providerAvailable() {
+        return !providerScope().isBlank() && providerScope().equals(apiProviders.scope(providerId()));
+    }
+    private void activateChatRuntime() {
+        String next = providerScope();
+        if (runtimeScope.equals(next)) return;
+        if (process != null && rpc != null) {
+            if (runningTurns.keySet().stream().anyMatch(id -> inProviderScope(session(id), runtimeScope)))
+                parkedRuntimes.put(runtimeScope, new ParkedRuntime(process, rpc, processHome));
+            else retireProviderRuntime(runtimeScope);
+        }
+        ParkedRuntime parked = parkedRuntimes.remove(next);
+        process = parked == null ? null : parked.process;
+        rpc = parked == null ? null : parked.connection;
+        processHome = parked == null ? codexHome.root() : parked.home;
+        ready = parked != null && process.isAlive() && !rpc.isClosed();
+        runtimeScope = next;
+        serverThreadId = "";
+        status = ready ? t("연결됨") : t("시작할 준비가 됐습니다");
+        refreshApiState();
+    }
+    private void rememberRuntime() { runtimeRecovery.edit().putString("scope", providerScope()).apply(); }
     private void refreshApiState() {
-        authState = apiProviders.configured() ? "configured" : "unconfigured";
+        authState = providerAvailable() ? "configured" : "unconfigured";
         authError = "";
-        try { models = apiProviders.configured() ? ApiProviderPolicy.modelCatalog(apiProviders.activeProfile()) : new JSONArray(); }
+        try { models = providerAvailable() ? ApiProviderPolicy.modelCatalog(apiProviders.profileDetails(providerId())) : new JSONArray(); }
         catch (IOException error) { models = new JSONArray(); authState = "error"; authError = error.getMessage(); }
     }
     public void observe(Ui observer) { observers.add(observer); io.execute(() -> {
@@ -243,7 +276,8 @@ public final class Engine {
     private JSONObject requestUiParams(PendingRequest request) {
         try {
             JSONObject result = new JSONObject(request.params.toString());
-            String local = localIdForCodexThread(result.optString("threadId"));
+            JSONObject target = sessionByCodexThreadId(result.optString("threadId"), request.scope);
+            String local = target == null ? "" : target.optString("id");
             if (!local.isBlank()) result.put("threadId", local);
             return result;
         } catch (Exception ignored) { return request.params; }
@@ -275,11 +309,12 @@ public final class Engine {
         }
         return obj("ready", ready, "busy", busy, "status", t(status), "account", obj("type", "apiKey"), "sessionStorage", sessionStore.status(),
             "authState", authState, "authError", t(authError),
-            "apiProviders", apiProviders.snapshot().optJSONArray("apiProviders"), "apiActive", apiProviders.activeId(),
+            "apiProviders", apiProviders.snapshot().optJSONArray("apiProviders"), "apiActive", providerId(),
+            "apiDefault", apiProviders.activeId(), "apiScope", providerScope(),
             "apiMigrationError", apiProviders.snapshot().optString("apiMigrationError"),
             "github", githubAuth.status().optJSONObject("github"),
             "models", models, "workspace", documents.workspace(), "projects", documents.projects(), "sessions", summaries,
-            "threadId", threadId, "turnId", turnId, "liveTaskActivity", BuildConfig.APPLICATION_ID.endsWith(".fresh"),
+            "threadId", threadId, "turnId", turnId, "liveTaskActivity", BuildConfig.APPLICATION_ID.endsWith(".fresh"), "persistedWorkActivity", true,
             "streamRetrying", retryingStreams.contains(threadId),
             "turnProgress", progressSnapshot(),
             "subagentUsage", turnAgents.containsKey(threadId) ? turnAgents.get(threadId).snapshot()
@@ -555,7 +590,7 @@ public final class Engine {
                         ensureRuntimeSettingsIdle();
                         if (!args.optBoolean("acceptOlderSnapshot")) throw new IOException(t("이전 기록의 복원을 확인해 주세요."));
                         sessions = sessionStore.recover(args.getString("sha256"));
-                        active = null; threadId = ""; serverThreadId = "";
+                        clearActive();
                         restoreSessionProjects(); publish(); reply.complete(sessionStore.status(), null);
                     }
                     case "state" -> reply.complete(snapshot(), null);
@@ -563,28 +598,35 @@ public final class Engine {
                     case "runtime.start" -> { start(); event("diagnostics.cleared", obj("operation", "start")); reply.complete(snapshot(), null); }
                     case "providers.list" -> reply.complete(apiProviders.snapshot(), null);
                     case "providers.save" -> {
-                        boolean replacingActive = !args.optString("id").isBlank() && args.optString("id").equals(apiProviders.activeId());
-                        String previousScope = apiProviders.scope();
-                        if (replacingActive) ensureRuntimeSettingsIdle();
+                        String previousScope = apiProviders.scope(args.optString("id"));
+                        if (!previousScope.isBlank()) ensureRuntimeSettingsIdle();
                         JSONObject saved = apiProviders.save(args);
-                        if (replacingActive) { stopCodex(); if (!previousScope.equals(apiProviders.scope())) clearActive(); }
+                        if (!previousScope.isBlank()) retireProviderRuntime(previousScope);
+                        activateChatRuntime();
                         refreshApiState(); publish(); reply.complete(saved, null);
                     }
                     case "providers.select" -> {
-                        ensureRuntimeSettingsIdle();
                         String id = args.optString("id");
-                        boolean sameProvider = id.equals(apiProviders.activeId());
-                        // Validate and decrypt before stopping a working configuration.
                         apiProviders.select(id);
-                        stopCodex(); if (!sameProvider) clearActive(); refreshApiState(); publish();
-                        if (!id.isBlank()) start(sameProvider);
+                        draftProviderId = id;
+                        activateChatRuntime(); refreshApiState(); publish();
                         reply.complete(apiProviders.snapshot(), null);
                     }
+                    case "chat.provider" -> {
+                        requireChatScope(args);
+                        if (active != null) throw new IOException("此聊天已绑定 API 服务商。请在新聊天选择另一个服务商。");
+                        String id = args.getString("id");
+                        apiProviders.key(id);
+                        draftProviderId = id;
+                        activateChatRuntime(); refreshApiState(); publish(); reply.complete(snapshot(), null);
+                    }
                     case "providers.remove" -> {
-                        boolean selected = args.optString("id").equals(apiProviders.activeId());
-                        if (selected) ensureRuntimeSettingsIdle();
+                        ensureRuntimeSettingsIdle();
+                        String previousScope = apiProviders.scope(args.optString("id"));
                         apiProviders.remove(args.getString("id"));
-                        if (selected) { stopCodex(); clearActive(); }
+                        retireProviderRuntime(previousScope);
+                        if (draftProviderId.equals(args.optString("id"))) draftProviderId = apiProviders.activeId();
+                        activateChatRuntime();
                         refreshApiState(); publish(); reply.complete(apiProviders.snapshot(), null);
                     }
                     case "providers.discover" -> reply.complete(apiProviders.discover(args), null);
@@ -653,7 +695,7 @@ public final class Engine {
                         PendingRequest pending = requests.remove(args.getString("key"));
                         if (pending == null) throw new IOException(t("이미 종료된 요청입니다."));
                         if (pending.method.contains("requestApproval")) {
-                            JSONObject approvalSession = sessionByCodexThreadId(pending.params.optString("threadId"));
+                            JSONObject approvalSession = sessionByCodexThreadId(pending.params.optString("threadId"), pending.scope);
                             if (approvalSession != null) { approvalSession.put("approvalPending", false); persist(); }
                         }
                         pending.connection.respond(pending.id, args.getJSONObject("result"));
@@ -766,7 +808,12 @@ public final class Engine {
         busy = !turnId.isBlank();
         status = busy ? t("작업 중") : (ready ? t("연결됨") : status);
     }
-    private void clearActive() { active = null; threadId = ""; turnId = ""; serverThreadId = ""; busy = false; if (ready) status = t("연결됨"); }
+    private void clearActive() {
+        active = null; threadId = ""; turnId = ""; serverThreadId = ""; busy = false;
+        draftProviderId = apiProviders.activeId();
+        activateChatRuntime();
+        if (ready) status = t("연결됨");
+    }
     public boolean isBusy() { return busy; }
     private boolean hasRunningTurns() { return !runningTurns.isEmpty(); }
     private void ensureSessionIdle(String id) throws IOException {
@@ -803,27 +850,31 @@ public final class Engine {
             stopServiceIfIdle();
         });
     }
-    private void clearRunningState() {
+    private boolean inProviderScope(JSONObject target, String scope) {
+        return target != null && (testTransport != null && scope.isBlank() || scope.equals(target.optString("apiScope")));
+    }
+    private void clearRunningState(String scope) {
         boolean lostTurn = false;
-        for (var turn : runningTurns.entrySet()) {
+        for (var turn : new HashMap<>(runningTurns).entrySet()) {
             JSONObject target = session(turn.getKey());
-            if (target == null) continue;
+            if (!inProviderScope(target, scope)) continue;
+            turnAgents.remove(turn.getKey());
+            retryingStreams.remove(turn.getKey());
+            turnProgress.remove(turn.getKey());
+            runningTurns.remove(turn.getKey());
             try {
                 target.remove("inFlightTurn");
+                WorkHistory.finish(target.optJSONArray("messages"), turn.getValue());
                 target.put("conversationFailure", obj("code", "runtime_disconnected", "turnId", turn.getValue()));
                 lostTurn = true;
             } catch (org.json.JSONException ignored) { }
         }
-        turnAgents.clear();
-        retryingStreams.clear();
-        turnProgress.clear();
-        runningTurns.clear();
         syncTaskCpu();
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject value = sessions.optJSONObject(i);
-            if (value != null) try { value.put("approvalPending", false); } catch (Exception ignored) {}
+            if (inProviderScope(value, scope)) try { value.put("approvalPending", false); } catch (Exception ignored) {}
         }
-        busy = false; turnId = "";
+        syncCurrentTurn();
         if (lostTurn) persist();
     }
     private void start() throws Exception {
@@ -856,11 +907,13 @@ public final class Engine {
             // disconnect callback is ignored after replacement, so invalidate them here
             // before restoreConversation() can mistake a saved id for a loaded thread.
             serverThreadId = "";
-            clearRunningState();
+            clearRunningState(runtimeScope);
             if (staleRpc != null) staleRpc.close();
             if (staleProcess != null && staleProcess.isAlive()) staleProcess.destroyForcibly();
-            if (!apiProviders.configured()) throw new IOException("请先在设置中添加并启用 API 服务商。");
-            processHome = apiProviders.prepareHome(codexHome.root());
+            if (!providerAvailable()) throw new IOException("该聊天绑定的 API 服务商不可用，请检查设置。");
+            String launchScope = runtimeScope;
+            JSONObject profile = apiProviders.profileDetails(providerId());
+            processHome = apiProviders.prepareHome(codexHome.root(), providerId());
             refreshApiState();
             diagnostic.stage("runtime_check");
             if (!Arrays.asList(Build.SUPPORTED_ABIS).contains("arm64-v8a"))
@@ -872,10 +925,10 @@ public final class Engine {
             // Keep upstream Codex tools/features available; preserve user configuration.
             diagnostic.stage("config_prepare");
             File config = new File(processHome, "config.toml");
-            installUltraCatalog(config, apiProviders.activeProfile());
+            installUltraCatalog(config, profile);
             ProcessBuilder builder = new ProcessBuilder(binary.getAbsolutePath(), "app-server", "--listen", "stdio://",
                 "-c", "model_provider=" + ApiProviderPolicy.quote(ApiProviderPolicy.PROVIDER_ID),
-                "-c", "model=" + ApiProviderPolicy.quote(apiProviders.activeProfile().optString("defaultModel")));
+                "-c", "model=" + ApiProviderPolicy.quote(profile.optString("defaultModel")));
             diagnostic.stage("environment_prepare");
             builder.directory(projectDirectory());
             devTools.configure(builder, processHome, runtimeAliases());
@@ -886,7 +939,7 @@ public final class Engine {
             builder.environment().remove("OPENAI_API_KEY"); builder.environment().remove("OPENAI_BASE_URL");
             builder.environment().remove("OPENAI_API_BASE"); builder.environment().remove("CODEX_API_KEY");
             builder.environment().remove("MOBILE_CODEX_CUSTOM_API_KEY");
-            builder.environment().put(ApiProviderPolicy.KEY_ENV, apiProviders.activeKey());
+            builder.environment().put(ApiProviderPolicy.KEY_ENV, apiProviders.key(providerId()));
             builder.environment().put("CODEX_SELF_EXE", binary.getAbsolutePath());
             diagnostic.stage("before_spawn");
             spawnAttempted = true;
@@ -900,10 +953,17 @@ public final class Engine {
             }, "codex-stderr"); errors.setDaemon(true); errors.start();
             final RpcClient[] launchedConnection = new RpcClient[1];
             rpc = new RpcClient(process.getInputStream(), process.getOutputStream(), new RpcClient.Listener() {
-                @Override public void notification(String method, JSONObject params) { io.execute(() -> { if (process == launched && rpc == launchedConnection[0]) onNotification(method, params); }); }
-                @Override public void request(Object id, String method, JSONObject params) { io.execute(() -> { if (process == launched && rpc == launchedConnection[0]) onRequest(launchedConnection[0], id, method, params); }); }
+                @Override public void notification(String method, JSONObject params) {
+                    io.execute(() -> withProviderEvent(launchScope, launched, launchedConnection[0], () -> onNotification(method, params)));
+                }
+                @Override public void request(Object id, String method, JSONObject params) {
+                    io.execute(() -> withProviderEvent(launchScope, launched, launchedConnection[0], () -> onRequest(launchedConnection[0], id, method, params)));
+                }
                 @Override public void disconnected(Throwable error) {
-                    io.execute(() -> codexDisconnected(launched, launchedConnection[0], error, stderrTail));
+                    io.execute(() -> withProviderEvent(launchScope, launched, launchedConnection[0], () -> {
+                        if (launchScope.equals(runtimeScope)) codexDisconnected(launched, launchedConnection[0], error, stderrTail);
+                        else { retireProviderRuntime(launchScope); publish(); stopServiceIfIdle(); }
+                    }));
                 }
             }, diagnostic);
             launchedConnection[0] = rpc;
@@ -935,9 +995,17 @@ public final class Engine {
             // Pre-launch failures previously reached callers unchanged. Diagnostics
             // must not alter their user-facing message or recovery contract.
             if (!spawnAttempted) detail = unwrap(e).getMessage();
-            if (replacing) stopCodex();
+            if (replacing) retireProviderRuntime(runtimeScope);
             throw new DiagnosticFailure(detail, e, diagnosticOperation, measured);
         }
+    }
+    private void withProviderEvent(String scope, Process launched, RpcClient connection, Runnable action) {
+        ParkedRuntime parked = parkedRuntimes.get(scope);
+        boolean visible = scope.equals(runtimeScope) && process == launched && rpc == connection;
+        if (!visible && (parked == null || parked.process != launched || parked.connection != connection)) return;
+        String previousScope = eventScope;
+        eventScope = scope;
+        try { action.run(); } finally { eventScope = previousScope; }
     }
     private void restoreConversation() throws Exception {
         // Retry tombstones only in the conversation's HOME, before resuming it.
@@ -955,9 +1023,8 @@ public final class Engine {
         if (connection != null && !connection.isClosed()) connection.close();
         PhoneUseService.stopControl();
         process = null; rpc = null;
-        requests.forEach((key, value) -> event("server.resolved", obj("key", key)));
-        requests.clear();
-        ready = false; clearRunningState(); serverThreadId = "";
+        clearRequests(connection);
+        ready = false; clearRunningState(runtimeScope); serverThreadId = "";
         String detail = error == null ? t("Codex 연결이 종료되었습니다.") : error.getMessage();
         String diagnosis = stderrTail.diagnosis();
         status = t("실행 엔진 연결이 종료되었습니다") + (exitCode >= 0 ? t(" (종료 코드 ") + exitCode + ")" : "") + ". " + detail
@@ -979,7 +1046,7 @@ public final class Engine {
             JSONObject model = models.optJSONObject(i);
             if (model != null && model.optBoolean("isDefault")) return model.optString("model", model.optString("id"));
         }
-        if (apiProviders.configured()) try { return apiProviders.activeProfile().optString("defaultModel"); } catch (IOException ignored) {}
+        if (providerAvailable()) try { return apiProviders.profileDetails(providerId()).optString("defaultModel"); } catch (IOException ignored) {}
         return "";
     }
     /** Catalog-driven Fast selection. Do not infer support from a model id or display name. */
@@ -1042,7 +1109,7 @@ public final class Engine {
         model = resolvedModel(model);
         JSONObject params = obj("cwd", projectDirectory().getAbsolutePath(), "sandbox", permissionMode, "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer(),
             "developerInstructions", workspaceInstructions(model), "dynamicTools", ToolCatalog.all());
-        if (apiProviders.configured()) params.put("modelProvider", ApiProviderPolicy.PROVIDER_ID);
+        if (providerAvailable()) params.put("modelProvider", ApiProviderPolicy.PROVIDER_ID);
         if (!model.isEmpty()) params.put("model", model);
         return params;
     }
@@ -1053,18 +1120,21 @@ public final class Engine {
     }
     private boolean sessionProviderMatches(JSONObject session) {
         if (session == null) return true;
-        if (testTransport != null && !apiProviders.configured()) return true;
-        return !apiProviders.scope().isBlank() && apiProviders.scope().equals(session.optString("apiScope"));
+        if (testTransport != null && !providerAvailable()) return providerScope().isBlank();
+        return providerAvailable() && providerScope().equals(session.optString("apiScope"));
     }
     private void requireSessionProvider(JSONObject session) throws IOException {
         if (!sessionProviderMatches(session)) throw new IOException("该历史会话属于其他 API 配置。为避免混用凭据，请新建会话。");
     }
     private String activeCodexThreadId() { return codexThreadId(active); }
     private JSONObject sessionByCodexThreadId(String remoteId) {
+        return sessionByCodexThreadId(remoteId, eventScope.isBlank() ? providerScope() : eventScope);
+    }
+    private JSONObject sessionByCodexThreadId(String remoteId, String scope) {
         if (remoteId == null || remoteId.isBlank()) return null;
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject value = sessions.optJSONObject(i);
-            if (value != null && remoteId.equals(codexThreadId(value))) return value;
+            if (inProviderScope(value, scope) && remoteId.equals(codexThreadId(value))) return value;
         }
         return null;
     }
@@ -1087,24 +1157,25 @@ public final class Engine {
             "sandbox", permissionMode, "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer(), "developerInstructions", currentInstructions));
         serverThreadId = remoteId;
         serverInstructions = currentInstructions;
-        restoreImageHistory();
+        restoreWorkHistory();
     }
-    private void restoreImageHistory() {
-        if (active == null || active.optInt("imageHistoryVersion") >= 1) return;
+    private void restoreWorkHistory() {
+        if (active == null || (active.optInt("imageHistoryVersion") >= 1 && active.optInt("workHistoryVersion") >= 1)) return;
         try {
             String remoteId = activeCodexThreadId();
             if (remoteId.isBlank()) return;
             JSONObject thread = call("thread/read", obj("threadId", remoteId, "includeTurns", true)).optJSONObject("thread");
             JSONArray turns = thread == null ? null : thread.optJSONArray("turns");
             if (turns == null) return;
-            for (int t = 0; t < turns.length(); t++) {
+            if (active.optInt("workHistoryVersion") < 1) WorkHistory.restore(active.getJSONArray("messages"), turns);
+            for (int t = 0; active.optInt("imageHistoryVersion") < 1 && t < turns.length(); t++) {
                 JSONObject turn = turns.optJSONObject(t); if (turn == null) continue;
                 JSONArray items = turn.optJSONArray("items");
                 if (items != null) for (int n = 0; n < items.length(); n++) {
                     JSONObject item = items.optJSONObject(n); if (item != null) recordImages(item, true, turn.optString("id"));
                 }
             }
-            active.put("imageHistoryVersion", 1); persist(); publish();
+            active.put("imageHistoryVersion", 1).put("workHistoryVersion", 1); persist(); publish();
         } catch (Exception e) {
             event("notice", obj("message", t("이전 이미지 기록을 불러오지 못했습니다: ") + unwrap(e).getMessage()));
         }
@@ -1193,6 +1264,8 @@ public final class Engine {
     }
     private void requireChatScope(JSONObject args) throws IOException {
         if (args.has("expectedThreadId") && !args.optString("expectedThreadId").equals(threadId)) throw new IOException(t("대화가 바뀌었습니다. 현재 대화에서 다시 보내 주세요."));
+        if (args.has("expectedApiScope") && !args.optString("expectedApiScope").equals(providerScope()))
+            throw new IOException("聊天的 API 服务商已切换，请重新发送。");
         if (args.has("workspaceKey")) requireScope(args);
     }
     /** Fetch older local display history without exposing another thread or an overlapping cursor item. */
@@ -1276,7 +1349,7 @@ public final class Engine {
             candidateLocalId = "local-" + UUID.randomUUID();
             candidate = obj("id", candidateLocalId, "sessionVersion", 2, "codexThreadId", candidateRemoteId,
                 "title", titleFor(text, attachmentIds), "workspace", sessionWorkspaceName(), "workspaceKey", documents.key(), "model", actualModel,
-                "messages", new JSONArray(), "imageHistoryVersion", 1, "phoneToolsVersion", 1, "fastMode", false, "apiScope", apiProviders.scope());
+                "messages", new JSONArray(), "imageHistoryVersion", 1, "workHistoryVersion", 1, "phoneToolsVersion", 1, "fastMode", false, "apiScope", providerScope());
         } else {
             if (!active.optString("workspaceKey").equals(documents.key())) throw new IOException(t("이 대화의 원래 작업 폴더를 다시 연결해 주세요."));
             if (activeCodexThreadId().isBlank()) {
@@ -1292,7 +1365,7 @@ public final class Engine {
         try {
             JSONObject params = obj("threadId", targetRemote, "input", input, "cwd", projectDirectory().getAbsolutePath(), "approvalPolicy", approvalPolicy(), "approvalsReviewer", approvalsReviewer());
             if (!actualModel.isEmpty()) params.put("model", actualModel);
-            if (!effort.isEmpty()) params.put("effort", effort);
+            if (!effort.isEmpty()) params.put("effort", "ultar".equalsIgnoreCase(effort) ? "ultra" : effort);
             params.put("summary", "auto");
             if (serviceTierForTurn != null) params.put("serviceTierForTurn", serviceTierForTurn);
             long turnStartedAt = System.currentTimeMillis();
@@ -1322,8 +1395,15 @@ public final class Engine {
                 String key = session.optString("workspaceKey");
                 try { documents.selectProject(key); }
                 catch (Exception ignored) { documents.selectProject(""); }
-                threadId = id; serverThreadId = ""; active = session; syncCurrentTurn();
-                publish(); return;
+                threadId = id; serverThreadId = ""; active = session; activateChatRuntime(); syncCurrentTurn();
+                publish();
+                if (!busy && session.optInt("workHistoryVersion") < 1 && sessionProviderMatches(session) && !activeCodexThreadId().isBlank()) {
+                    io.execute(() -> {
+                        if (active != session || busy || !documents.workspace().optBoolean("available")) return;
+                        try { start(false); restoreWorkHistory(); } catch (Exception ignored) { }
+                    });
+                }
+                return;
             }
         }
         throw new IOException(t("대화를 찾을 수 없습니다."));
@@ -1332,7 +1412,6 @@ public final class Engine {
         ensureSessionIdle(id);
         JSONObject current = session(id);
         if (current == null || current.optBoolean("deletionPending")) throw new IOException(t("대화를 찾을 수 없습니다."));
-        requireSessionProvider(current);
         JSONArray projects = documents.projects(); JSONObject destination = null;
         for (int index = 0; index < projects.length(); index++) {
             JSONObject project = projects.getJSONObject(index);
@@ -1386,10 +1465,15 @@ public final class Engine {
         // Do not clear the visible/active conversation until its pending-deletion record is durable.
         persistSessions(marked);
         replaceSessions(marked);
-        if (id.equals(threadId)) clearActive();
         JSONObject markedSession = session(id);
         String remoteId = codexThreadId(markedSession);
-        if (!remoteId.isBlank() && sessionProviderMatches(markedSession) && (!ready || !deleteRemote(remoteId, false))) return true;
+        boolean sameProvider = sessionProviderMatches(markedSession);
+        boolean pending = !remoteId.isBlank() && !markedSession.optString("apiScope").isBlank()
+            && (!sameProvider || !ready || !deleteRemote(remoteId, false));
+        if (!remoteId.isBlank() && markedSession.optString("apiScope").isBlank() && sameProvider)
+            pending = !ready || !deleteRemote(remoteId, false);
+        if (id.equals(threadId)) clearActive();
+        if (pending) return true;
 
         JSONArray remaining = withoutPendingSession(id);
         try {
@@ -1448,7 +1532,7 @@ public final class Engine {
             JSONObject session = sessions.optJSONObject(i);
             if (session != null && session.optBoolean("deletionPending")) {
                 String remoteId = codexThreadId(session);
-                if (remoteId.isBlank() || !sessionProviderMatches(session) || deleteRemote(remoteId, true)) completed.add(session.optString("id"));
+                if (remoteId.isBlank() || (sessionProviderMatches(session) && deleteRemote(remoteId, true))) completed.add(session.optString("id"));
             }
         }
         for (String id : completed) {
@@ -1471,7 +1555,7 @@ public final class Engine {
         for (var entry : turnAgents.entrySet()) {
             TurnAgents agents = entry.getValue();
             JSONObject parent = session(entry.getKey());
-            if (parent == null) continue;
+            if (!inProviderScope(parent, eventScope.isBlank() ? providerScope() : eventScope)) continue;
             String root = codexThreadId(parent);
             boolean child = agents.contains(sender);
             if (!sender.equals(root) && !child) continue;
@@ -1513,7 +1597,7 @@ public final class Engine {
             if (method.equals("serverRequest/resolved")) {
                 Object id = p.opt("requestId");
                 requests.entrySet().removeIf(entry -> {
-                    if (String.valueOf(entry.getValue().id).equals(String.valueOf(id))) {
+                    if ((eventScope.isBlank() || eventScope.equals(entry.getValue().scope)) && String.valueOf(entry.getValue().id).equals(String.valueOf(id))) {
                         PendingRequest request = entry.getValue();
                         if (request.method.contains("requestApproval")) {
                             try { JSONObject approvalSession = sessionByCodexThreadId(request.params.optString("threadId")); if (approvalSession != null) { approvalSession.put("approvalPending", false); persist(); } } catch (Exception ignored) {}
@@ -1526,9 +1610,11 @@ public final class Engine {
             }
             String remoteEventThreadId = p.optString("threadId");
             boolean implicitCurrentThread = remoteEventThreadId.isBlank();
-            String eventThreadId = implicitCurrentThread ? threadId : localIdForCodexThread(remoteEventThreadId);
-            JSONObject target = implicitCurrentThread ? active : (eventThreadId.isBlank() ? null : session(eventThreadId));
-            boolean currentThread = implicitCurrentThread || eventThreadId.equals(threadId);
+            String eventThreadId = implicitCurrentThread && (eventScope.isBlank() || eventScope.equals(runtimeScope))
+                ? threadId : localIdForCodexThread(remoteEventThreadId);
+            boolean fromVisibleProvider = eventScope.isBlank() || eventScope.equals(runtimeScope);
+            JSONObject target = implicitCurrentThread && fromVisibleProvider ? active : (eventThreadId.isBlank() ? null : session(eventThreadId));
+            boolean currentThread = fromVisibleProvider && (implicitCurrentThread || eventThreadId.equals(threadId));
             TurnProgress progress = implicitCurrentThread ? null : turnProgress.get(eventThreadId);
             boolean advanced = progress != null && progress.observe(method, p, System.currentTimeMillis());
             if (advanced && currentThread) queueProgress();
@@ -1538,7 +1624,14 @@ public final class Engine {
                     && "reasoning".equals(p.optJSONObject("item").optString("type")))) return;
             if ((method.equals("item/agentMessage/delta") || method.equals("item/started") || method.equals("item/completed"))
                     && p.optString("turnId").equals(runningTurns.get(eventThreadId)) && retryingStreams.remove(eventThreadId) && currentThread) publish();
-            if (method.equals("item/agentMessage/delta") && target != null) {
+            String activityTurn = p.optString("turnId");
+            boolean trackedWork = target != null && !activityTurn.isBlank() && activityTurn.equals(runningTurns.get(eventThreadId));
+            if (trackedWork && (method.equals("item/commandExecution/outputDelta") || method.equals("item/fileChange/outputDelta"))) {
+                WorkHistory.append(target.optJSONArray("messages"), activityTurn, p.optString("itemId"), p.optString("delta"));
+            } else if (trackedWork && (method.equals("item/started") || method.equals("item/completed"))
+                    && WorkHistory.record(target.optJSONArray("messages"), p.optJSONObject("item"), activityTurn, method.equals("item/completed"), Integer.MAX_VALUE)) {
+                persist(); if (currentThread) publish();
+            } else if (method.equals("item/agentMessage/delta") && target != null) {
                 String id = p.optString("itemId");
                 JSONObject previous = active;
                 try { active = target; JSONObject message = message(id); message.put("text", message.optString("text") + p.optString("delta")); }
@@ -1601,6 +1694,7 @@ public final class Engine {
                 boolean failed = !interrupted && ("failed".equals(completionStatus) || error != null);
                 boolean successful = "completed".equals(completionStatus) && !failed;
                 boolean missingReply = successful && !finishReply(target, turn);
+                WorkHistory.finish(target.optJSONArray("messages"), completedId);
                 if (failed) {
                     String failureCode = ConversationFailure.code(error);
                     target.put("conversationFailure", obj("code", failureCode, "turnId", completedId));
@@ -1624,6 +1718,8 @@ public final class Engine {
                     } finally { active = previous; }
                 }
                 persist(); publish();
+                if (!fromVisibleProvider && runningTurns.keySet().stream().noneMatch(id -> inProviderScope(session(id), eventScope)))
+                    retireProviderRuntime(eventScope);
                 taskNotification(interrupted ? "interrupted" : failed ? "failed" : "completed",
                     interrupted ? t("작업 중지됨") : failed ? t("작업 실패") : missingReply ? t("작업 종료") : t("답변 완료"),
                     interrupted ? t("Codex 작업이 중지되었습니다.") : failed ? t("Codex 작업이 실패했습니다.")
@@ -1729,7 +1825,7 @@ public final class Engine {
             .put("completedTurnId", completedTurnId).put("phase", item.optString("phase", ""));
     }
     private void trackTurn(String localThread, String id, long startedAt) throws org.json.JSONException {
-        if (runningTurns.isEmpty()) runtimeRecovery.edit().putString("backgroundScope", apiProviders.scope()).apply();
+        if (runningTurns.isEmpty()) runtimeRecovery.edit().putString("backgroundScope", providerScope()).apply();
         String previous = runningTurns.put(localThread, id);
         if (!id.equals(previous)) turnProgress.put(localThread, new TurnProgress(id, startedAt));
         syncTaskCpu();
@@ -1771,9 +1867,10 @@ public final class Engine {
         try {
             if (!method.equals("item/tool/call")) {
                 String key = UUID.randomUUID().toString();
-                requests.put(key, new PendingRequest(connection, id, method, p));
+                requests.put(key, new PendingRequest(connection, id, method, p, eventScope.isBlank() ? runtimeScope : eventScope));
                 String remoteThread = p.optString("threadId");
-                String localThread = remoteThread.isBlank() ? threadId : localIdForCodexThread(remoteThread);
+                String localThread = remoteThread.isBlank() && (eventScope.isBlank() || eventScope.equals(runtimeScope))
+                    ? threadId : localIdForCodexThread(remoteThread);
                 if (method.contains("requestApproval")) {
                     String approvalThread = localThread;
                     JSONObject approvalSession = session(approvalThread);
@@ -1865,20 +1962,39 @@ public final class Engine {
         runtimeRecovery.edit().remove("scope").remove("backgroundScope").apply();
         PhoneUseService.stopControl();
         if (pendingApproval != null) pendingApproval.decision.complete(false);
-        Process old = process; process = null;
+        for (String scope : new ArrayList<>(parkedRuntimes.keySet())) retireProviderRuntime(scope);
+        retireProviderRuntime(runtimeScope);
+        status = t("연결 종료");
+        persist(); publish();
+        stopServiceIfIdle();
+    }
+    private void retireProviderRuntime(String scope) {
+        if (scope.isBlank() && !runtimeScope.isBlank()) return;
+        ParkedRuntime runtime;
+        if (scope.equals(runtimeScope)) {
+            runtime = new ParkedRuntime(process, rpc, processHome);
+            process = null; rpc = null; ready = false; serverThreadId = "";
+        } else {
+            runtime = parkedRuntimes.remove(scope);
+            if (runtime == null) return;
+        }
+        Process old = runtime.process;
         if (old != null) {
             old.destroyForcibly();
             // Finish the old process before a provider or credential revision can be activated.
             try { if (!old.waitFor(2, TimeUnit.SECONDS) && old.isAlive()) old.destroyForcibly(); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
-        if (rpc != null) rpc.close(); rpc = null;
-        requests.forEach((key, value) -> event("server.resolved", obj("key", key)));
-        requests.clear();
-        clearRunningState();
-        ready = false; serverThreadId = ""; status = t("연결 종료");
-        persist(); publish();
-        stopServiceIfIdle();
+        if (runtime.connection != null) runtime.connection.close();
+        clearRequests(runtime.connection);
+        clearRunningState(scope);
+    }
+    private void clearRequests(RpcClient connection) {
+        requests.entrySet().removeIf(entry -> {
+            if (entry.getValue().connection != connection) return false;
+            event("server.resolved", obj("key", entry.getKey()));
+            return true;
+        });
     }
     /** Whether a config still declares the retired Pro MCP server (table or dotted keys). */
     static boolean retiredProBridgeConfigured(File config) {

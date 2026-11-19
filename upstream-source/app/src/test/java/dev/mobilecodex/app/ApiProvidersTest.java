@@ -162,35 +162,31 @@ public class ApiProvidersTest {
         assertFalse(snapshot.toString().contains(FIXTURE_KEY));
         assertFalse(snapshot.has("rateLimits")); assertFalse(snapshot.has("pendingProConsultation"));
     }
-    @Test public void providerSwitchStartsNewChatAndCannotResumeOldProviderThread() throws Exception {
+    @Test public void eachChatRestoresItsProviderWhileAnotherProviderHasARunningTurn() throws Exception {
         String one = save("First"), two = save("Second"); providers.select(one); engine = new Engine(context, providers);
         List<String> calls = new ArrayList<>();
         engine.setTestTransport((method, params) -> {
             calls.add(method);
-            if (method.equals("thread/start")) return obj("thread", obj("id", "first-provider-thread"));
-            if (method.equals("turn/start")) return obj("turn", obj("id", ""));
-            if (method.equals("thread/resume")) { assertEquals("first-provider-thread", params.getString("threadId")); return obj(); }
-            throw new AssertionError("Cross-provider runtime call: " + method);
+            if (method.equals("thread/start")) return obj("thread", obj("id", "remote-" + calls.size()));
+            if (method.equals("turn/start")) return obj("turn", obj("id", "turn-" + calls.size()));
+            throw new AssertionError(method);
         });
-        handle("chat.send", obj("text", "First provider"));
-        String local = handle("state", obj()).getString("threadId");
-        handle("providers.save", obj("id", one, "name", "Renamed provider", "baseUrl", "https://example.test/v1", "models", "coding-model,second-model", "apiKey", ""));
-        assertEquals(local, handle("state", obj()).getString("threadId"));
-        handle("providers.select", obj("id", one));
-        assertEquals(local, handle("state", obj()).getString("threadId"));
-        assertEquals(Arrays.asList("thread/start", "turn/start", "thread/resume"), calls);
-        handle("providers.select", obj("id", two));
-        assertEquals("", handle("state", obj()).getString("threadId"));
-        assertEquals(1, handle("state", obj()).getJSONArray("sessions").length());
-        handle("chat.resume", obj("id", local));
-        int before = calls.size();
-        try { handle("rpc", obj("method", "thread/resume", "params", obj("threadId", local))); fail(); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("其他 API 配置")); }
-        try { handle("rpc", obj("method", "thread/read", "params", obj("threadId", "untracked-remote-id"))); fail(); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("找不到")); }
-        try { handle("chat.send", obj("text", "Cannot send with another credential")); fail(); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("其他 API 配置")); }
-        assertEquals(before, calls.size());
+        handle("chat.send", obj("text", "First provider", "expectedApiScope", providers.scope(one)));
+        JSONObject first = handle("state", obj());
+        assertTrue(first.getBoolean("busy"));
+        handle("chat.new", obj());
+        JSONObject draft = handle("chat.provider", obj("id", two, "expectedThreadId", ""));
+        assertEquals(two, draft.getString("apiActive"));
+        assertEquals(one, draft.getString("apiDefault"));
+        handle("chat.send", obj("text", "Second provider", "expectedApiScope", providers.scope(two)));
+        JSONObject second = handle("state", obj());
+        assertTrue(second.getBoolean("busy"));
+        JSONObject reopened = handle("chat.resume", obj("id", first.getString("threadId")));
+        assertEquals(one, reopened.getString("apiActive"));
+        assertEquals(first.getString("turnId"), reopened.getString("turnId"));
+        assertFalse(first.getString("turnId").equals(second.getString("turnId")));
+        assertEquals(two, handle("chat.resume", obj("id", second.getString("threadId"))).getString("apiActive"));
+        assertEquals(Arrays.asList("thread/start", "turn/start", "thread/start", "turn/start"), calls);
     }
     @Test public void retiredRoutesNeverReachAppServerEvenThroughGenericRpc() throws Exception {
         engine = new Engine(context, providers);

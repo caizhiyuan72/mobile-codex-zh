@@ -7,6 +7,10 @@
   const sixLevelModels = new Set(['gpt-6.2-sol','gpt-6.2-astra','gpt-6.1-sol','gpt-6-astra','gpt-6-sol']);
   const labels = Object.freeze(Object.fromEntries(levels.map(level => [level, level])));
   const levelSet = new Set(levels);
+  function normalize(effort) {
+    const value = typeof effort === 'string' ? effort.trim().toLowerCase() : '';
+    return value === 'ultar' ? 'ultra' : levelSet.has(value) ? value : '';
+  }
   function id(model) { return String(model?.model || model?.id || ''); }
   function metadata(model) {
     return [model?.supportedReasoningEfforts, model?.supported_reasoning_efforts,
@@ -17,7 +21,7 @@
     for (const raw of metadata(model)) for (const item of raw) {
       const candidate = typeof item === 'string' ? item :
         (item?.reasoningEffort ?? item?.reasoning_effort ?? item?.effort ?? item?.id);
-      const value = typeof candidate === 'string' ? candidate.toLowerCase() : '';
+      const value = normalize(candidate);
       if (levelSet.has(value)) result.add(value);
     }
     return levels.filter(level => result.has(level));
@@ -39,9 +43,9 @@
   }
   function choose({previous = '', fallback = '', model = null, thirdParty = false}) {
     const available = supported(model, thirdParty);
-    return [previous, fallback, 'medium', ...available].find(value => available.includes(value)) || '';
+    return [normalize(previous), normalize(fallback), 'medium', ...available].find(value => available.includes(value)) || '';
   }
-  const api = Object.freeze({levels, labels, id, efforts, known, supported, offered, source,
+  const api = Object.freeze({levels, labels, id, normalize, efforts, known, supported, offered, source,
     canSelect, choose, validSelection:canSelect});
   if (typeof window !== 'undefined') window.MobileCodexReasoning = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

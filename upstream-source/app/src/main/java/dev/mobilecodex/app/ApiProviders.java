@@ -95,10 +95,12 @@ final class ApiProviders {
 
     synchronized String activeId() { return registry.optString("active"); }
     synchronized boolean configured() { return profile(activeId()) != null; }
-    synchronized JSONObject activeProfile() throws IOException { return publicProfile(require(activeId())); }
-    synchronized String scope() {
-        JSONObject profile = profile(activeId());
-        return profile == null ? "" : activeId() + ":" + profile.optLong("revision", 1);
+    synchronized JSONObject activeProfile() throws IOException { return profileDetails(activeId()); }
+    synchronized JSONObject profileDetails(String id) throws IOException { return publicProfile(require(id)); }
+    synchronized String scope() { return scope(activeId()); }
+    synchronized String scope(String id) {
+        JSONObject profile = profile(id);
+        return profile == null ? "" : id + ":" + profile.optLong("revision", 1);
     }
     synchronized JSONObject snapshot() {
         JSONArray profiles = new JSONArray(), stored = registry.optJSONArray("profiles");
@@ -155,16 +157,17 @@ final class ApiProviders {
         commit(next);
     }
     synchronized String activeKey() throws IOException { return key(activeId()); }
-    private String key(String id) throws IOException {
+    synchronized String key(String id) throws IOException {
         JSONObject profile = require(id);
         try { return ApiProviderPolicy.apiKey(cipher.open(profile.getJSONObject("credential"))); }
         catch (Exception error) { throw new IOException("无法解密 API Key，请重新填写该服务商的密钥。", error); }
     }
 
     /** Each connection revision has its own server history and cannot resume another credential's threads. */
-    synchronized File prepareHome(File baseHome) throws IOException {
-        JSONObject profile = activeProfile();
-        File home = new File(runtimeRoot, profile.optString("id") + "-" + require(activeId()).optLong("revision", 1));
+    synchronized File prepareHome(File baseHome) throws IOException { return prepareHome(baseHome, activeId()); }
+    synchronized File prepareHome(File baseHome, String id) throws IOException {
+        JSONObject profile = profileDetails(id);
+        File home = new File(runtimeRoot, id + "-" + require(id).optLong("revision", 1));
         Files.createDirectories(home.toPath());
         File baseConfig = new File(baseHome, "config.toml");
         String source = baseConfig.isFile() ? Utf8Files.read(baseConfig.toPath()) : "approval_policy = \"on-request\"\n";

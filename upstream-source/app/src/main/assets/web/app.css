@@ -275,6 +275,8 @@ html[data-theme=dark] .mode-switch button[aria-pressed="true"] { background: var
 #header-project { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); font-weight: 600; }
 .topbar-divider { color: var(--text-3); }
 #header-title { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: var(--fs-md); }
+#header-api { display: block; min-width: 0; max-width: min(160px, 34vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+#header-api:disabled { opacity: 1; }
 
 .workspace-body { position: relative; display: flex; flex: 1; min-height: 0; }
 .conversation { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
@@ -337,6 +339,10 @@ html[data-theme=dark] .mode-switch button[aria-pressed="true"] { background: var
   color: var(--text-3); font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .message.assistant { white-space: normal; }
+.message.assistant:has(+ :is(.message-tool:not([hidden]), .command-group)) { margin-bottom: 0; }
+.message-tool { margin: 0; min-width: 0; }
+.message-tool > .task-activity-row { padding-block: 0; line-height: 1.7; }
+.message-tool + .message.assistant { margin-top: var(--s-1); }
 .message .prose-line { white-space: pre-wrap; }
 .message p { margin: 0 0 var(--s-3); }
 .message p:last-child { margin-bottom: 0; }
@@ -943,6 +949,7 @@ dialog > .toast { position: sticky; top: 0; bottom: auto; left: auto; z-index: 2
 .work-toggle { display: block; width: fit-content; padding: .65em 0; color: var(--text-2); background: transparent; border: 0; cursor: pointer; }
 .work-toggle::before { content: '▸'; margin-inline-end: .5em; }
 .work-toggle[aria-expanded="true"]::before { content: '▾'; }
+.work-toggle.command-group { padding: 0; font-size: var(--fs-sm); line-height: 1.7; text-align: start; }
 
 /* Send and Stop share one action position. */
 .composer-actions > .send-button[hidden] { display: none !important; }

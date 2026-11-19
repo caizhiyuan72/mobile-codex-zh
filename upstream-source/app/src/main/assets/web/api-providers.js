@@ -203,7 +203,7 @@
     $('api-migration').hidden = !state.apiMigrationError;
     $('api-migration').textContent = state.apiMigrationError ? '旧版 API 配置未能迁移，原配置已保留。请重新添加服务商。' : '';
     profiles = Array.isArray(state.apiProviders) ? state.apiProviders : [];
-    active = typeof state.apiActive === 'string' ? state.apiActive : '';
+    active = state.apiDefault ?? state.apiActive ?? '';
     draw();
   }
   window.MobileCodexApiProviders = {init, render};

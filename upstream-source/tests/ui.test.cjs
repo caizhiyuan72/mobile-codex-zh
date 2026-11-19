@@ -1377,18 +1377,92 @@ test('moving chat into an existing project does not create a project or switch t
 });
 
 test('provider picker guards pending sends and restores selection on failure',async()=>{
- let finish,fail=true;const {w,snapshot,calls}=setup({'providers.select':async request=>{
+ let finish,fail=true;const {w,snapshot,calls}=setup({'chat.provider':async request=>{
   await new Promise(resolve=>{finish=resolve;});if(fail)throw Error('offline');
-  snapshot.apiActive=request.args.id;snapshot.models=[{id:'other-model',isDefault:true}];return {};
+  snapshot.apiActive=request.args.id;snapshot.models=[{id:'other-model',isDefault:true}];return snapshot;
  }});await tick();const doc=w.document,select=doc.getElementById('picker-provider');
- snapshot.apiProviders.push({id:'other',hasKey:true},{id:'no-key',hasKey:false});w.mobileCodexEvent('state',snapshot);
+ snapshot.threadId='';snapshot.apiProviders.push({id:'other',name:'Other API',hasKey:true},{id:'no-key',hasKey:false});
+ snapshot.sessions=[{id:'running-chat',busy:true}];w.mobileCodexEvent('state',snapshot);
  assert.deepEqual([...select.options].map(option=>option.value),['','fixture-api','other']);
  const choose=async()=>{select.value='other';select.dispatchEvent(new w.Event('change'));await tick();};
  await choose();assert.ok(select.disabled);doc.getElementById('prompt').value='pending';
  doc.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();assert.ok(!calls.some(request=>request.action==='chat.send'));
  finish();await tick();assert.equal(select.value,'fixture-api');assert.ok(!select.disabled);
  fail=false;await choose();finish();await tick();assert.equal(select.value,'other');assert.equal(doc.getElementById('model').value,'other-model');
- w.mobileCodexEvent('state',{...snapshot,busy:true});assert.ok(select.disabled);
+ assert.equal(doc.getElementById('header-api').textContent,'API · Other API');
+ w.mobileCodexEvent('state',{...snapshot,threadId:'bound-chat'});assert.ok(select.disabled);
+});
+
+test('saved command rows stay under commentary when returning to another API chat',async()=>{
+ const {w,snapshot}=setup({}, {language:'zh-CN'});await tick();const doc=w.document;
+ const first={...snapshot,persistedWorkActivity:true,apiProviders:[{id:'first',name:'API One',hasKey:true},{id:'second',name:'API Two',hasKey:true}],apiActive:'first',messages:[
+  {id:'preamble',role:'assistant',text:'Checking files',phase:'commentary',completedTurnId:'turn'},
+  {id:'work:turn:cmd',kind:'toolActivity',role:'tool',activityKind:'command',activityTurnId:'turn',detail:'pwd',output:'/workspace',completed:true},
+  {id:'reply',role:'assistant',text:'Done',phase:'final_answer',completedTurnId:'turn'}]};
+ w.mobileCodexEvent('state',{...first,busy:true,turnId:'turn',messages:first.messages.slice(0,1)});
+ w.mobileCodexEvent('state',{...first,threadId:'another',apiActive:'second',messages:[]});
+ assert.equal(doc.getElementById('header-api').textContent,'API · API Two');
+ assert.equal(doc.querySelector('.message-tool'),null);
+ w.mobileCodexEvent('state',first);
+ assert.equal(doc.getElementById('header-api').textContent,'API · API One');
+ const row=doc.querySelector('.message-tool');
+ const group=doc.querySelector('.command-group');
+ assert.equal(group.previousElementSibling.dataset.id,'preamble');
+ assert.equal(group.nextElementSibling,row);
+ assert.equal(group.textContent,'运行了 1 条命令');
+ assert.equal(row.hidden,true);
+ group.click();await tick();
+ assert.equal(group.getAttribute('aria-expanded'),'true');
+ assert.equal(row.hidden,false);
+ assert.match(row.querySelector('summary').textContent,/pwd/);
+ row.querySelector('summary').click();
+ assert.equal(row.firstElementChild.open,true);
+ assert.match(row.querySelector('pre').textContent,/\/workspace/);
+ w.mobileCodexEvent('state',{...first,threadId:'another',apiActive:'second',messages:[]});
+ w.mobileCodexEvent('state',first);
+ assert.equal(doc.querySelector('.command-group').getAttribute('aria-expanded'),'true');
+ doc.querySelector('.command-group').click();await tick();
+ assert.equal(doc.querySelector('.message-tool').hidden,true);
+});
+
+test('each command group folds when the following assistant text first streams',async()=>{
+ const {w,snapshot,frames}=setup({}, {language:'zh-CN',manualFrames:true});await tick();const doc=w.document;
+ const flush=()=>{for(const callback of frames.splice(0))callback();};
+ const work=(id,activityKind='command')=>({id,kind:'toolActivity',role:'tool',activityKind,activityTurnId:'turn',detail:id,completed:true});
+ const commentary={id:'commentary',role:'assistant',text:'Starting'};
+ const progress={id:'progress',role:'assistant',text:'',status:'streaming'};
+ const first=[commentary,work('pwd'),work('ls'),work('edit','editing'),progress];
+ const active={...snapshot,busy:true,turnId:'turn',persistedWorkActivity:true};
+ const visibleWork=()=>[...doc.querySelectorAll('.message-tool:not([hidden])')].map(row=>row.dataset.id);
+ const summaries=()=>[...doc.querySelectorAll('.command-group')].map(group=>group.textContent);
+ w.mobileCodexEvent('state',{...active,messages:first});flush();
+ assert.deepEqual(visibleWork(),['pwd','ls','edit']);
+ assert.equal(doc.querySelector('.message-tool').previousElementSibling.dataset.id,'commentary');
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'progress',delta:' '});flush();
+ assert.deepEqual(summaries(),[]);
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'progress',delta:'A'});flush();
+ assert.deepEqual(summaries(),['运行了 2 条命令 · 1 项文件修改']);
+ assert.deepEqual(visibleWork(),[]);
+ const reply={id:'reply',role:'assistant',text:'',status:'streaming'};
+ w.mobileCodexEvent('state',{...active,messages:[...first,work('npm test'),reply]});flush();
+ assert.deepEqual(visibleWork(),['npm test']);
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'reply',delta:'D'});flush();
+ assert.deepEqual(summaries(),['运行了 2 条命令 · 1 项文件修改','运行了 1 条命令']);
+ assert.deepEqual(visibleWork(),[]);
+ doc.querySelector('.command-group').click();await tick();
+ assert.deepEqual(visibleWork(),['pwd','ls','edit']);
+});
+
+test('ultra commits on slider input and survives a provider model refresh before sending',async()=>{
+ const {w,snapshot,calls}=setup();await tick();const doc=w.document;
+ const model={id:'gpt-6.2-sol',isDefault:true};
+ w.mobileCodexEvent('state',{...snapshot,models:[model]});
+ const slider=doc.getElementById('effort-slider');
+ slider.value=slider.max;slider.dispatchEvent(new w.Event('input'));
+ w.mobileCodexEvent('state',{...snapshot,models:[{...model,displayName:'Updated display name'}]});
+ doc.getElementById('prompt').value='verify selected effort';
+ doc.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
+ assert.equal(calls.find(request=>request.action==='chat.send').args.effort,'ultra');
 });
 
 test('live work precedes the current answer without moving prior turns',async()=>{

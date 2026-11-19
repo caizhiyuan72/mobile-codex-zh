@@ -259,7 +259,7 @@
   }
   function contextScope(scope = draftScope) { return scope ? scope + ':context' : ''; }
   function optionsScope(scope = draftScope) { return scope ? scope + ':options' : ''; }
-  function restoreOptions(scope) { try { const value = JSON.parse(localStorage.getItem(optionsScope(scope)) || '{}'); if (value.model === LEGACY_PRO_MODEL) { value.model = ''; value.effort = ''; localStorage.setItem(optionsScope(scope), JSON.stringify(value)); } return {model:value.model || '', effort:value.effort || '', fastMode:typeof value.fastMode === 'boolean' ? value.fastMode : undefined}; } catch { return {model:'', effort:''}; } }
+  function restoreOptions(scope) { try { const value = JSON.parse(localStorage.getItem(optionsScope(scope)) || '{}'); if (value.model === LEGACY_PRO_MODEL) { value.model = ''; value.effort = ''; localStorage.setItem(optionsScope(scope), JSON.stringify(value)); } return {model:value.model || '', effort:window.MobileCodexReasoning.normalize(value.effort), fastMode:typeof value.fastMode === 'boolean' ? value.fastMode : undefined}; } catch { return {model:'', effort:''}; } }
   function providerScope(snapshot = state) { return snapshot.apiActive || ''; }
   function saveOptions() { if (!draftScope) return; draftOptions = {model:$('model').value, effort:$('effort').value, fastMode:draftOptions.fastMode === true}; try { localStorage.setItem(optionsScope(), JSON.stringify(draftOptions)); } catch {} }
   function saveDraft() {
@@ -327,7 +327,7 @@
     modelKey = '';
     if (draftOptions.fastMode === undefined) draftOptions.fastMode = next.fastMode === true;
     $('model').value = [...$('model').options].some(o => o.value === draftOptions.model) ? draftOptions.model : '';
-    efforts(); if ([...$('effort').options].some(o => o.value === draftOptions.effort)) $('effort').value = draftOptions.effort;
+    efforts(draftOptions.effort);
     sizeComposer();
   }
   const projectWorkBusy = () => !!state.busy || (state.sessions || []).some(session => !!session.busy);
@@ -371,7 +371,12 @@
   function restoreReadingPosition(anchor) {
     if (!anchor || following) return;
     const area = $('chat-scroll');
-    const element = anchor.id && [...$('messages').children].find(el => el.dataset.id === anchor.id);
+    const rows = [...$('messages').children];
+    let element = anchor.id && rows.find(el => el.dataset.id === anchor.id);
+    if (element?.hidden) {
+      const summary = element.dataset.workSummary;
+      element = summary ? rows.find(el => el.dataset.id === summary) : null;
+    }
     // Keep the same line on screen when a snapshot changes content above it.
     const adjustment = element ? element.getBoundingClientRect().top - area.getBoundingClientRect().top - anchor.offset : 0;
     if (element) { if (adjustment) area.scrollTop += adjustment; }
@@ -1103,6 +1108,16 @@
     const turn = data.turnId || data.params?.turnId;
     if (!state.busy || !activity || (thread && thread !== state.threadId) ||
         (turn && state.turnId && turn !== state.turnId)) return;
+    if (state.persistedWorkActivity && data.method?.match(/^item\/(commandExecution|fileChange)\/outputDelta$/)) {
+      const id = `work:${turn}:${activity.key}`, row = messageLookup.get(id);
+      if (row && !row.completed) {
+        const output = (row.output || '') + activity.output.slice(-4000);
+        row.output = output.length > 4000 ? '…\n' + output.slice(-3998) : output;
+        scheduleMessageDraw(id);
+      }
+      return;
+    }
+    if (state.persistedWorkActivity && ['commandExecution', 'fileChange'].includes(data.params?.item?.type)) return;
     if (!state.liveTaskActivity) {
       if (activity.append || activity.approval) return;
       const anchor = readingPosition();
@@ -1286,6 +1301,7 @@
     label.append(avatar, node('strong', name)); return label;
   }
   const dirtyMessages = new Set(), messageLookup = new Map(), renderedMessages = new Map();
+  const pendingCommandReplies = new Set(), expandedCommandGroups = new Set();
   let messagesFramePending = false, groupedMessages = false;
   function scheduleMessageDraw(id) {
     dirtyMessages.add(id);
@@ -1300,9 +1316,10 @@
   }
   function workFolds(messages) {
     const final = new Set(), folds = new Map();
+    const inlineTurns = new Set(messages.filter(message => message.kind === 'toolActivity').map(message => message.activityTurnId));
     for (let i = messages.length - 1; i >= 0; --i) {
       const m = messages[i], id = m.completedTurnId;
-      if (!id || m.agent || m.kind || m.role !== 'assistant' || m.images?.length || !m.text?.trim() ||
+      if (!id || inlineTurns.has(id) || m.agent || m.kind || m.role !== 'assistant' || m.images?.length || !m.text?.trim() ||
           (state.busy && state.turnId === id)) continue;
       if (m.finalForTurn || m.phase === 'final_answer') final.add(id);
       else if (final.has(id) && (!m.phase || m.phase === 'commentary')) {
@@ -1312,6 +1329,52 @@
     }
     return folds;
   }
+  function commandFolds(messages) {
+    pendingCommandReplies.clear();
+    const folds = new Map();
+    let groups = [], current = null, turn;
+    for (const message of messages) {
+      if (message.kind === 'toolActivity') {
+        if (turn !== message.activityTurnId) { groups = []; current = null; turn = message.activityTurnId; }
+        if (!current) { current = []; groups.push(current); }
+        current.push(message);
+        continue;
+      }
+      current = null;
+      if (message.role === 'user') { groups = []; continue; }
+      if (message.role !== 'assistant' || message.kind || !groups.length) continue;
+      if (message.completedTurnId && turn && message.completedTurnId !== turn) { groups = []; continue; }
+      if (!message.text?.trim()) { pendingCommandReplies.add(message.id); continue; }
+      for (const rows of groups) {
+        const commands = rows.filter(row => row.activityKind === 'command').length;
+        if (!commands) continue;
+        const group = {key:JSON.stringify(['commands',state.threadId,rows.at(-1).id]), commands, edits:rows.length - commands};
+        for (const row of rows) folds.set(row.id, group);
+      }
+      groups = [];
+    }
+    return folds;
+  }
+  function commandGroupLabel({commands, edits}) {
+    const language = L.language();
+    if (language === 'zh-CN') return `运行了 ${commands} 条命令` + (edits ? ` · ${edits} 项文件修改` : '');
+    if (language === 'ko') return `명령 ${commands}개 실행` + (edits ? ` · 파일 변경 ${edits}건` : '');
+    return `Ran ${commands} command${commands === 1 ? '' : 's'}` + (edits ? ` · ${edits} file change${edits === 1 ? '' : 's'}` : '');
+  }
+  function renderWorkRow(message, element) {
+    const details = element.firstElementChild || node('details', null, 'task-activity-row');
+    if (!details.firstElementChild) {
+      const summary = node('summary');
+      summary.append(node('span'), node('span', null, 'task-activity-preview'));
+      details.append(summary, node('pre', null, 'console'));
+      element.append(details);
+    }
+    const {activityKind:kind, detail, output, completed, failed, interrupted} = message;
+    const [label, preview] = details.firstElementChild.children;
+    label.textContent = activityRowStatus({kind, completed, failed, interrupted}, true);
+    preview.textContent = detail?.split(/\r?\n/)[0] || '';
+    details.lastElementChild.textContent = [detail, output].filter(Boolean).join('\n\n');
+  }
   function legacySummaryNotice(m) {
     return m.summary?.status === 'failed' ? t('작업 실패') : m.summary?.status === 'interrupted' ? t('작업 중지됨') :
       m.summary?.missingReply ? t('작업이 끝났지만 최종 답변을 받지 못했습니다.') : '';
@@ -1319,7 +1382,8 @@
   function drawMessages(dirtyIds = null, preserveReading = true) {
     const anchor = preserveReading ? readingPosition() : null;
     const allMessages = state.messages || [];
-    if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id))) dirtyIds = null;
+    if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id) ||
+        (pendingCommandReplies.has(id) && messageLookup.get(id)?.text?.trim()))) dirtyIds = null;
     if (!dirtyIds) {
       dirtyMessages.clear(); messageLookup.clear(); renderedMessages.clear();
       for (const message of allMessages) messageLookup.set(message.id, message);
@@ -1329,6 +1393,7 @@
     const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).filter(n => n.hasAttribute('data-id')).map(n => [n.dataset.id, n]));
     const keep = new Set();
     const folds = dirtyIds ? null : workFolds(allMessages);
+    const commands = dirtyIds ? null : commandFolds(allMessages);
     const positionAfter = el => {
       const next = previous ? previous.nextSibling : $('messages').firstChild;
       if (el !== next) $('messages').insertBefore(el, next);
@@ -1342,11 +1407,33 @@
     C.groupImageMessages(messages).forEach(m => {
       if (m.kind === 'taskSummary' && !legacySummaryNotice(m)) return;
       keep.add(m.id); let el = elements.get(m.id);
-      if (!el) { el = node('article', null, 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }
+      if (!el) { el = node('article', null, m.kind === 'toolActivity' ? 'message-tool' : 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }
       if (!dirtyIds) {
-        const ids = folds.get(m.completedTurnId), folded = ids?.has(m.id);
-        if (folded) {
-          const key = JSON.stringify(['work',state.threadId,m.completedTurnId]);
+        const workTurn = m.completedTurnId;
+        const ids = folds.get(workTurn), folded = ids?.has(m.id);
+        const group = commands.get(m.id);
+        if (group) {
+          const {key} = group;
+          if (!keep.has(key)) {
+            let control = elements.get(key);
+            if (!control) {
+              control = button('', () => toggleInPlace(control, () => {
+                if (!expandedCommandGroups.delete(key)) {
+                  if (expandedCommandGroups.size >= 100) expandedCommandGroups.delete(expandedCommandGroups.values().next().value);
+                  expandedCommandGroups.add(key);
+                }
+                drawMessages(null, false);
+              }), 'work-toggle command-group');
+              control.dataset.id = key;
+            }
+            control.setAttribute('aria-expanded', String(expandedCommandGroups.has(key)));
+            control.textContent = commandGroupLabel(group);
+            keep.add(key); positionAfter(control);
+          }
+          el.dataset.workSummary = key;
+          el.hidden = !expandedCommandGroups.has(key);
+        } else if (folded) {
+          const key = JSON.stringify(['work',state.threadId,workTurn]);
           let control = elements.get(key);
           if (!control) {
             control = button('', () => {
@@ -1363,11 +1450,15 @@
             control.textContent = (open ? '收起工作过程' : '查看工作过程') + `（${ids.size}）`;
           }
           el.hidden = !open;
-        } else el.hidden = false;
+        } else {
+          delete el.dataset.workSummary;
+          el.hidden = false;
+        }
         positionAfter(el);
         if (lastUser && m.id === lastUser.id) positionAfter(liveWork);
       }
       renderedMessages.set(m.id, el);
+      if (m.kind === 'toolActivity') { renderWorkRow(m, el); return; }
       if (m.kind === 'taskSummary' && m.summary) {
         el.textContent = legacySummaryNotice(m);
         return;
@@ -1418,9 +1509,9 @@
     if (following) scrollLatest();
     else { restoreReadingPosition(anchor); updateJumpLatest(); }
   }
-  function efforts() {
+  function efforts(previous = $('effort').value) {
     const selected = state.models.find(m => (m.model || m.id) === $('model').value);
-    const policy = window.MobileCodexReasoning, previous = $('effort').value;
+    const policy = window.MobileCodexReasoning;
     const thirdParty = !!state.apiActive, supported = policy.supported(selected, thirdParty);
     $('effort').replaceChildren(...supported.map(level => new Option(policy.labels[level], level)));
     $('effort').disabled = !supported.length;
@@ -1439,7 +1530,8 @@
       provider.options[0].disabled = true;
     }
     provider.value = state.apiActive || '';
-    provider.disabled = projectWorkBusy() || !!sending || providerSwitchPending;
+    provider.disabled = !!state.threadId || !!state.busy || !!sending || providerSwitchPending;
+    provider.title = state.threadId ? '此聊天已绑定服务商。可在新聊天选择其他 API。' : '选择此聊天的 API';
     $('model-list').inert = providerSwitchPending;
     const signature = JSON.stringify([state.models, $('model').value, L.language()]);
     if (signature === modelListSignature) return;
@@ -1961,7 +2053,7 @@
     await call('phone.stop');
     state.phone = {...state.phone, enabled:false, status:t('휴대폰 제어 꺼짐')}; renderPhone();
   }
-  function configuredApi() { return !!(state.apiActive && (state.apiProviders || []).some(p => p.id === state.apiActive && p.hasKey)); }
+  function configuredApi() { return state.authState !== 'unconfigured' && !!(state.apiActive && (state.apiProviders || []).some(p => p.id === state.apiActive && p.hasKey)); }
   let navigationSignature = '';
   function render(next) {
     const changedThread = state.threadId !== next.threadId;
@@ -1978,6 +2070,10 @@
     const name = selected ? state.workspace.name : t('일반 대화');
     $('project-label').textContent = workspaceFolderLabel(); $('header-project-label').textContent = name;
     $('header-title').textContent = (state.sessions || []).find(s => s.id === state.threadId)?.title || t('새 대화');
+    const apiName = (state.apiProviders || []).find(profile => profile.id === state.apiActive)?.name;
+    $('header-api').textContent = 'API · ' + (apiName || (state.threadId ? '不可用' : '未选择')) + (apiName && !logged ? '（不可用）' : '');
+    $('header-api').title = $('header-api').textContent;
+    $('header-api').disabled = !!state.threadId || providerSwitchPending;
     $('welcome').hidden = state.messages.length > 0; $('onboarding').hidden = logged; $('suggestions').hidden = !logged;
     const generalPrompts = [t('작업을 계획하고 필요한 정보를 정리해줘.'),t('아이디어를 구조화하고 다음 단계를 제안해줘.'),t('무엇을 도와줄 수 있는지 알려줘.')];
     document.querySelectorAll('[data-prompt]').forEach((button, i) => { button.dataset.prompt = selected ? [t('이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘.'),t('이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘.'),t('이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘.')][i] : generalPrompts[i]; if (button.lastChild?.nodeType === Node.TEXT_NODE) button.lastChild.textContent = selected ? [t('폴더 살펴보기'),t('프로젝트 이해하기'),t('변경 사항 검토')][i] : [t('작업 계획하기'),t('아이디어 정리하기'),t('도움말 보기')][i]; });
@@ -2059,7 +2155,7 @@
       const savedMissing = draftOptions.model && value !== LEGACY_PRO_MODEL && !choices.some(m => (m.model || m.id) === value);
       if (savedMissing) $('model').add(new Option(value + ' · ' + t('목록 확인 필요'), value));
       $('model').value = savedMissing || choices.some(m => (m.model || m.id) === value) ? value : ((choices.find(m => m.isDefault)?.model || choices.find(m => m.isDefault)?.id) || choices[0]?.model || choices[0]?.id || '');
-      efforts(); if (draftOptions.effort && [...$('effort').options].some(o => o.value === draftOptions.effort)) $('effort').value = draftOptions.effort;
+      efforts(draftOptions.effort || $('effort').value);
     }
     syncPermissionControls(state.permissions, anyBusy);
     syncApprovalControl(anyBusy);
@@ -2658,7 +2754,7 @@
     closeComposerAddMenu(false);
     saveDraft(); updateSend(); scrollLatest();
     try {
-      await call(steer ? 'chat.steer' : 'chat.send', {text, expectedTurnId, expectedThreadId, workspaceKey, model:$('model').value, effort:$('effort').value, chatIconsEnabled,
+      await call(steer ? 'chat.steer' : 'chat.send', {text, expectedTurnId, expectedThreadId, expectedApiScope:state.apiScope, workspaceKey, model:$('model').value, effort:$('effort').value, chatIconsEnabled,
 
         attachments:submitted.context.attachments.map(x => x.id), skills:submitted.context.skills, mentions:submitted.context.mentions});
       // Keep text typed during the request, or drafts from a different conversation.
@@ -2712,20 +2808,28 @@
     refreshPickerModels();
   });
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
+  on('header-api', () => {
+    if (!(state.apiProviders || []).some(profile => profile.hasKey)) { openProviderSettings(); return; }
+    $('composer-options').click(); showModelPanel(true);
+  });
   on('model-picker-back', () => showModelPanel(false));
   on('picker-provider', async () => {
     const id = $('picker-provider').value;
-    if (!id || id === state.apiActive || projectWorkBusy() || sending || providerSwitchPending) return;
+    if (!id || id === state.apiActive || state.threadId || state.busy || sending || providerSwitchPending) return;
+    const expectedThreadId = state.threadId || '', workspaceKey = state.workspace?.key || '';
     providerSwitchPending = true; saveDraft(); renderModelList(); updateSend();
-    try { await call('providers.select', {id}); render(await call('state')); }
+    try { render(await call('chat.provider', {id, expectedThreadId, workspaceKey})); }
     finally { providerSwitchPending = false; renderModelList(); updateSend(); }
   }, 'change');
   on('model-picker-permissions', () => { close('model-picker'); show('options-dialog'); });
-  on('effort-slider', previewReasoning, 'input');
-  on('effort-slider', () => {
+  function selectSliderEffort() {
     const option = [...$('effort').options].filter(option => option.value)[Number($('effort-slider').value)];
-    if (option) { $('effort').value = option.value; $('effort').dispatchEvent(new Event('change')); }
-  }, 'change');
+    if (option && $('effort').value !== option.value) {
+      $('effort').value = option.value; saveOptions(); optionsSummary();
+    }
+  }
+  $('effort-slider').addEventListener('input', selectSliderEffort);
+  $('effort-slider').addEventListener('change', selectSliderEffort);
   $('model-picker').addEventListener('close', () => { $('composer-options').setAttribute('aria-expanded', 'false'); updateComposerExpansion(); });
   if (window.ResizeObserver) {
     const pickerObserver = new ResizeObserver(sizeModelPicker);
@@ -2744,8 +2848,8 @@
     imageTouch = null;
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
-  $('live-work').addEventListener('click', event => {
-    const summary = event.target.closest('summary');
+  $('chat-scroll').addEventListener('click', event => {
+    const summary = event.target.closest('.task-activity-row > summary, #turn-summary > summary');
     if (!summary || event.defaultPrevented) return;
     event.preventDefault();
     toggleInPlace(summary, () => { summary.parentElement.open = !summary.parentElement.open; });

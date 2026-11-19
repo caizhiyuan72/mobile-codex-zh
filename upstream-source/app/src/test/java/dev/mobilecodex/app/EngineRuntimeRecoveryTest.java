@@ -60,7 +60,7 @@ public class EngineRuntimeRecoveryTest {
         session = obj("id", "local-saved", "sessionVersion", 2, "codexThreadId", "remote-saved",
             "title", "Keep this chat", "workspace", "", "workspaceKey", "", "model", "gpt-6-astra",
             "apiScope", providers.scope(),
-            "imageHistoryVersion", 1, "phoneToolsVersion", 1, "consultToolsVersion", 1,
+            "imageHistoryVersion", 1, "workHistoryVersion", 1, "phoneToolsVersion", 1, "consultToolsVersion", 1,
             "messages", array(obj("id", "old-message", "role", "user", "text", "keep history")));
         field("sessions", array(session)); field("active", session); field("threadId", "local-saved");
         field("serverThreadId", "remote-saved"); field("ready", true);
