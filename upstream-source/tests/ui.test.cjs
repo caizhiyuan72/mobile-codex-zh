@@ -64,7 +64,7 @@ test('liquid glass is opt-in and switching styles preserves the conversation and
  assert.ok(glass.closest('#settings-dialog .settings-primary'));
  const advanced = doc.getElementById('settings-advanced');
  const segment = glass.closest('[role="radiogroup"]');
- assert.equal(advanced.open, false);
+ assert.equal(advanced.hidden, true);
  assert.equal(segment.dataset.segment, '0');
  assert.equal(doc.getElementById('chat-preview'), null);
  assert.equal(classic.checked, true);
@@ -919,7 +919,7 @@ test('personal instructions load offline, retain failed saves and can be cleared
 });
 test('personal instructions preserve unsaved edits on cancel and explain an active override',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'override',activePath:'/private/.codex/AGENTS.override.md',notice:'AGENTS.override.md가 우선 적용됩니다.'})});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.getElementById('settings').click();await tick();d.getElementById('settings-open-advanced').click();
  d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.match(d.getElementById('instructions-status').textContent,/우선 적용/);
  const editor=d.getElementById('instructions-editor');editor.value='작성 중';
  d.querySelector('.dialog-head [data-close="settings-dialog"]').click();await answerConfirmation(d,false);
@@ -1865,7 +1865,7 @@ test('outside taps dismiss sheets and centered dialogs, while inside taps stay o
 });
 test('outside taps respect unsaved changes and do not answer approval requests',async()=>{
  const {w,responses}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.getElementById('settings').click();await tick();d.getElementById('settings-open-advanced').click();
  d.querySelector('[data-settings-tab="personal"]').click();await tick();
  d.getElementById('instructions-editor').value='Unsaved edit';
  const settings=d.getElementById('settings-dialog');backdropPointer(w,settings,100,100);
@@ -1883,7 +1883,7 @@ test('outside taps respect unsaved changes and do not answer approval requests',
 });
 test('mobile sheet drag closes through the existing unsaved-instructions guard',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.getElementById('settings').click();await tick();d.getElementById('settings-open-advanced').click();
  d.querySelector('[data-settings-tab="personal"]').click();await tick();
  d.getElementById('instructions-editor').value='Unsaved edit';
  const sheet=d.getElementById('settings-dialog'),grip=sheet.querySelector('.sheet-grip');

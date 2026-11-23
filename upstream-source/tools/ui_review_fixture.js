@@ -128,9 +128,8 @@
       click('#settings');
       const tab = name.slice('settings-'.length);
       if (tab !== 'general') {
-        const advanced = document.getElementById('settings-advanced');
-        if (advanced) advanced.open = true;
-        click('[data-settings-tab="'+CSS.escape(tab)+'"]');
+        click('#settings-open-advanced');
+        if (tab !== 'categories') click('[data-settings-tab="'+CSS.escape(tab)+'"]');
       }
       await pause(20); return;
     }

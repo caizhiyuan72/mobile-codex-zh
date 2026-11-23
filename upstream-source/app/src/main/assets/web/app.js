@@ -249,12 +249,12 @@
     return true;
   }
   function ensureTextSizeSettings() {
-    const themeRow = $('theme').closest('.settings-row');
+    const languageRow = $('language').closest('.settings-row');
     const row = node('div', null, 'settings-row text-size-row'), label = node('label');
-    label.htmlFor = 'text-size'; label.append(node('strong', t('文字大小')), node('small', t('适用于手机和平板上的应用界面。')));
+    label.htmlFor = 'text-size'; label.append(node('strong', t('文字大小')));
     const select = node('select'); select.id = 'text-size'; select.setAttribute('aria-label', t('文字大小'));
     for (const value of [75,85,100,115,130,150]) select.append(new Option(value === 100 ? t('默认 · 100%') : value + '%', String(value)));
-    row.append(label, select); themeRow.after(row);
+    row.append(label, select); languageRow.after(row);
     try { applyTextSize(JSON.parse(window.Native?.textSize?.() || '{}').percent); } catch {}
     applyTextSize(textSizePercent);
     select.addEventListener('change', async () => {
@@ -270,22 +270,22 @@
     });
   }
   function updateReplyIndentLabels() {
-    const [title, description] = $('reply-indent-label').children;
-    const english = L.language() === 'en';
-    title.textContent = english ? 'First-line indent in replies' : '回复首行缩进两格';
-    description.textContent = english ? 'Indent reply paragraphs by two characters.' : '应用于助手回复的正文段落。';
+    $('reply-indent-title').textContent = t('回复首行缩进');
   }
   function setupReplyIndentSetting() {
-    const row = node('div', null, 'settings-row');
+    const row = node('div', null, 'settings-row reply-indent-row');
     const label = node('label');
-    label.id = 'reply-indent-label'; label.htmlFor = 'reply-indent';
-    label.append(node('strong'), node('small'));
+    label.htmlFor = 'reply-indent';
+    const title = node('strong'); title.id = 'reply-indent-title';
+    label.append(title);
     const checkbox = node('input');
     checkbox.type = 'checkbox'; checkbox.id = 'reply-indent';
-    label.firstElementChild.id = 'reply-indent-title'; label.lastElementChild.id = 'reply-indent-description';
+    checkbox.setAttribute('role', 'switch');
     checkbox.setAttribute('aria-labelledby', 'reply-indent-title');
-    checkbox.setAttribute('aria-describedby', 'reply-indent-description');
-    row.append(label, checkbox); $('text-size').closest('.settings-row').after(row);
+    const toggle = node('label', null, 'toggle-switch');
+    const track = node('span', null, 'toggle-track'); track.setAttribute('aria-hidden', 'true');
+    toggle.append(checkbox, track);
+    row.append(label, toggle); $('text-size').closest('.settings-row').after(row);
     updateReplyIndentLabels();
     try { checkbox.checked = localStorage.getItem('replyIndent') === 'true'; } catch {}
     const apply = () => document.documentElement.toggleAttribute('data-reply-indent', checkbox.checked);
@@ -392,10 +392,12 @@
     if (restoreFocus) $('add-attachment').focus();
     return true;
   }
-  function openComposerAddMenu(last = false) {
-    hideAutocomplete(); updateSend(); $('composer-add-menu').hidden = false; $('add-attachment').setAttribute('aria-expanded', 'true');
-    const choices = [...$('composer-add-menu').querySelectorAll('button:not(:disabled)')];
-    (last ? choices.at(-1) : choices[0])?.focus();
+  function openComposerAddMenu(last = false, pointer = false) {
+    const menu = $('composer-add-menu');
+    hideAutocomplete(); updateSend(); menu.hidden = false; $('add-attachment').setAttribute('aria-expanded', 'true');
+    const choices = menu.querySelectorAll('button:not(:disabled)');
+    const target = pointer ? menu : choices[last ? choices.length - 1 : 0] || menu;
+    target.focus({preventScroll:true});
   }
   let chatTouch = null, unreadAssistantOutput = false;
   function updateJumpLatest() {
@@ -2698,22 +2700,28 @@
   let toolsScope = "", toolsGeneration = 0, toolsTab = 0, toolsQuery = "";
   const currentToolsScope = () => JSON.stringify([state.cwd, state.threadId, state.apiActive]);
   function accountScope() { return providerScope(); }
-  function selectSettingsTab(name) {
-    document.querySelectorAll('[data-settings-tab]').forEach(button => {
-      const selected = button.dataset.settingsTab === name;
-      button.classList.toggle('active', selected);
-      if (selected) button.setAttribute('aria-current', 'page');
-      else button.removeAttribute('aria-current');
-    });
-    document.querySelectorAll('[data-settings-panel]').forEach(panel => panel.hidden = panel.dataset.settingsPanel !== name);
-    const content = document.querySelector('.settings-content'); if (content) content.scrollTop = 0;
-    frame(() => {
-      const selected = document.querySelector('.settings-nav button.active'), nav = selected?.parentElement;
-      if (!$('settings-dialog').open || !selected || !nav) return;
-      const item = selected.getBoundingClientRect(), bounds = nav.getBoundingClientRect();
-      if (item.left < bounds.left) nav.scrollLeft -= bounds.left - item.left;
-      else if (item.right > bounds.right) nav.scrollLeft += item.right - bounds.right;
-    });
+  function showSettingsPage(page, section) {
+    const general = page === 'general';
+    $('settings-general').hidden = !general;
+    $('settings-advanced').hidden = page !== 'advanced';
+    $('settings-back').hidden = general;
+    $('settings-title-general').hidden = !general;
+    $('settings-title-advanced').hidden = general;
+    document.querySelector('.settings-content').hidden = page !== 'section';
+    document.querySelectorAll('[data-settings-panel]').forEach(panel => { panel.hidden = panel.dataset.settingsPanel !== section; });
+    $('settings-body').scrollTop = 0;
+  }
+  function backToSettings() {
+    if (!$('settings-advanced').hidden) {
+      showSettingsPage('general');
+      $('settings-open-advanced').focus();
+      return true;
+    }
+    if (!$('settings-general').hidden) return false;
+    const section = document.querySelector('[data-settings-panel]:not([hidden])')?.dataset.settingsPanel;
+    showSettingsPage('advanced');
+    Array.from($('settings-advanced').children).find(tab => tab.dataset.settingsTab === section)?.focus();
+    return true;
   }
   function setFilePanelOpen(open) {
     $('file-panel').hidden = !open;
@@ -2721,9 +2729,9 @@
     $('files-toggle').setAttribute('aria-expanded', String(open));
   }
   function openProviderSettings() {
-    $('settings-advanced').open = true;
-    selectSettingsTab('providers'); show('settings-dialog');
-    $('settings-advanced').scrollIntoView?.({block:'start'});
+    showSettingsPage('section', 'providers');
+    show('settings-dialog');
+    $('settings-title').focus({preventScroll:true});
   }
   async function toggleFilePanel() {
     if ($('header-menu-dialog').open) close('header-menu-dialog');
@@ -3000,6 +3008,7 @@
     if (closeComposerAddMenu()) return true;
     if (dictationState.phase !== 'idle') { call('voice.cancel').catch(error => toast(error.message)); return true; }
     const id = dialogs.at(-1);
+    if (id === 'settings-dialog' && backToSettings()) return true;
     if (id) { dismiss(id); return true; }
     if (closeSessionCard(true)) return true;
     if (closeProjectCard(true)) return true;
@@ -3028,7 +3037,10 @@
       if (d.open) return;
       const i = dialogs.indexOf(d.id); if (i !== -1) dialogs.splice(i, 1);
     });
-    d.addEventListener('cancel', e => { e.preventDefault(); dismiss(d.id); });
+    d.addEventListener('cancel', e => {
+      e.preventDefault();
+      if (d.id !== 'settings-dialog' || !backToSettings()) dismiss(d.id);
+    });
   });
   wireSheetGestures();
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => dismiss(b.dataset.close)));
@@ -3280,7 +3292,7 @@
     }
   });
   on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
-  $('add-attachment').addEventListener('click', () => { if (!closeComposerAddMenu()) openComposerAddMenu(); });
+  $('add-attachment').addEventListener('click', e => { if (!closeComposerAddMenu()) openComposerAddMenu(false, e.detail > 0); });
   // Focusing the compact plus before pointerup moves it to the expanded row.
   // Keep its target still until the click opens and focuses the menu.
   $('add-attachment').addEventListener('pointerdown', e => { if (e.button === 0) e.preventDefault(); });
@@ -3290,7 +3302,12 @@
     const choices = [...$('composer-add-menu').querySelectorAll('button:not(:disabled)')], current = choices.indexOf(document.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeComposerAddMenu(); }
     else if (e.key === 'Tab') closeComposerAddMenu(false);
-    else if (['ArrowDown','ArrowUp','Home','End'].includes(e.key)) { e.preventDefault(); const index = e.key === 'Home' ? 0 : e.key === 'End' ? choices.length - 1 : (current + (e.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length; choices[index]?.focus(); }
+    else if (['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
+      e.preventDefault();
+      const index = e.key === 'Home' || (current < 0 && e.key === 'ArrowDown') ? 0
+        : e.key === 'End' || current < 0 ? choices.length - 1 : (current + (e.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+      choices[index]?.focus();
+    }
     else if ((e.key === 'Enter' || e.key === ' ') && choices.includes(e.target)) { e.preventDefault(); e.target.click(); }
   });
   document.addEventListener('pointerdown', e => { if (!e.target.closest('.composer-add-wrap')) closeComposerAddMenu(false); });
@@ -3425,15 +3442,21 @@
   on('restart', async () => { await call('runtime.stop'); await call('runtime.start'); });
   on('engine-stop', () => call('runtime.stop'));
   on('battery-settings', () => call('ui.batterySettings'));
-  selectSettingsTab('providers');
   on('configure-api', openProviderSettings);
-  on('settings', () => {
+  $('settings').addEventListener('click', () => {
     ensureNotificationSettings();
-    $('settings-advanced').open = false;
-    show('settings-dialog'); $('settings-dialog').scrollTop = 0;
+    showSettingsPage('general');
+    show('settings-dialog');
   });
+  $('settings-open-advanced').addEventListener('click', () => {
+    showSettingsPage('advanced');
+    $('settings-title').focus({preventScroll:true});
+  });
+  $('settings-back').addEventListener('click', backToSettings);
   document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.addEventListener('click', () => {
-    const selected = tab.dataset.settingsTab; selectSettingsTab(selected);
+    const selected = tab.dataset.settingsTab;
+    showSettingsPage('section', selected);
+    $('settings-title').focus({preventScroll:true});
     if (selected === 'personal' && !instructionsLoaded) loadInstructions();
     if (selected === 'tools') refreshLinuxStatus();
     if (selected === 'updates') loadUpdates();
@@ -3454,7 +3477,6 @@
     agentUi?.localize();
     const sizeRow = $('text-size').closest('.text-size-row');
     sizeRow.querySelector('strong').textContent = t('文字大小');
-    sizeRow.querySelector('small').textContent = t('适用于手机和平板上的应用界面。');
     $('text-size').setAttribute('aria-label', t('文字大小')); $('text-size').options[0].textContent = t('默认 · 100%');
     updateReplyIndentLabels();
     modelKey = ''; render(await call('state')); renderDraftContext(); drawDictation(dictationState); await loadUpdates();

@@ -68,22 +68,17 @@
   button.sheet-grip:is(:focus-visible, :active)::before { opacity: 1; }
   button.sheet-grip:active::before { transform: var(--press); }
   dialog .dialog-head { margin-block-start: 0; }
-  .settings-dialog { --sheet-grip-surface: var(--bg); }
+  .settings-dialog {
+    width: min(100%, 560px); height: min(680px, calc(var(--app-height, 100dvh) - var(--s-3)));
+    padding: 0;
+  }
+  .settings-dialog .sheet-grip { position: static; width: 100%; height: 26px; margin: 0; background: none; }
   .editor-dialog, .image-dialog {
     width: 100%; height: calc(var(--app-height, 100dvh) - var(--s-2));
     max-height: calc(var(--app-height, 100dvh) - var(--s-2));
     padding: 0 var(--s-4) var(--s-4);
   }
 
-  .settings-layout { display: block; }
-  .settings-nav {
-    display: flex; gap: var(--s-1); overflow-x: auto; scrollbar-width: none;
-    margin: 0 calc(-1 * var(--s-2)) var(--s-2); padding: 0 var(--s-2) var(--s-2);
-  }
-  .settings-nav::-webkit-scrollbar { display: none; }
-  .settings-nav button { flex: 0 0 auto; width: auto; min-height: var(--touch); padding: 0 var(--s-4); border-radius: var(--radius-pill); white-space: nowrap; text-align: center; }
-  .settings-primary .appearance-choices { flex: 1 1 100%; }
-  .settings-content { max-height: none; overflow: visible; }
   .settings-section h3 { margin-top: var(--s-1); }
 
   .file-search input, .text-input, .question input:not([type="checkbox"]), .question select { font-size: 16px; }

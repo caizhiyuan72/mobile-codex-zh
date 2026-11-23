@@ -30,7 +30,7 @@ const messages = Array.from({length: 24}, (_, index) => [
 ]).flat();
 const model = {id: 'demo-model', model: 'demo-model', displayName: 'Demo Model', isDefault: true};
 const fixture = {
-  ready: true, busy: false, models: [model], sessions: [], projects: [], account: {}, permissions: 'workspace-write',
+  ready: true, busy: false, models: [model], sessions: [{id: 'glass-regression', title: 'Fixture session'}], projects: [], account: {}, permissions: 'workspace-write',
   status: '已连接', threadId: 'glass-regression', cwd: '/workspace/demo', apiActive: 'demo',
   apiProviders: [{id: 'demo', name: '示例', baseUrl: 'https://example.test/v1', hasKey: true, models: [model]}],
   workspace: {selected: true, name: '大肥龙', key: 'demo', available: true, hasLocalFolder: true}, messages,
@@ -142,7 +142,7 @@ async function installFixture(page, style, scheme) {
       },
     };
   }, {snapshot: fixture, style, scheme});
-  await page.goto(origin + '/index.html');
+  await page.goto(origin + '/index.html', {waitUntil: 'domcontentloaded', timeout: 10000});
   await page.locator(tail).waitFor();
   await settle(page);
 }
@@ -214,7 +214,7 @@ async function checkLayout(page, style, scheme) {
 async function checkFilters(page, style, scheme) {
   const active = await page.evaluate(grip => [...document.querySelectorAll('*')].flatMap(node => {
     const approved = node.closest('.topbar') && node.matches('.topbar, .topbar > button') ||
-      node.matches(`#composer, #composer-add-menu, #jump-latest, dialog, .appearance-choices, .segment-thumb, ${grip}`);
+      node.matches(`dialog, .appearance-choices, .segment-thumb, ${grip}`);
     return ['', '::before', '::after', ...(node.matches('dialog') ? ['::backdrop'] : [])].flatMap(pseudo => {
       const filter = getComputedStyle(node, pseudo || null).backdropFilter;
       return filter === 'none' ? [] : [{approved: Boolean(approved) && pseudo !== '::backdrop', node: node.id || node.className || node.tagName, pseudo, filter}];
@@ -224,8 +224,16 @@ async function checkFilters(page, style, scheme) {
   else {
     assert.deepEqual(active.filter(node => !node.approved), [], 'Backdrop blur spilled beyond the floating control layer');
     const expected = scheme === 'dark' ? 'blur(24px) saturate(1.6)' : 'blur(22px) saturate(1.9)';
-    assert.ok(active.some(node => node.node === 'composer' && node.filter === expected), `Composer must use ${expected}`);
-    assert.ok(active.some(node => /topbar|header-more|header-new-chat|sidebar-toggle/.test(node.node) && node.filter === expected), `Topbar must use ${expected}`);
+    assert.ok(active.some(node => node.node === 'model-picker' && node.filter === expected), `Model sheet must use ${expected}`);
+  }
+  const chrome = await page.locator('#composer, #header-more, #header-new-chat, .topbar .sidebar-toggle, #jump-latest, #composer-add-menu').evaluateAll(nodes => nodes.map(node => {
+    const css = getComputedStyle(node);
+    return {color: css.backgroundColor, highlight: css.backgroundImage, filter: css.backdropFilter, id: node.id};
+  }));
+  for (const surface of chrome) {
+    assert.match(surface.color, /^rgb\(/, `${surface.id} lets chat text show through`);
+    assert.equal(surface.filter, 'none');
+    if (surface.id !== 'composer-add-menu') assert.equal(surface.highlight.startsWith('linear-gradient('), style === 'glass');
   }
 }
 
@@ -339,6 +347,9 @@ async function checkDisclosure(page) {
   assert.equal(await options.count(), 1, 'Model options must be inside the + menu');
   assert.equal(await options.isVisible(), false, 'Model options must be hidden by default');
   await page.locator('#add-attachment').click();
+  assert.equal(await page.locator('#composer-add-menu').evaluate(node => document.activeElement === node), true, 'Pointer activation must not highlight the first menu item');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.locator('#composer-attach:focus').count(), 1, 'First item remains keyboard accessible');
   await options.click();
   await page.locator('#model-picker[open]').waitFor();
   await settle(page);
@@ -351,14 +362,21 @@ async function checkDisclosure(page) {
   const work = page.locator('.work-toggle:not(.tool-group)').first();
   const tools = page.locator('.work-toggle.tool-group').first();
   const entry = page.locator('[data-id="tool-0"]');
+  const unframed = node => {
+    const css = getComputedStyle(node);
+    return css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.boxShadow === 'none' && css.borderTopWidth === '0px';
+  };
+  assert.equal(await work.evaluate(unframed), true, 'Work summary should be unframed');
   assert.equal(await work.getAttribute('aria-expanded'), 'false');
   assert.equal(await entry.isVisible(), false);
   await work.click();
   assert.equal(await work.getAttribute('aria-expanded'), 'true');
   await tools.waitFor();
+  assert.equal(await tools.evaluate(unframed), true, 'Tool summary should be unframed');
   assert.equal(await tools.getAttribute('aria-expanded'), 'false');
   await tools.click();
   const details = entry.locator('details');
+  assert.equal(await details.evaluate(unframed), true, 'Tool details should be unframed');
   await details.locator('summary').click();
   assert.match(await details.locator('pre').innerText(), /fixture output/);
   await tools.click();
@@ -366,19 +384,49 @@ async function checkDisclosure(page) {
   await work.click();
   await tools.waitFor({state: 'hidden'});
 
+  await checkSettingsNavigation(page);
+}
+
+async function checkSettingsNavigation(page) {
   await openSettings(page);
   const primary = page.locator('#settings-dialog .settings-primary');
   for (const item of ['#appearance-classic', '#theme-choices', '#language']) assert.equal(await primary.locator(item).count(), 1);
   try {
-    const advanced = page.locator('#settings-dialog details.settings-advanced');
-    const summary = advanced.locator(':scope > summary');
-    await summary.waitFor();
-    assert.equal(await advanced.evaluate(node => node.open), false);
-    await summary.click();
-    assert.equal(await advanced.evaluate(node => node.open), true);
-    await summary.click();
-    assert.equal(await advanced.evaluate(node => node.open), false);
+    const advanced = page.locator('#settings-advanced'), open = page.locator('#settings-open-advanced');
+    const heading = page.locator('#settings-title');
+    const before = await heading.boundingBox();
+    assert.equal(await advanced.isVisible(), false);
+    await open.click();
+    await advanced.waitFor();
+    assert.equal(await primary.isVisible(), false);
+    assert.deepEqual(await advanced.locator('button').evaluateAll(items => items.map(item => item.dataset.settingsTab)), ['providers', 'github', 'personal', 'tools', 'advanced', 'updates']);
+    for (const name of ['providers', 'github', 'personal', 'tools', 'advanced', 'updates']) {
+      await advanced.locator(`[data-settings-tab="${name}"]`).click();
+      await page.locator(`[data-settings-panel="${name}"]`).waitFor();
+      assert.equal(await advanced.isVisible(), false);
+      await page.locator('#settings-body').evaluate(node => { node.scrollTop = node.scrollHeight; });
+      assert.ok(Math.abs((await heading.boundingBox()).y - before.y) < 1, 'Settings header moves when content scrolls');
+      assert.equal(await page.evaluate(() => window.mobileCodexBack()), true);
+      assert.equal(await advanced.isVisible(), true);
+    }
+    await page.locator('#settings-back').click();
+    assert.equal(await primary.isVisible(), true);
   } finally { await closeDialog(page, 'settings-dialog'); }
+}
+
+async function checkSessionHighlight(page) {
+  if (!(await page.locator('body').evaluate(body => body.classList.contains('sidebar-open')))) await page.locator('.topbar .sidebar-toggle').click();
+  const row = page.locator('[data-session-id="glass-regression"]');
+  await row.locator('.session-more').click();
+  await row.locator('[data-session-delete]').click();
+  const highlight = await row.evaluate(node => ({
+    row: node.getBoundingClientRect().height, height: parseFloat(getComputedStyle(node, '::before').height), background: getComputedStyle(node).backgroundColor,
+  }));
+  assert.ok(highlight.row > highlight.height, 'Confirmation did not open');
+  assert.equal(highlight.height, 44);
+  assert.equal(highlight.background, 'rgba(0, 0, 0, 0)', 'Selection highlight includes confirmation');
+  await row.locator('#session-card button', {hasText: '取消'}).click();
+  await page.locator('#sidebar .sidebar-toggle').click();
 }
 
 async function checkSheets(page) {
@@ -647,12 +695,14 @@ async function main() {
           if (!await report(`${label} load`, () => installFixture(page, style, scheme))) continue;
           await verify('geometry', () => checkLayout(page, style, scheme));
           await verify('blur budget', () => checkFilters(page, style, scheme));
+          if (width === 320) await verify('compact settings navigation', () => checkSettingsNavigation(page));
           if (width === 393) {
             await verify('chat AA', async () => `minimum ${Math.min(...await checkChatContrast(page)).toFixed(2)}:1`);
             await verify('settings AA', async () => `minimum ${Math.min(...await checkSettingsContrast(page)).toFixed(2)}:1`);
             await verify('IME simulation', () => checkIme(page));
             await verify('theme roundtrip and sliding segments', () => checkRoundtrip(page, style, scheme));
             if (scheme === 'light') {
+              await verify('sidebar selection highlight', () => checkSessionHighlight(page));
               await verify('disclosures', () => checkDisclosure(page));
               await verify('sheet drag dismissal', () => checkSheets(page));
               await verify('queued approval', () => checkApproval(page));

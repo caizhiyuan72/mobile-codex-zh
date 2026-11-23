@@ -1,50 +1,48 @@
 html[data-liquid-glass] {
-  --glass-canvas: radial-gradient(ellipse at 20% 0%, rgba(86, 126, 183, .11), transparent 56%),
-    radial-gradient(ellipse at 86% 100%, rgba(100, 157, 150, .075), transparent 55%);
-  --glass-tint: rgba(255, 255, 255, .8);
-  --glass-panel-tint: rgba(253, 253, 255, .94);
+  --glass-surface: #e5eef8;
+  --glass-track: #e2e8ef;
+  --glass-popover: #f9fbff;
+  --glass-panel-tint: rgba(253, 253, 255, .97);
   --glass-filter: blur(22px) saturate(190%);
-  --glass-highlight: linear-gradient(135deg, rgba(255, 255, 255, .88), rgba(255, 255, 255, .22) 36%, transparent 67%);
-  --glass-rim: inset 0 1px rgba(255, 255, 255, .96), inset 1px 0 rgba(255, 255, 255, .56), 0 0 0 1px rgba(37, 52, 74, .13);
-  --glass-depth: 0 8px 22px rgba(46, 62, 88, .09), 0 2px 6px rgba(46, 62, 88, .06);
+  --glass-highlight: linear-gradient(145deg, #fff, rgba(255, 255, 255, .54) 39%, transparent 77%);
+  --glass-rim: inset 0 1px rgba(255, 255, 255, .98), inset 0 -1px rgba(79, 114, 161, .18), inset 1px 0 rgba(255, 255, 255, .64), 0 0 0 1px rgba(48, 85, 135, .22);
+  --glass-depth: 0 6px 16px rgba(49, 85, 134, .13), 0 2px 4px rgba(46, 62, 88, .06);
   --glass-thumb-depth: 0 2px 5px rgba(46, 62, 88, .13);
   --glass-press-rim: inset 0 1px rgba(255, 255, 255, 1), inset 0 0 0 1px rgba(255, 255, 255, .64);
 }
 
 html[data-liquid-glass][data-theme="dark"] {
-  --glass-canvas: radial-gradient(ellipse at 20% 0%, rgba(105, 141, 197, .09), transparent 56%),
-    radial-gradient(ellipse at 86% 100%, rgba(109, 169, 157, .06), transparent 55%);
-  --glass-tint: rgba(15, 17, 22, .84);
-  --glass-panel-tint: rgba(20, 22, 27, .94);
+  --glass-surface: #1a2432;
+  --glass-track: #202833;
+  --glass-popover: #1b2430;
+  --glass-panel-tint: rgba(20, 22, 27, .97);
   --glass-filter: blur(24px) saturate(160%);
-  --glass-highlight: linear-gradient(135deg, rgba(230, 235, 248, .15), rgba(214, 224, 245, .035) 37%, transparent 67%);
-  --glass-rim: inset 0 1px rgba(255, 255, 255, .16), inset 1px 0 rgba(255, 255, 255, .07), 0 0 0 1px rgba(225, 231, 242, .14);
+  --glass-highlight: linear-gradient(145deg, rgba(223, 235, 255, .16), rgba(214, 224, 245, .035) 44%, transparent 77%);
+  --glass-rim: inset 0 1px rgba(255, 255, 255, .18), inset 0 -1px rgba(4, 8, 14, .30), inset 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(179, 202, 235, .19);
   --glass-depth: 0 10px 24px rgba(0, 0, 0, .33), 0 2px 6px rgba(0, 0, 0, .22);
   --glass-thumb-depth: 0 2px 6px rgba(0, 0, 0, .28);
   --glass-press-rim: inset 0 1px rgba(255, 255, 255, .25), inset 0 0 0 1px rgba(255, 255, 255, .09);
 }
 
-html[data-liquid-glass] .main { background: var(--glass-canvas) var(--bg); }
-html[data-liquid-glass] :is(.topbar > button, .composer, .composer-add-menu, .jump-latest) {
-  background: var(--glass-highlight) var(--surface);
+html[data-liquid-glass] :is(.topbar > button, .composer, .jump-latest, .topbar > button:is(:hover, [aria-expanded="true"])) {
+  background: var(--glass-highlight) var(--glass-surface);
   box-shadow: var(--glass-rim), var(--glass-depth);
+}
+html[data-liquid-glass] .composer-add-menu {
+  background: var(--glass-popover);
+  box-shadow: var(--glass-rim), var(--shadow-pop);
 }
 html[data-liquid-glass] dialog {
   background-image: var(--glass-highlight);
   box-shadow: var(--glass-rim), var(--shadow-dialog);
 }
+html[data-liquid-glass] .appearance-choices { background: var(--glass-track); }
 html[data-liquid-glass] .segment-thumb {
-  background: var(--glass-highlight) var(--control-surface);
+  background: var(--glass-highlight) var(--glass-surface);
   box-shadow: var(--glass-rim), var(--glass-thumb-depth);
 }
 
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  html[data-liquid-glass] :is(.topbar > button, .composer, .composer-add-menu, .jump-latest) {
-    background-color: var(--glass-tint);
-    -webkit-backdrop-filter: var(--glass-filter);
-    backdrop-filter: var(--glass-filter);
-  }
-  html[data-liquid-glass] .topbar > button:is(:hover, [aria-expanded="true"]) { background-color: var(--glass-tint); }
   html[data-liquid-glass] dialog:not(.editor-dialog, .image-dialog, .settings-dialog, .wide-dialog, .changes-dialog) {
     background-color: var(--glass-panel-tint);
     -webkit-backdrop-filter: var(--glass-filter);
@@ -52,7 +50,6 @@ html[data-liquid-glass] .segment-thumb {
   }
 }
 
-html[data-liquid-glass] .topbar > button:is(:hover, [aria-expanded="true"]) { background-image: var(--glass-highlight); }
 html[data-liquid-glass] :is(.topbar > button, .jump-latest):not(:disabled):active,
 html[data-liquid-glass] .composer:focus-within {
   box-shadow: var(--glass-press-rim), var(--glass-rim), var(--glass-depth);
@@ -61,8 +58,6 @@ html[data-liquid-glass] :is(.composer-attach, .send-button):not(:disabled):activ
 
 @media (prefers-reduced-transparency: reduce) {
   html[data-liquid-glass], html[data-liquid-glass][data-theme="dark"] {
-    --glass-canvas: none;
-    --glass-tint: var(--surface);
     --glass-panel-tint: var(--surface);
     --glass-filter: none;
   }

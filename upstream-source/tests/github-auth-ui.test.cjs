@@ -362,7 +362,7 @@ test('the actual index loads GitHub settings with the app bridge, handles live a
   assert.equal(calls.some(call => call.action.startsWith('github.')), false);
   const prompt = d.getElementById('prompt');
   prompt.value = '保留编程任务草稿'; prompt.dispatchEvent(new w.Event('input')); await tick();
-  d.getElementById('settings').click(); d.querySelector('[data-settings-tab="github"]').click(); await tick();
+  d.getElementById('settings').click(); d.getElementById('settings-open-advanced').click(); d.querySelector('[data-settings-tab="github"]').click(); await tick();
   assert.equal(d.getElementById('settings-dialog').open, true);
   assert.equal(d.getElementById('github-panel').hidden, false);
   assert.equal(d.querySelector('[data-settings-panel="providers"]').hidden, true);

@@ -214,6 +214,7 @@ async function githubLayout(page,width,theme){
   ['pending',{configured:true,clientId:'Ov23liOwnClientID',state:'pending',userCode:'ABCD-1234',verificationUri:'https://github.com/login/device',expiresAt:Date.now()+600000,scopes:[]}],
   ['connected',{configured:true,clientId:'Ov23liOwnClientID',state:'connected',login:'very-long-github-username-with-dashes',scopes:['public_repo','workflow']}]
  ];
+ await page.locator('#settings-back').click();
  await page.locator('[data-settings-tab="github"]').click();
  for(const [name,github] of states){
   await page.evaluate(snapshot=>{window.layoutState={...window.layoutState,github:snapshot};window.mobileCodexEvent('github.changed',{github:snapshot});},github);
@@ -274,7 +275,7 @@ async function githubLayout(page,width,theme){
    await page.locator('#model-picker .model-picker-head [data-close]').click();await settle(page);
    await page.setViewportSize({width,height:820});await settle(page);
    if(width<=760)await page.locator('.topbar .sidebar-toggle').click();
-   await page.locator('#settings').click();await page.locator('#settings-advanced > summary').click();await page.locator('[data-settings-tab="providers"]').click();await settle(page);
+   await page.locator('#settings').click();await page.locator('#settings-open-advanced').click();await page.locator('[data-settings-tab="providers"]').click();await settle(page);
    assert.equal(await page.locator('[data-settings-panel="providers"]').evaluate(panel=>panel.scrollWidth<=panel.clientWidth+1),true,'API panel fits narrow viewport');
    assert.equal(await page.locator('#settings-dialog').evaluate(dialog=>{const r=dialog.getBoundingClientRect();return r.left>=-1&&r.right<=innerWidth+1&&r.top>=-1&&r.bottom<=innerHeight+1;}),true);
    await page.screenshot({path:path.join(output,`api-${width}-${theme}.png`)});
