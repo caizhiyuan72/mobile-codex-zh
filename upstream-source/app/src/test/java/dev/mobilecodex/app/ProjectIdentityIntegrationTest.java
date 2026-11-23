@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.lang.reflect.Proxy;
 import java.util.concurrent.*;
 import static dev.mobilecodex.app.core.Json.*;
+import static dev.mobilecodex.app.core.Texts.t;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
@@ -91,7 +92,7 @@ public class ProjectIdentityIntegrationTest {
         JSONObject created = call("projects.create", obj("name", "Only metadata"));
         assertFalse(created.getBoolean("available")); assertFalse(created.getBoolean("hasLocalFolder"));
         ExecutionException error = assertThrows(ExecutionException.class, () -> call("chat.send", obj("text", "run", "workspaceKey", created.getString("key"))));
-        assertTrue(error.getCause().getMessage().contains("폴더"));
+        assertEquals(t("이 프로젝트 폴더에 접근할 수 없습니다. 프로젝트에서 폴더를 다시 연결해 주세요."), error.getCause().getMessage());
         engine.io.shutdownNow(); engine = new Engine(context);
         assertEquals(created.getString("projectId"), call("state", obj()).getJSONObject("workspace").getString("projectId"));
     }
@@ -129,12 +130,40 @@ public class ProjectIdentityIntegrationTest {
         @SuppressWarnings("unchecked") java.util.Map<String, String> turns = (java.util.Map<String, String>) field.get(engine);
         turns.put("background-thread", "turn-running");
         assertThrows(ExecutionException.class, () -> call("projects.merge", obj("sourceKey", "a", "targetKey", "b")));
-        assertThrows(ExecutionException.class, () -> call("projects.create", obj("name", "Pending")));
         assertThrows(ExecutionException.class, () -> call("projects.prefer", obj("key", "b")));
         java.io.IOException picker = assertThrows(java.io.IOException.class,
             () -> engine.selectProjectFolder(android.net.Uri.parse("content://provider/tree/rebind"), "b"));
-        assertTrue(picker.getMessage().contains("진행 중인 작업"));
+        assertEquals(t("진행 중인 작업을 먼저 중지해 주세요."), picker.getMessage());
         assertEquals(before, context.getSharedPreferences("projects", 0).getString("registry", ""));
+    }
+    @Test public void addingProjectsKeepsTheRunningConversationAndItsWorkspace() throws Exception {
+        Utf8Files.write(new File(context.getFilesDir(), "sessions.json").toPath(), array(
+            obj("id", "running-chat", "title", "Running chat", "messages", array())).toString());
+        engine = new Engine(context);
+        engine.setTestTransport((method, params) -> { throw new AssertionError("Unexpected Codex RPC: " + method); });
+        java.lang.reflect.Field field = Engine.class.getDeclaredField("runningTurns"); field.setAccessible(true);
+        @SuppressWarnings("unchecked") java.util.Map<String, String> turns = (java.util.Map<String, String>) field.get(engine);
+        turns.put("running-chat", "active-turn");
+        call("chat.resume", obj("id", "running-chat"));
+        File root = engine.documents.directDirectory();
+        assertTrue(new File(root, "Existing project").mkdir());
+
+        JSONObject listing = call("projects.workspaceFolders", obj("path", ""));
+        assertTrue(listing.isNull("parent"));
+        assertEquals("Existing project", listing.getJSONArray("entries").getJSONObject(0).getString("path"));
+        JSONObject bound = call("projects.bindWorkspaceFolder", obj("path", "Existing project"));
+        JSONObject created = call("projects.createWorkspaceFolder", obj("path", "", "name", "New project"));
+        JSONObject unbound = call("projects.create", obj("name", "Metadata only"));
+        assertTrue(bound.getBoolean("available"));
+        assertTrue(created.getBoolean("available"));
+        assertFalse(unbound.getBoolean("available"));
+        assertTrue(new File(root, "New project").isDirectory());
+        JSONObject snapshot = call("state", obj());
+        assertEquals("running-chat", snapshot.getString("threadId"));
+        assertEquals("", snapshot.getJSONObject("workspace").getString("key"));
+        assertTrue(snapshot.getBoolean("busy"));
+        assertEquals("active-turn", turns.get("running-chat"));
+        assertEquals(3, snapshot.getJSONArray("projects").length());
     }
     @Test public void retiredProMarkersDoNotBlockProjectMutationsOrReactivateTheRemovedRuntime() throws Exception {
         seed(); engine = new Engine(context);
@@ -221,7 +250,8 @@ public class ProjectIdentityIntegrationTest {
         Files.write(new File(blocked, "keep").toPath(), new byte[]{1});
         engine.setStateFileForTest(blocked);
         ExecutionException failure = assertThrows(ExecutionException.class, () -> call("projects.remove", obj("key", "a")));
-        assertTrue(failure.getCause().getMessage().contains("프로젝트 연결은 해제됐지만"));
+        assertEquals(t("프로젝트 연결은 해제됐지만 대화 기록 저장을 마치지 못했습니다. 대화는 보존되며 앱을 다시 시작하면 일반 대화 이전을 재시도합니다."),
+            failure.getCause().getMessage());
         assertEquals(durableBefore, Utf8Files.read(new File(context.getFilesDir(), "sessions.json").toPath()));
         assertEquals("", call("state", obj()).getJSONArray("sessions").getJSONObject(1).getString("workspaceKey"));
         File[] backups = context.getFilesDir().listFiles((directory, name) -> name.startsWith("sessions-before-project-remove-") && name.endsWith(".json"));

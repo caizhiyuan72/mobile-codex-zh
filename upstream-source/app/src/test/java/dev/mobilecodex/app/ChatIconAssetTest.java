@@ -39,6 +39,24 @@ public class ChatIconAssetTest {
         assertTrue("The page's linked assets were checked", count > 1);
     }
 
+    @Test public void packagedMathFontsUseBinaryMimeType() throws Exception {
+        AssetManager assets = RuntimeEnvironment.getApplication().getAssets();
+        String host = "https://appassets.androidplatform.net";
+        String[] fonts = assets.list("web/katex/fonts");
+        assertNotNull(fonts);
+        assertTrue(fonts.length > 0);
+        for (String font : fonts) {
+            WebResourceResponse response = MainActivity.packagedUiResponse(assets, Uri.parse(host + "/katex/fonts/" + font));
+            assertEquals(font, 200, response.getStatusCode());
+            assertEquals("font/woff2", response.getMimeType());
+            assertNull(response.getEncoding());
+            try (var input = response.getData()) {
+                assertArrayEquals(new byte[]{'w', 'O', 'F', '2'}, input.readNBytes(4));
+            }
+        }
+        assertEquals(403, MainActivity.packagedUiResponse(assets, Uri.parse(host + "/katex/fonts/../katex.min.js")).getStatusCode());
+    }
+
     @Test public void packagedUiRouteKeepsUnknownPathsAndRemoteOriginsBlocked() {
         AssetManager assets = RuntimeEnvironment.getApplication().getAssets();
         for (String url : new String[]{
@@ -56,31 +74,9 @@ public class ChatIconAssetTest {
         }
     }
 
-    @Test public void all32PackagedIconsPassTheWebViewRouteAndOpen() throws Exception {
-        AssetManager assets = RuntimeEnvironment.getApplication().getAssets();
-        java.util.Map<String,String> names = BuiltinIcons.files(assets);
-        assertEquals(32, names.size());
-        for (String name : names.keySet()) {
-            assertTrue(name, MainActivity.isChatIconPath("/chat-icons/" + name));
-            WebResourceResponse response = BuiltinIcons.response(assets,name);
-            assertEquals("image/webp",response.getMimeType());
-            try (java.io.InputStream input = response.getData()) {
-                byte[] bytes=input.readAllBytes();
-                assertEquals("RIFF",new String(bytes,0,4,java.nio.charset.StandardCharsets.US_ASCII));
-                assertEquals("WEBP",new String(bytes,8,4,java.nio.charset.StandardCharsets.US_ASCII));
-                android.graphics.BitmapFactory.Options bounds=new android.graphics.BitmapFactory.Options();bounds.inJustDecodeBounds=true;
-                android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
-                assertTrue(bounds.outWidth>0);assertTrue(bounds.outHeight>0);
-            }
-        }
-        assertThrows(java.io.IOException.class,()->BuiltinIcons.response(assets,"../auth.json"));
-    }
-
-    @Test public void iconRouteRejectsTraversalAndNonPngPaths() {
-        for (String path : new String[]{null,"/chat-icons/../auth.json","/chat-icons/23-not-allowed.png/extra",
-                "/chat-icons/23-not-allowed.svg","/chat-icons/23-not--allowed.png","/other/23-not-allowed.png"}) {
-            assertFalse(String.valueOf(path), MainActivity.isChatIconPath(path));
-        }
+    @Test public void oldStickerPathsAreDenied() {
+        var assets = RuntimeEnvironment.getApplication().getAssets();
+        assertEquals(403, MainActivity.packagedUiResponse(assets, Uri.parse("https://appassets.androidplatform.net/chat-icons/01-idle.png")).getStatusCode());
     }
 
     @Test public void packagedLogoPassesTheWebViewRouteAndOpens() throws Exception {

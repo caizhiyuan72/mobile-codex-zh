@@ -100,12 +100,14 @@ public class SessionStore {
     public synchronized void save(JSONArray value) throws IOException {
         if (recoveryRequired()) throw new IOException("Session recovery is required before saving");
         checkUnchanged();
-        byte[] next = value.toString().getBytes(StandardCharsets.UTF_8); parse(next);
+        byte[] next = value.toString().getBytes(StandardCharsets.UTF_8);
+        if (Arrays.equals(expected, next)) return;
+        JSONArray parsed = parse(next);
         // Before replacing current, preserve the verified current bytes. A corrupt
         // current can never reach this step or overwrite the good candidate.
         if (expected != null) atomic(backup, envelope(expected));
         atomic(file, next);
-        expected = next; loaded = parse(next); state = State.LOADED;
+        expected = next; loaded = parsed; state = State.LOADED;
         // A failure refreshing the candidate still leaves the committed current
         // and the previous verified candidate intact.
         try { atomic(backup, envelope(next)); } catch (IOException ignored) { }

@@ -44,6 +44,7 @@ def main(args, stdin, stdout, environ):
         if len(payload) > LIMIT:
             return 0
         with socket.create_connection(("127.0.0.1", port), timeout=4) as connection:
+            connection.settimeout(30)
             connection.sendall(payload)
             with connection.makefile("rb") as reply:
                 raw = reply.readline(LIMIT + 1)

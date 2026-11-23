@@ -12,9 +12,9 @@ const fixture = path.join(__dirname, 'ui_review_fixture.js');
 const types = new Map([
   ['.css','text/css; charset=utf-8'], ['.js','application/javascript; charset=utf-8'],
   ['.html','text/html; charset=utf-8'], ['.png','image/png'], ['.jpg','image/jpeg'],
-  ['.jpeg','image/jpeg'], ['.webp','image/webp'], ['.gif','image/gif'], ['.svg','image/svg+xml']
+  ['.jpeg','image/jpeg'], ['.webp','image/webp'], ['.gif','image/gif'], ['.svg','image/svg+xml'], ['.woff2','font/woff2']
 ]);
-const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+const csp = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const reviewCsp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const reportPath = path.join(root, 'artifacts/ui-review/report.json');
 
@@ -36,7 +36,6 @@ function send(res, status, body = '', type = 'text/plain; charset=utf-8', method
 function safeAsset(urlPath) {
   let decoded;
   try { decoded = decodeURIComponent(urlPath.replace(/^\/assets\//, '')); } catch { return null; }
-  if (/^chat-icons\/[0-9]{2}-[a-z]+(?:-[a-z]+)*\.png$/.test(decoded)) decoded=decoded.replace(/\.png$/,'.webp');
   if (!decoded || decoded.includes('\\') || decoded.split('/').some(part => !part || part === '.' || part === '..') || !assets.has(decoded)) return null;
   const file = path.resolve(web, decoded);
   return file.startsWith(web + path.sep) && fs.statSync(file).isFile() ? {file, relative:decoded} : null;

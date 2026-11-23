@@ -27,6 +27,7 @@ import static dev.mobilecodex.app.core.Json.*;
 /** Explicitly enabled, visible Android automation. No event text logging or background recording. */
 public final class PhoneUseService extends AccessibilityService {
     private static volatile PhoneUseService instance;
+    private static final String LEGACY_PROTECTED_PACKAGE = "dev.mobilecodex.app.rootfiles";
     private final PhoneControlGate gate = new PhoneControlGate();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Set<CompletableFuture<JSONObject>> pending = ConcurrentHashMap.newKeySet();
@@ -83,6 +84,7 @@ public final class PhoneUseService extends AccessibilityService {
     @Override protected void onServiceConnected() { instance = this; gate.stop(); changed(); }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if (!gate.enabled()) return;
+        if (LEGACY_PROTECTED_PACKAGE.contentEquals(PhoneScreen.value(event.getPackageName()))) { stopControl(); return; }
         // Only invalidate references; event contents are neither recorded nor sent to the model.
         int type = event.getEventType();
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
@@ -188,7 +190,7 @@ public final class PhoneUseService extends AccessibilityService {
     private JSONObject apps() {
         JSONArray apps = new JSONArray(); Set<String> seen = new HashSet<>();
         for (ResolveInfo app : getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
-            if (app.activityInfo != null && seen.add(app.activityInfo.packageName))
+            if (app.activityInfo != null && !LEGACY_PROTECTED_PACKAGE.equals(app.activityInfo.packageName) && seen.add(app.activityInfo.packageName))
                 apps.put(obj("package", app.activityInfo.packageName, "label", app.loadLabel(getPackageManager()).toString()));
         }
         return obj("apps", apps);
@@ -198,7 +200,7 @@ public final class PhoneUseService extends AccessibilityService {
         invalidate(); AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) throw new IOException(t("활성 화면을 읽을 수 없습니다. 앱을 열고 다시 시도해 주세요."));
         DisplayMetrics metrics = metrics();
-        try { requireDefaultDisplay(root); screen = new PhoneScreen(root, revision, metrics.widthPixels, metrics.heightPixels); }
+        try { requireUnprotectedWindow(root); requireDefaultDisplay(root); screen = new PhoneScreen(root, revision, metrics.widthPixels, metrics.heightPixels); }
         finally { root.recycle(); }
         PhoneScreen captured = screen;
         Rect overlay = stopBounds();
@@ -249,7 +251,9 @@ public final class PhoneUseService extends AccessibilityService {
         };
         if (global != null) { boolean accepted = performGlobalAction(global); invalidate(); success(future, ticket, obj("accepted", accepted, "action", action)); return; }
         if (action.equals("open_app")) {
-            String name = args.getString("package"); Intent launch = getPackageManager().getLaunchIntentForPackage(name);
+            String name = args.getString("package");
+            if (LEGACY_PROTECTED_PACKAGE.equals(name)) throw protectedWindow();
+            Intent launch = getPackageManager().getLaunchIntentForPackage(name);
             if (launch == null) throw new IOException(t("실행 가능한 앱이 없습니다. mobile_phone_apps로 패키지 이름을 확인해 주세요."));
             startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); invalidate(); success(future, ticket, obj("accepted", true, "package", name)); return;
         }
@@ -257,7 +261,7 @@ public final class PhoneUseService extends AccessibilityService {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) throw new IOException(t("활성 화면이 없습니다."));
         DisplayMetrics metrics = metrics();
-        try { requireDefaultDisplay(root); screen.requireFresh(args.optString("snapshotId"), revision, root.getWindowId(), PhoneScreen.value(root.getPackageName()), metrics.widthPixels, metrics.heightPixels); }
+        try { requireUnprotectedWindow(root); requireDefaultDisplay(root); screen.requireFresh(args.optString("snapshotId"), revision, root.getWindowId(), PhoneScreen.value(root.getPackageName()), metrics.widthPixels, metrics.heightPixels); }
         finally { root.recycle(); }
         if (!args.optString("nodeId").isEmpty()) {
             AccessibilityNodeInfo node = screen.node(args.getString("nodeId"));
@@ -304,5 +308,20 @@ public final class PhoneUseService extends AccessibilityService {
     private void requireAutomationView() throws IOException {
         if (VoiceInput.active()) throw new IOException(t("사용자가 음성 입력 중입니다. 인식이 끝날 때까지 화면 읽기·조작을 기다려 주세요."));
         if (floatingChat != null && floatingChat.editing()) throw new IOException(t("플로팅 대화창에서 사용자가 입력 중입니다. 창을 접거나 지시를 보낼 때까지 화면 읽기·조작을 기다려 주세요."));
+        List<AccessibilityWindowInfo> windows = getWindows();
+        try {
+            for (AccessibilityWindowInfo window : windows) {
+                if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root == null) continue;
+                try { requireUnprotectedWindow(root); } finally { root.recycle(); }
+            }
+        } finally { for (AccessibilityWindowInfo window : windows) window.recycle(); }
+    }
+    private static IOException protectedWindow() {
+        return new IOException("Root file access is available only to the user on the device.");
+    }
+    private static void requireUnprotectedWindow(AccessibilityNodeInfo root) throws IOException {
+        if (LEGACY_PROTECTED_PACKAGE.contentEquals(PhoneScreen.value(root.getPackageName()))) throw protectedWindow();
     }
 }

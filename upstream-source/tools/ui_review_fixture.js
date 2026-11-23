@@ -13,7 +13,7 @@
     document.addEventListener('focusout', event => event.stopImmediatePropagation(), true);
   }
   // Each iframe owns fixture preferences and drafts; matrix/gallery cases never share state.
-  const storage = new Map([['chat-icons','off'],['theme',theme]]);
+  const storage = new Map([['theme',theme]]);
   Object.defineProperty(window, 'localStorage', {value:{getItem:key => storage.get(String(key)) ?? null, setItem:(key,value) => storage.set(String(key),String(value)), removeItem:key => storage.delete(String(key)), clear:() => storage.clear(), key:index => [...storage.keys()][index] ?? null, get length(){return storage.size;}}});
   const now = 1790670840000;
   const state = {
@@ -52,7 +52,6 @@
         else if (message.action === 'voice.recover') result = {active:surface === 'dictation',receipts:[]};
       else if (message.action === 'notifications.state') result = {enabled:true,vibration:true,permission:true};
         else if (message.action === 'linux.status') result = state.linux;
-        else if (message.action === 'characters.list') result = state.characters;
         else if (message.action === 'instructions.read') result = {content:'Review only the relevant UI and preserve user work.',activePath:'/review/AGENTS.md'};
         else if (message.action === 'updates.state') result = updateState;
         else if (message.action === 'files.list') result = {entries:[{name:'README.md',path:'README.md',type:'file',size:2048},{name:'src',path:'src',type:'directory'}]};
@@ -205,12 +204,7 @@
       });
       form.addEventListener('change',render); render(); return;
     }
-    if (window.UiCore) {
-      const assetPrefix = location.pathname === '/before' ? '/before-assets/' : '/assets/';
-      const names = window.UiCore.chatIconNames();
-      window.UiCore.chatIconUrl = name => { const index=names.indexOf(name); return index < 0 ? null : assetPrefix+'chat-icons/'+String(index+1).padStart(2,'0')+'-'+name+'.png'; };
-    }
-    document.documentElement.dataset.theme=theme; localStorage.setItem('theme',theme); localStorage.setItem('chat-icons','off');
+    document.documentElement.dataset.theme=theme; localStorage.setItem('theme',theme);
     setTimeout(() => { window.__uiReviewReady=true; window.UiReview.surfaces=[...document.querySelectorAll('dialog')].map(dialog=>dialog.id); resolveReady(); showSurface(surface).then(() => { applyTextZoomProxy(); window.__uiReviewSurfaceReady=true; }).catch(error => { window.__uiReviewError=String(error?.message || error); }); }, 30);
   });
 })();

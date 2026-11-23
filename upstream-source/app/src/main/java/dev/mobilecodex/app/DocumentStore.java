@@ -20,10 +20,12 @@ import dev.mobilecodex.app.core.ProjectRegistry;
 import dev.mobilecodex.app.core.WorkspacePath;
 import static dev.mobilecodex.app.core.Json.*;
 
-/** SAF operations, with verified local-volume mapping for the shell working directory. */
+/** Workspace operations for app folders and SAF trees. */
 public final class DocumentStore {
     public static final int TEXT_LIMIT = 1024 * 1024;
     private static final int BACKUP_LIMIT = 32 * 1024 * 1024;
+    private static final String WORKSPACE_SCHEME = "workspace";
+    private static final String OUTPUT_FOLDER = "大肥龙输出";
     private final Context context;
     private Uri tree;
     private String label = t("Codex");
@@ -68,36 +70,51 @@ public final class DocumentStore {
     public synchronized JSONObject select(Uri uri) throws Exception { return select(uri, ""); }
     /** Registers a new project or reconnects the stable project key to a replacement SAF URI. */
     public synchronized JSONObject select(Uri uri, String projectKey) throws Exception {
+        return select(uri, projectKey, true);
+    }
+    synchronized JSONObject select(Uri uri, String projectKey, boolean select) throws Exception {
         if (!"content".equals(uri.getScheme()) || !DocumentsContract.isTreeUri(uri))
             throw new IllegalArgumentException(t("폴더를 선택해 주세요."));
         Node selected = query(documentUri(uri));
         if (!selected.directory()) throw new IOException(t("폴더가 아닙니다."));
-        String stableKey = projectKey == null || projectKey.isBlank() ? WorkspacePath.hash(uri.toString()) : projectKey;
-        ProjectRegistry.Project existing = projects.get(stableKey);
-        String displayName = existing == null ? selected.name : existing.name;
         ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
-        staged.put(uri.toString(), displayName, stableKey);
-        commitProjects(staged);
-        tree = uri;
-        label = displayName;
-        context.getSharedPreferences("workspace", 0).edit().putString("uri", uri.toString()).apply();
-        return workspace();
+        ProjectRegistry.Project project = stageFolderBinding(staged, uri.toString(), selected.name, projectKey);
+        JSONObject result = saveProject(staged, project, select, uri);
+        if (canCreateOutput(selected)) {
+            try { ensureDocumentOutput(selected, children(selected)); }
+            catch (IOException | RuntimeException ignored) { }
+        }
+        if (select) context.getSharedPreferences("workspace", 0).edit().putString("uri", uri.toString()).apply();
+        return result;
     }
     /** Switches among stored projects without asking Android's picker again. Empty selects general chat. */
-    public synchronized JSONObject selectProject(String key) throws Exception {
+    public synchronized void selectProject(String key) throws Exception {
         key = key == null ? "" : key;
         // Old callbacks or sessions can still mention a tombstoned binding. It is
         // now the general workspace rather than a detached pseudo-project.
         if (projects.removed(key)) key = "";
-        ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
-        staged.select(key);
-        commitProjects(staged);
+        if (!key.equals(projects.selectedKey())) {
+            ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
+            staged.select(key);
+            commitProjects(staged);
+        }
         ProjectRegistry.Project project = projects.selected();
         tree = null; label = project == null ? t("Codex") : project.name;
+        if (isWorkspaceBinding(project)) {
+            try { ensureLocalOutput(workspaceBindingFolder(project)); }
+            catch (IOException ignored) { }
+        }
         try { activate(project); } catch (Exception ignored) { tree = null; }
-        return workspace();
     }
-    public synchronized JSONArray projects() { return projects.entries(this::available); }
+    public synchronized JSONArray projects() {
+        java.util.Set<Uri> readable = new java.util.HashSet<>();
+        try {
+            for (android.content.UriPermission permission : context.getContentResolver().getPersistedUriPermissions())
+                if (permission.isReadPermission()) readable.add(permission.getUri());
+        } catch (Exception ignored) { }
+        return projects.entries(project -> isWorkspaceBinding(project) ? workspaceFolderAvailable(project)
+            : !project.uri.isBlank() && readable.contains(Uri.parse(project.uri)));
+    }
     public synchronized String projectId(String key) { return projects.projectId(key); }
     public synchronized JSONObject exportProject(String key) { return projects.exportProject(key); }
     public synchronized JSONObject previewProjects(String raw) {
@@ -113,11 +130,65 @@ public final class DocumentStore {
         return obj("projects", projects(), "workspace", workspace());
     }
     public synchronized JSONObject createProject(String name) throws IOException {
+        return createProject(name, true);
+    }
+    synchronized JSONObject createProject(String name, boolean select) throws IOException {
         ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
-        staged.createUnbound(name);
+        return saveProject(staged, staged.createUnbound(name), select, null);
+    }
+    synchronized JSONObject workspaceFolders(String path) throws IOException {
+        File directory = workspaceFolder(path);
+        JSONArray entries = new JSONArray();
+        for (File child : localChildren(directory)) {
+            String name = child.getName();
+            if (name.equals(".git") || Files.isSymbolicLink(child.toPath()) || !child.isDirectory() || !child.canRead()) continue;
+            String relative = path.isEmpty() ? name : path + "/" + name;
+            try { WorkspacePath.segments(relative); }
+            catch (IllegalArgumentException ignored) { continue; }
+            entries.put(obj("name", name, "path", relative));
+        }
+        String rootName = context.getApplicationInfo().loadLabel(context.getPackageManager()).toString();
+        return obj("rootName", rootName, "path", path, "parent", path.isEmpty() ? JSONObject.NULL : WorkspacePath.parent(path), "entries", entries);
+    }
+    synchronized JSONObject bindWorkspaceFolder(String path, boolean select) throws IOException {
+        if (path.isEmpty()) throw new IllegalArgumentException(t("폴더를 선택해 주세요."));
+        return saveWorkspaceBinding(path, workspaceFolder(path), select);
+    }
+    synchronized JSONObject createWorkspaceFolder(String path, String name, boolean select) throws IOException {
+        String clean = name.trim();
+        WorkspacePath.checkName(clean);
+        workspaceFolder(path);
+        String relative = path.isEmpty() ? clean : path + "/" + clean;
+        requireMutableLocalPath(relative);
+        File directory = resolveLocal(safeGeneralRoot(), relative);
+        try { Files.createDirectory(directory.toPath()); }
+        catch (java.nio.file.FileAlreadyExistsException error) {
+            throw new IOException(t("같은 이름의 파일 또는 폴더가 이미 있습니다."), error);
+        }
+        return saveWorkspaceBinding(relative, directory, select);
+    }
+    private JSONObject saveWorkspaceBinding(String path, File directory, boolean select) throws IOException {
+        String binding = Uri.fromParts(WORKSPACE_SCHEME, path, null).toString();
+        ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
+        JSONObject result = saveProject(staged, stageFolderBinding(staged, binding, directory.getName(), ""), select, null);
+        ensureLocalOutput(directory);
+        return result;
+    }
+    private ProjectRegistry.Project stageFolderBinding(ProjectRegistry staged, String uri, String name, String key) {
+        if (key == null || key.isBlank()) {
+            ProjectRegistry.Project bound = staged.boundTo(uri);
+            if (bound != null) { staged.select(bound.key); return bound; }
+            key = WorkspacePath.hash(uri);
+            if (staged.get(key) != null) key = "local_" + UUID.randomUUID();
+        }
+        ProjectRegistry.Project existing = staged.get(key);
+        return staged.put(uri, existing == null ? name : existing.name, key);
+    }
+    private JSONObject saveProject(ProjectRegistry staged, ProjectRegistry.Project project, boolean select, Uri uri) throws IOException {
+        if (!select) staged.select(projects.selectedKey());
         commitProjects(staged);
-        tree = null; label = projects.displayName(projects.selectedKey());
-        return workspace();
+        if (select) { tree = uri; label = projects.displayName(project.key); }
+        return projectWorkspace(project, available(project));
     }
     public synchronized JSONObject mergeProjects(String sourceKey, String targetKey) throws IOException {
         ProjectRegistry staged = ProjectRegistry.fromJson(projects.toJson());
@@ -170,6 +241,7 @@ public final class DocumentStore {
     private boolean available(ProjectRegistry.Project project) {
         if (project == null) return true;
         if (project.uri.isBlank()) return false;
+        if (isWorkspaceBinding(project)) return workspaceFolderAvailable(project);
         try {
             Uri uri = Uri.parse(project.uri);
             for (android.content.UriPermission permission : context.getContentResolver().getPersistedUriPermissions())
@@ -178,7 +250,7 @@ public final class DocumentStore {
         return false;
     }
     private void activate(ProjectRegistry.Project project) throws Exception {
-        if (project == null || !available(project)) return;
+        if (project == null || isWorkspaceBinding(project) || !available(project)) return;
         Uri uri = Uri.parse(project.uri); Node selected = query(documentUri(uri));
         if (!selected.directory()) throw new IOException(t("폴더가 아닙니다."));
         tree = uri; label = project.name;
@@ -187,9 +259,11 @@ public final class DocumentStore {
         ProjectRegistry.Project project = projects.selected();
         if (project == null) return obj("selected", false, "name", t("Codex"), "key", "", "projectId", "",
             "hasLocalFolder", true, "available", generalAvailable(), "defaultWorkspace", true);
+        return projectWorkspace(project, (isWorkspaceBinding(project) || tree != null) && available(project));
+    }
+    private JSONObject projectWorkspace(ProjectRegistry.Project project, boolean available) {
         return obj("selected", true, "name", projects.displayName(project.key),
-            "key", project == null ? "" : project.key, "projectId", project == null ? "" : projects.projectId(project.key),
-            "hasLocalFolder", project != null && !project.uri.isBlank(), "available", project == null || (tree != null && available(project)));
+            "key", project.key, "projectId", projects.projectId(project.key), "hasLocalFolder", !project.uri.isBlank(), "available", available);
     }
     public synchronized String key() { return projects.selectedKey(); }
     public synchronized void requireWorkspaceAvailable() throws IOException {
@@ -200,19 +274,20 @@ public final class DocumentStore {
             safeGeneralRoot();
             return;
         }
-        if (project != null) {
-            try {
+        try {
+            if (isWorkspaceBinding(project)) workspaceBindingFolder(project);
+            else {
                 if (tree == null || !available(project) || !query(documentUri(tree)).directory())
                     throw new IOException(t("작업 폴더를 열 수 없습니다."));
-            } catch (Exception e) {
-                tree = null;
-                throw new IOException(t("이 프로젝트 폴더에 접근할 수 없습니다. 프로젝트에서 폴더를 다시 연결해 주세요."), e);
             }
+        } catch (Exception e) {
+            tree = null;
+            throw new IOException(t("이 프로젝트 폴더에 접근할 수 없습니다. 프로젝트에서 폴더를 다시 연결해 주세요."), e);
         }
     }
     /** Makes a project-relative mention reachable by Codex, copying SAF-only files into app storage. */
     synchronized JSONObject mention(String path, AttachmentStore attachments) throws Exception {
-        if (generalSelected()) {
+        if (localSelected()) {
             File value = local(path);
             if (!value.isFile()) throw new IOException(value.isDirectory() ? t("폴더는 대화에 첨부할 수 없습니다.") : t("파일을 읽을 수 없습니다."));
             return obj("name", value.getName(), "path", value.getAbsolutePath());
@@ -233,7 +308,7 @@ public final class DocumentStore {
         }
     }
     synchronized JSONObject image(String path, ImageStore images) throws Exception {
-        if (generalSelected()) {
+        if (localSelected()) {
             File value = local(path);
             if (!value.isFile()) throw new IOException(t("이미지 파일을 선택해 주세요."));
             try (InputStream in = new FileInputStream(value)) { return images.store(in, value.getName()); }
@@ -248,8 +323,8 @@ public final class DocumentStore {
     /** Primary-storage document trees have a documented volume:relative-path ID. */
     public synchronized File directDirectory() {
         if (!workspace().optBoolean("available")) return null;
-        if (projects.selected() == null) {
-            try { return safeGeneralRoot(); }
+        if (localSelected()) {
+            try { return localRoot(); }
             catch (IOException ignored) { return null; }
         }
         if (tree == null || !"com.android.externalstorage.documents".equals(tree.getAuthority())) return null;
@@ -274,7 +349,29 @@ public final class DocumentStore {
         if (tree == null) throw new IOException(t("먼저 작업 폴더를 선택해 주세요."));
     }
 
-    private boolean generalSelected() { return projects.selected() == null; }
+    private static boolean isWorkspaceBinding(ProjectRegistry.Project project) {
+        return project != null && project.uri.startsWith(WORKSPACE_SCHEME + ":");
+    }
+    private boolean localSelected() { return projects.selected() == null || isWorkspaceBinding(projects.selected()); }
+    private File workspaceFolder(String path) throws IOException {
+        requireMutableLocalPath(path);
+        File folder = resolveLocal(safeGeneralRoot(), path);
+        if (!folder.isDirectory() || !folder.canRead()) throw new IOException(t("작업 폴더를 열 수 없습니다."));
+        return folder;
+    }
+    private File workspaceBindingFolder(ProjectRegistry.Project project) throws IOException {
+        String path = Uri.parse(project.uri).getSchemeSpecificPart();
+        if (path == null || path.isEmpty()) throw new IOException(t("작업 폴더를 열 수 없습니다."));
+        return workspaceFolder(path);
+    }
+    private boolean workspaceFolderAvailable(ProjectRegistry.Project project) {
+        try { workspaceBindingFolder(project); return true; }
+        catch (IllegalArgumentException | IOException ignored) { return false; }
+    }
+    private File localRoot() throws IOException {
+        ProjectRegistry.Project project = projects.selected();
+        return project == null ? safeGeneralRoot() : workspaceBindingFolder(project);
+    }
     private boolean generalAvailable() {
         try { return generalRoot.isDirectory() && generalRoot.canRead() && safeGeneralRoot().isDirectory(); }
         catch (IOException ignored) { return false; }
@@ -287,9 +384,9 @@ public final class DocumentStore {
             throw new IOException(t("Codex 작업 폴더 경로가 올바르지 않습니다."));
         return root;
     }
-    private File local(String path) throws IOException {
+    private File local(String path) throws IOException { return resolveLocal(localRoot(), path); }
+    private File resolveLocal(File root, String path) throws IOException {
         List<String> segments = WorkspacePath.segments(path);
-        File root = safeGeneralRoot();
         File unresolved = root;
         for (String segment : segments) {
             unresolved = new File(unresolved, segment);
@@ -319,10 +416,8 @@ public final class DocumentStore {
     }
     private byte[] localBytes(File value, int limit) throws IOException {
         if (!value.isFile()) throw new IOException(value.isDirectory() ? t("폴더는 텍스트로 열 수 없습니다.") : t("파일을 찾을 수 없습니다."));
-        if (value.length() > limit) throw new IOException(t("파일 크기 제한을 초과했습니다 (") + (limit / 1024 / 1024) + " MiB).");
-        byte[] data = Files.readAllBytes(value.toPath());
-        if (data.length > limit) throw new IOException(t("파일 크기 제한을 초과했습니다."));
-        return data;
+        checkPreviewSize(value.length(), limit);
+        try (InputStream in = new FileInputStream(value)) { return readBounded(in, limit); }
     }
     private Node query(Uri uri) throws IOException {
         try (Cursor c = context.getContentResolver().query(uri, COLUMNS, null, null, null)) {
@@ -336,13 +431,13 @@ public final class DocumentStore {
     }
     private List<Node> children(Node parent) throws IOException {
         if (!parent.directory()) throw new IOException(t("폴더가 아닙니다."));
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent.id);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(parent.uri, parent.id);
         ArrayList<Node> result = new ArrayList<>();
         try (Cursor c = context.getContentResolver().query(children, COLUMNS, null, null, null)) {
             if (c == null) throw new IOException(t("폴더를 열 수 없습니다."));
             while (c.moveToNext()) {
                 if (result.size() >= 5000) throw new IOException(t("한 폴더의 항목이 5,000개를 초과합니다. 더 작은 폴더를 선택해 주세요."));
-                result.add(new Node(DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)),
+                result.add(new Node(DocumentsContract.buildDocumentUriUsingTree(parent.uri, c.getString(0)),
                     c.getString(0), c.getString(1), c.getString(2), c.getLong(3), c.getLong(4), c.getInt(5)));
             }
         }
@@ -367,10 +462,28 @@ public final class DocumentStore {
     private boolean exists(String path) throws IOException {
         try { resolve(path); return true; } catch (FileNotFoundException e) { return false; }
     }
+    private void ensureLocalOutput(File parent) {
+        var output = new File(parent, OUTPUT_FOLDER).toPath();
+        if (Files.exists(output, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return;
+        try { Files.createDirectory(output); }
+        catch (IOException | SecurityException ignored) { }
+    }
+    private boolean canCreateOutput(Node parent) {
+        return (parent.flags & Document.FLAG_DIR_SUPPORTS_CREATE) != 0;
+    }
+    private Node ensureDocumentOutput(Node parent, List<Node> entries) {
+        if (!canCreateOutput(parent)) return null;
+        for (Node entry : entries) if (OUTPUT_FOLDER.equals(entry.name)) return null;
+        try {
+            Uri created = DocumentsContract.createDocument(context.getContentResolver(), parent.uri, Document.MIME_TYPE_DIR, OUTPUT_FOLDER);
+            return created == null ? null : query(created);
+        } catch (IOException | RuntimeException ignored) { return null; }
+    }
     public synchronized JSONObject list(String path) throws IOException {
-        if (generalSelected()) {
+        if (localSelected()) {
             JSONArray entries = new JSONArray();
             File parent = local(path);
+            if (path.isEmpty() && projects.selected() != null) ensureLocalOutput(parent);
             for (File value : localChildren(parent)) {
                 String childPath = path.isEmpty() ? value.getName() : path + "/" + value.getName();
                 // Resolve through the canonical boundary before exposing an entry.
@@ -379,13 +492,22 @@ public final class DocumentStore {
             }
             return obj("path", path, "entries", entries);
         }
+        Node parent = resolve(path);
+        List<Node> children = children(parent);
+        if (path.isEmpty()) {
+            Node output = ensureDocumentOutput(parent, children);
+            if (output != null) {
+                children.add(output);
+                children.sort(Comparator.comparing((Node node) -> !node.directory()).thenComparing(node -> node.name.toLowerCase(Locale.ROOT)));
+            }
+        }
         JSONArray entries = new JSONArray();
-        for (Node n : children(resolve(path))) entries.put(n.json(path.isEmpty() ? n.name : path + "/" + n.name));
+        for (Node n : children) entries.put(n.json(path.isEmpty() ? n.name : path + "/" + n.name));
         return obj("path", path, "entries", entries);
     }
     public synchronized JSONObject search(String text) throws IOException {
         if (text == null || text.isBlank()) throw new IllegalArgumentException(t("검색어를 입력해 주세요."));
-        if (generalSelected()) return searchLocal(text);
+        if (localSelected()) return searchLocal(text);
         String needle = text.toLowerCase(Locale.ROOT);
         ArrayDeque<String> queue = new ArrayDeque<>();
         queue.add("");
@@ -427,12 +549,23 @@ public final class DocumentStore {
     }
     private byte[] bytes(Node n, int limit) throws IOException {
         if (n.directory()) throw new IOException(t("폴더는 텍스트로 열 수 없습니다."));
-        if (n.size > limit) throw new IOException(t("파일 크기 제한을 초과했습니다 (") + (limit / 1024 / 1024) + " MiB).");
-        try (InputStream in = context.getContentResolver().openInputStream(n.uri); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        checkPreviewSize(n.size, limit);
+        try (InputStream in = context.getContentResolver().openInputStream(n.uri)) {
             if (in == null) throw new IOException(t("파일을 읽을 수 없습니다."));
+            return readBounded(in, limit);
+        }
+    }
+    private static final class PreviewUnavailable extends IOException {
+        PreviewUnavailable(String message) { super(message); }
+    }
+    private static void checkPreviewSize(long size, int limit) throws IOException {
+        if (size > limit) throw new PreviewUnavailable(t("파일 크기 제한을 초과했습니다 (") + (limit / 1024 / 1024) + " MiB).");
+    }
+    private static byte[] readBounded(InputStream in, int limit) throws IOException {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192]; int count;
             while ((count = in.read(buffer)) != -1) {
-                if (out.size() + count > limit) throw new IOException(t("파일 크기 제한을 초과했습니다."));
+                checkPreviewSize((long) out.size() + count, limit);
                 out.write(buffer, 0, count);
             }
             return out.toByteArray();
@@ -442,20 +575,48 @@ public final class DocumentStore {
         try {
             String value = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(data)).toString();
-            if (value.indexOf('\0') >= 0) throw new IOException(t("텍스트 파일이 아닙니다."));
+            if (value.indexOf('\0') >= 0) throw new PreviewUnavailable(t("텍스트 파일이 아닙니다."));
             return value;
-        } catch (CharacterCodingException e) { throw new IOException(t("UTF-8 텍스트 파일만 편집할 수 있습니다.")); }
+        } catch (CharacterCodingException e) { throw new PreviewUnavailable(t("UTF-8 텍스트 파일만 편집할 수 있습니다.")); }
     }
     public synchronized JSONObject read(String path) throws IOException {
-        if (generalSelected()) {
+        if (localSelected()) {
             byte[] data = localBytes(local(path), TEXT_LIMIT);
             return obj("path", path, "content", decode(data), "sha256", WorkspacePath.hash(data));
         }
         byte[] data = bytes(resolve(path), TEXT_LIMIT);
         return obj("path", path, "content", decode(data), "sha256", WorkspacePath.hash(data));
     }
+    synchronized JSONObject preview(String path) throws IOException {
+        try {
+            byte[] data;
+            if (localSelected()) {
+                File file = local(path);
+                if (file.isFile() && FileOpenTarget.prefersViewer(FileOpenTarget.mimeFor(file.getName(), null)))
+                    return obj("openWithApp", true);
+                data = localBytes(file, TEXT_LIMIT);
+            } else {
+                Node node = resolve(path);
+                if (!node.directory() && FileOpenTarget.prefersViewer(FileOpenTarget.mimeFor(node.name, node.mime)))
+                    return obj("openWithApp", true);
+                data = bytes(node, TEXT_LIMIT);
+            }
+            return obj("path", path, "content", decode(data), "sha256", WorkspacePath.hash(data));
+        } catch (PreviewUnavailable unsupported) { return obj("openWithApp", true); }
+    }
+    synchronized FileOpenTarget openTarget(String path) throws IOException {
+        if (localSelected()) {
+            File file = local(path);
+            if (!file.isFile() || !file.canRead()) throw new IOException(t("파일을 읽을 수 없습니다."));
+            Uri uri = WorkspaceFileProvider.getUriForFile(context, context.getPackageName() + ".workspace-files", file);
+            return new FileOpenTarget(uri, file.getName(), FileOpenTarget.mimeFor(file.getName(), null));
+        }
+        Node node = resolve(path);
+        if (node.directory()) throw new IOException(t("파일을 읽을 수 없습니다."));
+        return new FileOpenTarget(node.uri, node.name, FileOpenTarget.mimeFor(node.name, node.mime));
+    }
     public synchronized Mutation prepare(String operation, JSONObject args) throws Exception {
-        if (generalSelected()) return prepareLocal(operation, args);
+        if (localSelected()) return prepareLocal(operation, args);
         requireTree();
         String path = args.getString("path");
         WorkspacePath.segments(path);
@@ -512,7 +673,7 @@ public final class DocumentStore {
         return new Mutation(operation, parse(args.toString()), tree.toString(), n == null ? "" : n.id,
             n == null ? 0 : n.modified, before, title, preview);
     }
-    private String localScope() throws IOException { return "local:" + safeGeneralRoot().getPath(); }
+    private String localScope() throws IOException { return "local:" + localRoot().getPath(); }
     private boolean localExists(String path) throws IOException { return local(path).exists(); }
     private void requireMutableLocalPath(String path) throws IOException {
         for (String segment : WorkspacePath.segments(path)) if (segment.equals(".git"))
@@ -644,7 +805,7 @@ public final class DocumentStore {
     }
     private JSONObject commitLocal(Mutation m) throws Exception {
         requireWorkspaceAvailable();
-        if (!generalSelected() || !localScope().equals(m.tree)) throw new IOException(t("작업 폴더가 변경되어 요청을 취소했습니다."));
+        if (!localSelected() || !localScope().equals(m.tree)) throw new IOException(t("작업 폴더가 변경되어 요청을 취소했습니다."));
         Mutation now = prepareLocal(m.operation, m.args);
         if (!now.documentId.equals(m.documentId) || now.modified != m.modified ||
                 (m.before != null && !Arrays.equals(now.before, m.before)))
@@ -715,7 +876,7 @@ public final class DocumentStore {
         File[] files = backups.listFiles((d, n) -> n.endsWith(".json"));
         if (files == null) return out;
         Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());
-        String scope = generalSelected() ? localScope() : tree == null ? "" : tree.toString();
+        String scope = localSelected() ? localScope() : tree == null ? "" : tree.toString();
         for (File f : files) {
             JSONObject meta = parse(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
             if (!scope.isEmpty() && meta.optString("tree").equals(scope)) {
@@ -729,7 +890,7 @@ public final class DocumentStore {
         requireWorkspaceAvailable();
         if (!id.matches("[a-f0-9-]{36}")) throw new IOException(t("잘못된 복구 항목입니다."));
         JSONObject meta = parse(dev.mobilecodex.app.core.Utf8Files.read(new File(backups, id + ".json").toPath()));
-        String scope = generalSelected() ? localScope() : tree == null ? "" : tree.toString();
+        String scope = localSelected() ? localScope() : tree == null ? "" : tree.toString();
         if (scope.isEmpty() || !scope.equals(meta.optString("tree"))) throw new IOException(t("다른 프로젝트의 복구 항목입니다."));
         return meta;
     }

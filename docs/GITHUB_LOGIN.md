@@ -11,14 +11,14 @@
 1. 打开 [注册 OAuth App](https://github.com/settings/applications/new)，或进入 GitHub → Settings → Developer settings → OAuth Apps → New OAuth App。
 2. Application name 可填写 `Codex CN`。Homepage URL 可使用项目地址 `https://github.com/caizhiyuan72/mobile-codex-zh`。
 3. 如果注册页要求 Authorization callback URL，可填写同一项目地址作为仅供 Device Flow 注册使用的占位值。Device Flow 不通过该地址交换授权码，也不需要 Android 拦截网页回调；将来若增加普通网页 OAuth，必须另行实现真实回调。
-4. 勾选 **Enable Device Flow**。可以保留默认的 **Expire user access tokens**；当前方案在令牌过期后要求重新授权，不保存刷新令牌，也不自动刷新。
+4. 勾选 **Enable Device Flow**。应用在设备授权时请求 `offline_access`，加密保存 GitHub 返回的刷新令牌，并自动续期。对之前已过期且没有刷新令牌的连接，升级后需重新授权一次；GitHub 撤销授权或刷新凭据失效时也需重新授权。
 5. 点击 Register application，复制页面上的 **Client ID**，填入应用的 GitHub 登录页。Client ID 是公开的应用标识；不要生成、粘贴或提交 Client Secret，也不要复制 `gh` 等其他应用的 Client ID。
 
 以后普通登录无需重新注册 OAuth App。只需在应用中开始授权、打开 `https://github.com/login/device`、输入本次设备码，并核对 GitHub 显示的应用名称、账号和权限。网页批准后，应等应用确认实际 GitHub 账号，再认为登录完成。设备码过期后重新发起即可。
 
 ## 权限与推送范围
 
-本方案明确请求 `public_repo workflow`：
+本方案请求 `public_repo`、`workflow` 和 `offline_access`。`offline_access` 用于获得刷新令牌，不授予额外的仓库权限，也不会出现在 GitHub 返回的权限列表中。
 
 | Scope | 用途与范围 |
 | --- | --- |
@@ -39,13 +39,13 @@ Git 的子进程环境只包含本地凭据服务的随机访问凭证，OAuth t
 
 | 阶段或响应 | 处理方式 |
 | --- | --- |
-| 请求设备码 | `POST https://github.com/login/device/code`，发送 `client_id`、`scope=public_repo workflow`，使用 `Accept: application/json`。设备响应中的 `expires_in` 和 `interval` 为准，不能写死 15 分钟或 5 秒。 |
+| 请求设备码 | `POST https://github.com/login/device/code`，发送 `client_id`、`scope=public_repo workflow offline_access`，使用 `Accept: application/json`。设备响应中的 `expires_in` 和 `interval` 为准，不能写死 15 分钟或 5 秒。 |
 | 轮询令牌 | `POST https://github.com/login/oauth/access_token`，发送 `client_id`、`device_code`、`grant_type=urn:ietf:params:oauth:grant-type:device_code`，无需 `client_secret`。首次和后续轮询均遵守最小间隔。 |
 | `authorization_pending` | 正常等待，按原间隔继续；不是登录失败。 |
 | `slow_down` | 增加至少 5 秒，并遵守服务端返回的更大 `interval`；不立即重试。 |
 | `expired_token` / `token_expired` | 停止轮询，清除设备码，让用户重新发起。GitHub 官方错误表与说明使用了这两种拼写。 |
 | `access_denied`、取消或客户端配置错误 | 停止本次授权，显示明确原因；不自动重新开始。`device_flow_disabled` 应提示开启 OAuth App 的 Device Flow。 |
-| 成功响应含 `expires_in` | 记录访问令牌到期时间，到期后不再交给 Git，提示重新授权。当前不保存 `refresh_token`。没有到期字段的令牌仍可能被撤销或失效，应处理 GitHub 的认证失败。 |
+| 成功响应含 `expires_in` 和刷新字段 | 首次登录用 `/user` 确认账号；续期使用该账号同一授权的刷新令牌，无需 Client Secret。返回的新访问令牌与轮换的刷新令牌一并加密保存。正常在到期前续期；应用休眠期间到期时，恢复后的 Git 请求可短暂等待刷新。临时故障保留授权并稍后重试；刷新凭据失效或到期后要求重新授权。 |
 
 Git 凭据接口需要区分两层：主命令是 `git credential fill`，不是 `git credential get`；配置的 credential helper 才由 Git 追加调用 `get`、`store`、`erase` 操作。
 

@@ -39,6 +39,7 @@ def broker(fields, environ):
         if len(payload) > BROKER_LIMIT:
             raise ValueError()
         with socket.create_connection(("127.0.0.1", port), timeout=4) as connection:
+            connection.settimeout(30)
             connection.sendall(payload)
             with connection.makefile("rb") as response:
                 raw = response.readline(BROKER_LIMIT + 1)

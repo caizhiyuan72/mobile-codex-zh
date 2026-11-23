@@ -102,6 +102,12 @@ public class ApiProvidersTest {
         assertEquals(before, preferences.getString("registry", ""));
         assertEquals(FIXTURE_KEY, providers.activeKey());
     }
+    @Test public void editingAProfileWithExplicitRootEndpointsPreservesItsBaseAddress() throws Exception {
+        String id = providers.save(obj("name", "Root endpoint", "baseUrl", "https://example.test/responses", "models", "root-model",
+            "apiKey", FIXTURE_KEY)).getString("id");
+        providers.save(obj("id", id, "name", "Renamed", "baseUrl", "https://example.test", "models", "root-model"));
+        assertEquals("https://example.test", providers.profileDetails(id).getString("baseUrl"));
+    }
     @Test public void providerAndCredentialRevisionsUseSeparateHomesWithoutAuthJson() throws Exception {
         String one = save("First"), two = save("Second");
         File base = new File(root, "base"); base.mkdirs();
@@ -196,5 +202,46 @@ public class ApiProvidersTest {
         }
         try { handle("rpc", obj("method", "account/rateLimits/read")); fail(); }
         catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("不支持")); }
+    }
+
+    @Test public void staleHistoryRebindsWithoutResumingOldThreadOrChangingDefault() throws Exception {
+        String original = save("Original"), fallback = save("Separate default");
+        providers.select(original);
+        engine = new Engine(context, providers);
+        List<String> calls = new ArrayList<>();
+        engine.setTestTransport((method, params) -> {
+            calls.add(method);
+            if (method.equals("thread/start")) return obj("thread", obj("id", "remote-" + calls.size()));
+            if (method.equals("thread/resume")) {
+                assertEquals("remote-1", params.getString("threadId")); return obj();
+            }
+            if (method.equals("turn/start")) {
+                assertEquals(calls.size() == 6 ? "remote-5" : "remote-1", params.getString("threadId"));
+                return obj("turn", obj("id", ""));
+            }
+            throw new AssertionError(method);
+        });
+        handle("chat.send", obj("text", "Original message"));
+        JSONObject first = handle("state", obj());
+        String localId = first.getString("threadId"), oldScope = first.getString("apiScope");
+        handle("providers.select", obj("id", fallback));
+        handle("chat.new", obj());
+        JSONObject valid = handle("chat.resume", obj("id", localId));
+        assertFalse(valid.getBoolean("apiCanRebind"));
+        assertEquals(original, valid.getString("apiActive"));
+        handle("chat.send", obj("text", "Continue on the original API"));
+        handle("providers.save", obj("id", original, "name", "Original", "baseUrl", "https://example.test/v1",
+            "models", "new-model", "apiKey", "fixture-replacement-key"));
+        assertTrue(handle("state", obj()).getBoolean("apiCanRebind"));
+        JSONObject rebound = handle("chat.provider.rebind", obj("id", original, "expectedThreadId", localId, "expectedApiScope", oldScope));
+        assertEquals(localId, rebound.getString("threadId"));
+        assertEquals(fallback, rebound.getString("apiDefault"));
+        assertEquals(providers.scope(original), rebound.getString("apiScope"));
+        assertFalse(rebound.getBoolean("apiCanRebind"));
+        assertEquals(2, rebound.getJSONArray("messages").length());
+        assertTrue(rebound.getJSONArray("messages").toString().contains("Original message"));
+        handle("chat.send", obj("text", "Continue after rebinding"));
+        assertEquals(Arrays.asList("thread/start", "turn/start", "thread/resume", "turn/start", "thread/start", "turn/start"), calls);
+        assertEquals(localId, handle("state", obj()).getString("threadId"));
     }
 }

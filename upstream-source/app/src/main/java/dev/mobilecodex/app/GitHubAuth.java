@@ -50,12 +50,14 @@ public final class GitHubAuth implements AutoCloseable {
     private final ScheduledExecutorService executor;
     private final TimeSource clock;
     private final Listener listener;
-    private String clientId = "", state = "idle", login = "", error = "", token = "";
+    private static final long CREDENTIAL_WAIT_NANOS = TimeUnit.SECONDS.toNanos(28);
+    private static final long REFRESH_RETRY_MILLIS = TimeUnit.MINUTES.toMillis(1);
+    private String clientId = "", state = "idle", login = "", error = "", token = "", refreshToken = "";
     private List<String> scopes = GitHubAuthPolicy.REQUESTED_SCOPES;
-    private long generation, tokenExpiry, tokenDeadline;
+    private long generation, tokenExpiry, tokenDeadline, refreshExpiry, refreshDeadline, refreshRetryAt;
     private Session pending;
     private ScheduledFuture<?> scheduled;
-    private boolean closed;
+    private boolean closed, refreshInFlight;
 
     private static final class Session {
         final long generation, expiresAt, deadline;
@@ -93,11 +95,19 @@ public final class GitHubAuth implements AutoCloseable {
                 tokenExpiry = record.optLong("expiresAt");
                 if (tokenExpiry < 0) throw new IOException();
                 tokenDeadline = tokenExpiry == 0 ? 0 : Math.addExact(clock.elapsedMillis(), Math.max(0, tokenExpiry - clock.nowMillis()));
-                if (tokenExpiry > 0 && clock.nowMillis() >= tokenExpiry) { state = "expired"; error = "GitHub 授权凭据已过期，请重新授权。"; }
-                else { token = restored; state = "connected"; scheduleTokenExpiryLocked(); }
+                refreshToken = record.optString("refreshToken", "");
+                refreshExpiry = record.optLong("refreshExpiresAt");
+                if (!refreshToken.isEmpty()) {
+                    GitHubAuthPolicy.accessToken(refreshToken);
+                    if (refreshExpiry <= 0) throw new IOException();
+                    refreshDeadline = Math.addExact(clock.elapsedMillis(), Math.max(0, refreshExpiry - clock.nowMillis()));
+                }
+                if (tokenExpiry > 0 && clock.nowMillis() >= tokenExpiry && refreshToken.isEmpty()) {
+                    state = "expired"; error = "GitHub 授权凭据已过期，请重新授权。";
+                } else { token = restored; state = "connected"; scheduleTokenExpiryLocked(); }
             }
         } catch (Exception ignored) {
-            token = ""; login = ""; tokenExpiry = 0; tokenDeadline = 0; scopes = GitHubAuthPolicy.REQUESTED_SCOPES;
+            token = ""; refreshToken = ""; login = ""; tokenExpiry = 0; tokenDeadline = 0; refreshExpiry = 0; refreshDeadline = 0; scopes = GitHubAuthPolicy.REQUESTED_SCOPES;
             state = "error"; error = "无法读取本地 GitHub 设置或凭据，请重新配置并授权。";
         }
     }
@@ -167,9 +177,24 @@ public final class GitHubAuth implements AutoCloseable {
 
     /** Native Git credential helper only. The returned password must never be sent through the UI bridge. */
     public synchronized String credentialFor(String protocol, String host, String path) throws IOException {
+        if (!GitHubAuthPolicy.credentialAllowed(protocol, host, path)) return "";
         refreshExpiryLocked();
-        if (closed || !"connected".equals(state) || !GitHubAuthPolicy.credentialAllowed(protocol, host, path)) return "";
-        return token;
+        return closed || !"connected".equals(state) ? "" : token;
+    }
+
+    synchronized String credentialForGit(String protocol, String host, String path) throws IOException {
+        if (!GitHubAuthPolicy.credentialAllowed(protocol, host, path)) return "";
+        long current = generation, deadline = System.nanoTime() + CREDENTIAL_WAIT_NANOS;
+        while (currentLocked(current)) {
+            String credential = credentialFor(protocol, host, path);
+            if (!credential.isEmpty() || !"connected".equals(state) || refreshToken.isEmpty()
+                    || clock.elapsedMillis() < refreshRetryAt) return credential;
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) break;
+            try { TimeUnit.NANOSECONDS.timedWait(this, remaining); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+        }
+        return "";
     }
 
     @Override public synchronized void close() {
@@ -178,11 +203,12 @@ public final class GitHubAuth implements AutoCloseable {
     }
 
     private void requireOpen() throws IOException { if (closed) throw new IOException("GitHub 授权服务已关闭。"); }
-    private void clearCredentialLocked() { token = ""; login = ""; tokenExpiry = 0; tokenDeadline = 0; scopes = GitHubAuthPolicy.REQUESTED_SCOPES; }
+    private void clearCredentialLocked() { token = ""; refreshToken = ""; login = ""; tokenExpiry = 0; tokenDeadline = 0; refreshExpiry = 0; refreshDeadline = 0; refreshRetryAt = 0; refreshInFlight = false; scopes = GitHubAuthPolicy.REQUESTED_SCOPES; }
     private void invalidateLocked() {
         generation++;
         if (scheduled != null) scheduled.cancel(false);
         scheduled = null; pending = null;
+        notifyAll();
     }
     private void finishLocked(String next, String detail) { invalidateLocked(); state = next; error = detail; changedLocked(); }
     private boolean currentLocked(long value) { return !closed && generation == value; }
@@ -195,15 +221,99 @@ public final class GitHubAuth implements AutoCloseable {
         if (closed) return;
         if (pending != null && "pending".equals(state)) { expiredLocked(pending); return; }
         if ("connected".equals(state) && tokenExpiry > 0 && (clock.nowMillis() >= tokenExpiry || clock.elapsedMillis() >= tokenDeadline)) {
-            token = ""; finishLocked("expired", "GitHub 授权凭据已过期，请重新授权。");
+            token = "";
+            if (refreshToken.isEmpty() || clock.nowMillis() >= refreshExpiry || clock.elapsedMillis() >= refreshDeadline) {
+                preferences.edit().remove("credential").apply();
+                clearCredentialLocked(); finishLocked("expired", "GitHub 授权凭据已过期，请重新授权。");
+            } else if (clock.elapsedMillis() >= refreshRetryAt
+                    && (scheduled == null || scheduled.getDelay(TimeUnit.NANOSECONDS) > 0)) scheduleRefreshLocked(0);
         }
     }
     private void scheduleTokenExpiryLocked() {
-        if (tokenExpiry == 0) return;
+        if (tokenExpiry == 0 && refreshToken.isEmpty()) return;
         long current = generation;
-        scheduled = executor.schedule(() -> { synchronized (GitHubAuth.this) { if (currentLocked(current)) refreshExpiryLocked(); } },
-            Math.max(0, tokenDeadline - clock.elapsedMillis()), TimeUnit.MILLISECONDS);
+        long remaining = tokenDeadline - clock.elapsedMillis();
+        if (!refreshToken.isEmpty()) {
+            long delay = tokenExpiry == 0 ? refreshDeadline - clock.elapsedMillis()
+                : remaining - Math.min(TimeUnit.MINUTES.toMillis(5), Math.max(0, remaining / 2));
+            scheduleRefreshLocked(Math.max(0, delay));
+        }
+        else scheduled = executor.schedule(() -> { synchronized (GitHubAuth.this) { if (currentLocked(current)) refreshExpiryLocked(); } },
+            Math.max(0, remaining), TimeUnit.MILLISECONDS);
     }
+
+    private void scheduleRefreshLocked(long delayMillis) {
+        if (closed || refreshToken.isEmpty() || refreshInFlight) return;
+        if (scheduled != null) scheduled.cancel(false);
+        long current = generation;
+        scheduled = executor.schedule(() -> refreshCredential(current), Math.max(0, delayMillis), TimeUnit.MILLISECONDS);
+    }
+
+    private void refreshCredential(long current) {
+        final String oldRefresh, expectedLogin, id;
+        final List<String> oldScopes;
+        final long beganWall, beganElapsed;
+        synchronized (this) {
+            if (!currentLocked(current) || !"connected".equals(state) || refreshToken.isEmpty() || refreshInFlight) return;
+            scheduled = null;
+            if (clock.nowMillis() >= refreshExpiry || clock.elapsedMillis() >= refreshDeadline) {
+                preferences.edit().remove("credential").apply(); clearCredentialLocked();
+                finishLocked("expired", "GitHub 刷新凭据已过期，请重新授权。"); return;
+            }
+            refreshInFlight = true; oldRefresh = refreshToken; expectedLogin = login; id = clientId; oldScopes = List.copyOf(scopes);
+            beganWall = clock.nowMillis(); beganElapsed = clock.elapsedMillis();
+        }
+        try {
+            Response response = network.exchange("POST", GitHubAuthPolicy.TOKEN_URL,
+                Map.of("client_id", id, "grant_type", "refresh_token", "refresh_token", oldRefresh), "");
+            String problem = response.body.optString("error");
+            if (response.status == 401 || List.of("bad_refresh_token", "invalid_grant", "incorrect_client_credentials", "access_denied").contains(problem))
+                throw new RefreshRejectedException();
+            if (response.status != 200 || !problem.isEmpty()) throw new IOException();
+            String nextToken = GitHubAuthPolicy.accessToken(response.body.optString("access_token"));
+            String nextRefresh = GitHubAuthPolicy.accessToken(response.body.optString("refresh_token"));
+            if (!"bearer".equalsIgnoreCase(response.body.optString("token_type", "bearer"))) throw new IOException();
+            long accessLife = GitHubAuthPolicy.tokenLifetimeSeconds(response.body.opt("expires_in"));
+            long refreshLife = GitHubAuthPolicy.tokenLifetimeSeconds(response.body.opt("refresh_token_expires_in"));
+            if (accessLife == 0 || refreshLife == 0) throw new IOException();
+            if (response.body.has("scope")) {
+                try {
+                    List<String> grantedScopes = GitHubAuthPolicy.scopes(response.body.optString("scope"));
+                    GitHubAuthPolicy.requireScopes(grantedScopes);
+                } catch (IOException invalidScopes) { throw new RefreshRejectedException(); }
+            }
+            long accessAt = GitHubAuthPolicy.deadline(beganWall, accessLife);
+            long accessBy = GitHubAuthPolicy.deadline(beganElapsed, accessLife);
+            long refreshAt = GitHubAuthPolicy.deadline(beganWall, refreshLife);
+            long refreshBy = GitHubAuthPolicy.deadline(beganElapsed, refreshLife);
+            JSONObject encrypted = cipher.seal(obj("clientId", id, "token", nextToken, "refreshToken", nextRefresh,
+                "login", expectedLogin, "scope", String.join(",", oldScopes), "expiresAt", accessAt,
+                "refreshExpiresAt", refreshAt).toString());
+            synchronized (this) {
+                if (!currentLocked(current) || !oldRefresh.equals(refreshToken)) return;
+                if (!preferences.edit().putString("credential", encrypted.toString()).commit()) throw new RefreshRejectedException();
+                token = nextToken; refreshToken = nextRefresh; scopes = oldScopes;
+                tokenExpiry = accessAt; tokenDeadline = accessBy; refreshExpiry = refreshAt; refreshDeadline = refreshBy;
+                refreshInFlight = false; refreshRetryAt = 0; error = "";
+                scheduleTokenExpiryLocked(); notifyAll(); changedLocked();
+            }
+        } catch (Exception failure) {
+            synchronized (this) {
+                if (!currentLocked(current)) return;
+                refreshInFlight = false;
+                if (failure instanceof RefreshRejectedException || clock.nowMillis() >= refreshExpiry || clock.elapsedMillis() >= refreshDeadline) {
+                    preferences.edit().remove("credential").apply(); clearCredentialLocked();
+                    finishLocked("expired", "GitHub 刷新凭据无效或已过期，请重新授权。");
+                } else {
+                    refreshRetryAt = Math.min(refreshDeadline, clock.elapsedMillis() + REFRESH_RETRY_MILLIS);
+                    scheduleRefreshLocked(refreshRetryAt - clock.elapsedMillis());
+                    notifyAll();
+                }
+            }
+        }
+    }
+
+    private static final class RefreshRejectedException extends IOException {}
 
     private void requestCode(long current, String id, long beganWall, long beganElapsed) {
         try {
@@ -267,7 +377,8 @@ public final class GitHubAuth implements AutoCloseable {
     private void complete(Session session, Response response, long beganWall, long beganElapsed) throws IOException {
         final String grantedToken;
         final List<String> grantedScopes;
-        final long lifetime, expiresAt, deadline;
+        final long lifetime, expiresAt, deadline, refreshExpiresAt, refreshRefreshDeadline;
+        final String grantedRefreshToken;
         try {
             grantedToken = GitHubAuthPolicy.accessToken(response.body.optString("access_token"));
             if (!"bearer".equalsIgnoreCase(response.body.optString("token_type", "bearer"))) throw new IOException("GitHub 返回的凭据类型无效，请重新授权。");
@@ -275,6 +386,15 @@ public final class GitHubAuth implements AutoCloseable {
             lifetime = GitHubAuthPolicy.tokenLifetimeSeconds(response.body.opt("expires_in"));
             expiresAt = lifetime == 0 ? 0 : GitHubAuthPolicy.deadline(beganWall, lifetime);
             deadline = lifetime == 0 ? 0 : GitHubAuthPolicy.deadline(beganElapsed, lifetime);
+            grantedRefreshToken = response.body.optString("refresh_token", "");
+            if (grantedRefreshToken.isEmpty()) { refreshExpiresAt = 0; refreshRefreshDeadline = 0; }
+            else {
+                GitHubAuthPolicy.accessToken(grantedRefreshToken);
+                long refreshLifetime = GitHubAuthPolicy.tokenLifetimeSeconds(response.body.opt("refresh_token_expires_in"));
+                if (lifetime == 0 || refreshLifetime == 0) throw new IOException("GitHub 返回的凭据有效期无效，请重新授权。");
+                refreshExpiresAt = GitHubAuthPolicy.deadline(beganWall, refreshLifetime);
+                refreshRefreshDeadline = GitHubAuthPolicy.deadline(beganElapsed, refreshLifetime);
+            }
         } catch (IOException problem) { fail(session.generation, problem.getMessage()); return; }
         synchronized (this) { if (!currentLocked(session) || expiredLocked(session)) return; }
         Response user = network.exchange("GET", GitHubAuthPolicy.USER_URL, Map.of(), grantedToken);
@@ -289,12 +409,12 @@ public final class GitHubAuth implements AutoCloseable {
                     finishLocked("expired", "GitHub 授权凭据已过期，请重新授权。"); return;
                 }
                 final JSONObject encrypted;
-                try { encrypted = cipher.seal(obj("clientId", session.clientId, "token", grantedToken, "login", account,
-                    "scope", String.join(",", verifiedScopes), "expiresAt", expiresAt).toString()); }
+                try { encrypted = cipher.seal(obj("clientId", session.clientId, "token", grantedToken, "refreshToken", grantedRefreshToken, "login", account,
+                    "scope", String.join(",", verifiedScopes), "expiresAt", expiresAt, "refreshExpiresAt", refreshExpiresAt).toString()); }
                 catch (Exception ignored) { finishLocked("error", "无法加密并保存 GitHub 凭据，请重新授权。"); return; }
                 if (!preferences.edit().putString("credential", encrypted.toString()).commit()) throw new IOException("无法保存本地 GitHub 凭据，请重新授权。");
-                invalidateLocked(); token = grantedToken; login = account; scopes = verifiedScopes;
-                tokenExpiry = expiresAt; tokenDeadline = deadline; state = "connected"; error = "";
+                invalidateLocked(); token = grantedToken; refreshToken = grantedRefreshToken; login = account; scopes = verifiedScopes;
+                tokenExpiry = expiresAt; tokenDeadline = deadline; refreshExpiry = refreshExpiresAt; refreshDeadline = refreshRefreshDeadline; state = "connected"; error = "";
                 scheduleTokenExpiryLocked(); changedLocked();
             } catch (IOException problem) { finishLocked("error", problem.getMessage()); }
             catch (Exception ignored) { finishLocked("error", "无法加密并保存 GitHub 凭据，请重新授权。"); }

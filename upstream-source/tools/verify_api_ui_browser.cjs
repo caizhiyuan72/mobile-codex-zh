@@ -172,25 +172,36 @@ async function readingThroughCompletion(page,width,theme){
   return {top:target.getBoundingClientRect().top-area.getBoundingClientRect().top,scrollTop:area.scrollTop};
  });
  assert.ok(before.scrollTop>0,'reading fixture is above the live tail');
- assert.equal(await page.locator('#jump-latest').isVisible(),false,'running task does not show latest shortcut');
+ assert.equal(await page.locator('#jump-latest').isVisible(),false,'scrolling alone keeps the latest shortcut hidden');
+ await page.evaluate(()=>{
+  window.layoutState={...window.layoutState,messages:[{id:'read-old',role:'assistant',text:'加载的更早消息。'},...window.layoutState.messages]};
+  window.mobileCodexEvent('state',window.layoutState);
+ });await settle(page);
+ assert.equal(await page.locator('#jump-latest').isVisible(),false,'loading older messages keeps the latest shortcut hidden');
  await page.evaluate(()=>{
   window.mobileCodexEvent('message.delta',{threadId:window.layoutState.threadId,id:'read-35',delta:'流式输出仍在继续。'});
   window.mobileCodexEvent('agent.event',{threadId:window.layoutState.threadId,method:'item/started',params:{item:{id:'reading-command',type:'commandExecution',command:'npm test'}}});
  });await settle(page);
  const readingOffset=()=>page.evaluate(()=>document.querySelector('[data-id="read-12"]').getBoundingClientRect().top-document.getElementById('chat-scroll').getBoundingClientRect().top);
  assert.ok(Math.abs(await readingOffset()-before.top)<=1,'stream output preserves the line being read');
+ assert.equal(await page.locator('#jump-latest').isVisible(),true,'new output shows the latest shortcut during streaming');
  await page.evaluate(()=>{
   const messages=window.layoutState.messages.map(message=>message.id==='read-3'?{...message,text:message.text+'\n\n上方消息更新。'.repeat(12)}:message);
   window.layoutState={...window.layoutState,busy:false,turnId:'',messages};window.mobileCodexEvent('state',window.layoutState);
  });await settle(page);
  assert.ok(Math.abs(await readingOffset()-before.top)<=1,'completion and changed content above preserve the reading position');
- assert.equal(await page.locator('#jump-latest').isVisible(),true,'latest shortcut appears after whole-task completion');
+ assert.equal(await page.locator('#jump-latest').isVisible(),true,'latest shortcut stays visible until the reader returns to the tail');
  const centered=await page.locator('#jump-latest').evaluate(button=>{const r=button.getBoundingClientRect(),parent=button.parentElement.getBoundingClientRect();return Math.abs(r.left+r.width/2-parent.left-parent.width/2)<=1;});
  assert.ok(centered,'latest shortcut remains horizontally centered');
  await page.screenshot({path:path.join(output,`completion-reading-${width}-${theme}.png`)});
  await page.locator('#jump-latest').click();await settle(page);
  assert.equal(await page.locator('#jump-latest').isVisible(),false);
  assert.ok(await page.locator('#chat-scroll').evaluate(area=>area.scrollHeight-area.scrollTop-area.clientHeight<=2),'latest shortcut reaches the tail');
+ await page.evaluate(()=>{
+  const area=document.getElementById('chat-scroll');area.scrollTop=300;area.dispatchEvent(new Event('scroll'));
+  window.mobileCodexEvent('state',JSON.parse(JSON.stringify(window.layoutState)));
+ });await settle(page);
+ assert.equal(await page.locator('#jump-latest').isVisible(),false,'replaying a seen snapshot does not show the latest shortcut');
 }
 async function githubLayout(page,width,theme){
  const states=[
@@ -241,7 +252,7 @@ async function githubLayout(page,width,theme){
    page.on('pageerror',error=>errors.push(error.message));
    await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!=='https://appassets.androidplatform.net')return route.abort();const image=attachmentFixtures.find(item=>item.image?.url===url.pathname)?.image;if(image)return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="${image.width}" height="${image.height}"><rect width="100%" height="100%" fill="#8ac5ee"/><path d="M0 0L${image.width} ${image.height}" stroke="#16344a" stroke-width="20"/></svg>`});const file=require('./icon_asset.cjs').iconAsset(web,url.pathname);return file.startsWith(web+path.sep)&&fs.existsSync(file)?route.fulfill({path:file}):route.fulfill({status:404,body:''});});
    await page.addInitScript(snapshot=>{
-    localStorage.setItem('chat-icons','off');window.layoutState=snapshot;window.layoutCalls=[];
+    window.layoutState=snapshot;window.layoutCalls=[];
     window.Native={locale:()=>JSON.stringify({choice:'zh-CN',systemLanguage:'zh-CN'}),postMessage(raw){const message=JSON.parse(raw);window.layoutCalls.push(message);const result=message.action==='state'?window.layoutState:message.action==='github.status'?{github:window.layoutState.github}:message.action==='rpc'?{data:[],marketplaces:[]}:{};setTimeout(()=>window.mobileCodexEvent('response',{id:message.id,result}),0);}};
    },state);
    await page.goto('https://appassets.androidplatform.net/index.html');await page.locator('[data-id="a"]').waitFor();

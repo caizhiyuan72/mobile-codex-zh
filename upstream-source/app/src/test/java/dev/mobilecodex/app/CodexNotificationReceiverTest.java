@@ -1,5 +1,6 @@
 package dev.mobilecodex.app;
 
+import android.app.Notification;
 import android.app.Application;
 import android.app.NotificationManager;
 import android.content.Context;
@@ -45,12 +46,14 @@ public class CodexNotificationReceiverTest {
         ShadowNotificationManager notifications = shadowOf(manager);
         assertEquals(1, notifications.size());
         assertEquals(NotificationManager.IMPORTANCE_HIGH,
-            manager.getNotificationChannel(CodexNotificationReceiver.CHANNEL).getImportance());
+            manager.getNotificationChannel(CodexNotificationReceiver.RESULTS_CHANNEL).getImportance());
+        assertNotNull(manager.getNotificationChannel(CodexNotificationReceiver.RESULTS_CHANNEL).getSound());
+        assertNotEquals(0, manager.getActiveNotifications()[0].getNotification().flags & Notification.FLAG_AUTO_CANCEL);
     }
 
     @Test public void foregroundCompletionOnlyStaysSilentForTheVisibleConversation() {
         CodexNotificationReceiver.setAppForeground(true);
-        CodexNotificationReceiver.setVisibleThread("thread-one");
+        CodexNotificationReceiver.setVisibleThread(context, "thread-one");
         CodexNotificationReceiver receiver = new CodexNotificationReceiver();
         receiver.onReceive(context, Engine.taskNotificationIntent(context, "completed", "Done", "Task finished", "thread-two", ""));
         assertEquals(1, shadowOf(manager).size());
@@ -59,7 +62,7 @@ public class CodexNotificationReceiverTest {
     }
     @Test public void resumingWithoutAVisibleThreadDoesNotSilenceCompletion() {
         CodexNotificationReceiver.setAppForeground(true);
-        CodexNotificationReceiver.setVisibleThread("thread-one");
+        CodexNotificationReceiver.setVisibleThread(context, "thread-one");
         CodexNotificationReceiver.setAppForeground(false);
         CodexNotificationReceiver.setAppForeground(true);
         new CodexNotificationReceiver().onReceive(context,
@@ -80,5 +83,28 @@ public class CodexNotificationReceiverTest {
             new Intent(CodexNotificationReceiver.ACTION).putExtra("kind", "completed")
                 .putExtra("threadId", "thread-one").putExtra("approvalId", ""));
         assertEquals(0, shadowOf(manager).size());
+    }
+
+    @Test public void openingConversationClearsItsResultAndLeavesOtherNotifications() {
+        CodexNotificationReceiver receiver = new CodexNotificationReceiver();
+        receiver.onReceive(context, Engine.taskNotificationIntent(context, "completed", "Done", "Finished", "thread-one", ""));
+        receiver.onReceive(context, Engine.taskNotificationIntent(context, "completed", "Done", "Finished", "thread-two", ""));
+        manager.notify("codex-task", Math.abs("thread-onecompleted".hashCode()),
+            new Notification.Builder(context, CodexNotificationReceiver.RESULTS_CHANNEL).setContentTitle("Old result").build());
+        assertEquals(3, shadowOf(manager).size());
+        CodexNotificationReceiver.setAppForeground(true);
+        CodexNotificationReceiver.setVisibleThread(context, "thread-one");
+        assertEquals(1, shadowOf(manager).size());
+        assertEquals("codex-result:thread-two", manager.getActiveNotifications()[0].getTag());
+    }
+
+    @Test public void disablingVibrationKeepsAnAudibleHighPriorityResult() {
+        context.getSharedPreferences("notifications", 0).edit().putBoolean("vibration", false).commit();
+        new CodexNotificationReceiver().onReceive(context,
+            Engine.taskNotificationIntent(context, "completed", "Done", "Finished", "thread-one", ""));
+        var channel = manager.getNotificationChannel(CodexNotificationReceiver.RESULTS_NO_VIBRATION_CHANNEL);
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, channel.getImportance());
+        assertFalse(channel.shouldVibrate());
+        assertNotNull(channel.getSound());
     }
 }

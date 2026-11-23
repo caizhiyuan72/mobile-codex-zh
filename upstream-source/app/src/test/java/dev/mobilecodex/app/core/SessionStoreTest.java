@@ -22,6 +22,13 @@ public class SessionStoreTest {
         assertEquals(record().toString(), new SessionStore(target()).sessions().toString());
         assertEquals("loaded", new SessionStore(target()).status().getString("state"));
     }
+    @Test public void unchangedSnapshotDoesNotWriteToDisk() throws Exception {
+        new SessionStore(target()).save(record());
+        SessionStore store = new SessionStore(target()) {
+            @Override protected void writeSynced(Path path, byte[] bytes) { fail("Unchanged snapshot was written"); }
+        };
+        store.save(record());
+    }
     @Test public void corruptCurrentCannotBeReplacedByAnEmptySaveOrDamageBackup() throws Exception {
         SessionStore store = new SessionStore(target()); store.save(record());
         Path backup = target().toPath().resolveSibling("sessions.json.last-good");

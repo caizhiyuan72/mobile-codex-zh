@@ -64,6 +64,11 @@ public final class ProjectRegistry {
     public String selectedKey() { return selectedKey; }
     public Project selected() { return projects.get(selectedKey); }
     public Project get(String key) { return projects.get(key == null ? "" : key); }
+    public Project boundTo(String uri) {
+        if (uri == null || uri.isBlank()) return null;
+        for (Project project : projects.values()) if (uri.equals(project.uri)) return project;
+        return null;
+    }
     public String projectId(String key) { return identities.projectId(key); }
     public String displayName(String key) { return identities.name(key); }
     public JSONObject exportProject(String key) {

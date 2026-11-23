@@ -1,5 +1,8 @@
 /* UI messages only; user/model/file content is never translated. */
 window.MobileCodexEnglish = {
+  "界面主题": "Interface style",
+  "原版": "Classic",
+  "液态玻璃": "Liquid Glass",
   "전송을 취소했습니다. 다시 보내려면 오류 정보를 다시 열어 확인해 주세요.": "Sending cancelled. Reopen the error report to review it before retrying.",
   "오류 정보가 변경되었습니다. 다시 열어 확인해 주세요.": "The error report changed. Reopen it to review the current report.",
   "오류 정보 보내기": "Send error report",
@@ -132,6 +135,13 @@ window.MobileCodexEnglish = {
   "프로젝트 이름을 입력하세요.": "Enter a project name.",
   "로컬 폴더 연결": "Link local folder",
   "폴더 없이 프로젝트 만들기": "Create project without a folder",
+  "上一级": "Parent folder",
+  "关联当前文件夹": "Use this folder",
+  "新建项目文件夹": "Create folder",
+  "Android 选择其他文件夹": "Link local folder",
+  "子文件夹": "Subfolders",
+  "正在加载文件夹…": "Loading folders…",
+  "无法加载文件夹": "Could not load folders",
   "프로젝트 병합": "Merge projects",
   "같은 프로젝트로 묶을 항목을 선택하세요. 폴더와 파일은 그대로 유지됩니다.": "Choose the same project to link. Folders and files stay unchanged.",
   "“{source}”와 “{target}”을 같은 프로젝트로 묶을까요?\n\n대상 프로젝트의 이름과 기본 폴더를 사용합니다. 기존 대화는 각자의 폴더에 연결된 채 유지됩니다.": "Link “{source}” and “{target}” as the same project?\n\nUse the target project's name and default folder. Existing conversations keep their own folder bindings.",
@@ -1279,5 +1289,6 @@ window.MobileCodexEnglish = {
   "Codex 작업의 승인이 필요합니다.": "A Codex task needs approval.",
   "Codex 작업 알림": "Codex task notifications",
   "Codex 작업 폴더를 열 수 없습니다.": "Unable to open the Codex workspace.",
-  "Codex 작업 폴더 안의 경로만 사용할 수 있습니다.": "Only paths inside the Codex workspace are allowed."
+  "Codex 작업 폴더 안의 경로만 사용할 수 있습니다.": "Only paths inside the Codex workspace are allowed.",
+  "다른 앱으로 열기": "Open with another app"
 };

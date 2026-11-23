@@ -24,13 +24,26 @@ function setup(overrides = {}) {
       } catch (error) { w.mobileCodexEvent('response', {id:message.id, error:error.message}); }
     });
   }};
-  for (const name of ['translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(root + name, 'utf8'));
+  for (const name of ['appearance.js', 'translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(root + name, 'utf8'));
   return {w, d:w.document, calls, snapshot, switchTo(key, extra = {}) { w.mobileCodexEvent('state', {...snapshot, workspace:{selected:true, key, name:'Project ' + key, available:true}, cwd:'/' + key, threadId:key + '-thread', ...extra}); }};
 }
 async function showFile(ui, path = 'test.md') {
   ui.d.getElementById('files-toggle').click(); await tick();
   [...ui.d.querySelectorAll('.file-row')].find(row => row.textContent.includes(path)).click(); await tick();
 }
+test('the file panel opens a document and offers an explicit app choice for text files', async () => {
+  const ui = setup({
+    'files.list':() => ({entries:[{name:'report.PDF', path:'out/report.PDF', size:2048}, {name:'readme.md', path:'out/readme.md', size:10}]}),
+    'files.read':() => ({openWithApp:true})
+  });
+  await tick(); await showFile(ui, 'report.PDF');
+  assert.deepEqual(ui.calls.find(call => call.action === 'files.open').args, {path:'out/report.PDF', workspaceKey:'A', choose:false});
+  assert.equal(ui.d.getElementById('editor-dialog').open, false);
+  ui.d.querySelectorAll('.file-entry .icon-button')[1].click(); await tick();
+  ui.d.querySelector('#file-actions button:last-child').click(); await tick();
+  assert.deepEqual(ui.calls.filter(call => call.action === 'files.open').at(-1).args, {path:'out/readme.md', workspaceKey:'A', choose:true});
+  assert.equal(ui.calls.filter(call => call.action === 'files.read').length, 1);
+});
 for (const operation of ['rename', 'move']) test(`editor ${operation} preserves unsaved text and its original version for the next save`, async () => {
   let path = 'test.md', content = 'disk text', sha256 = 'original-hash';
   const ui = setup({

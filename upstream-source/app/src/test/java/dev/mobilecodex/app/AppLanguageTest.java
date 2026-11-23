@@ -25,12 +25,23 @@ public class AppLanguageTest {
         var context=RuntimeEnvironment.getApplication();AppLanguage.initialize(context);
         assertEquals("zh-CN",AppLanguage.choice(context));assertEquals("设置",Texts.t("설정"));
         AppLanguage.set(context,"system");assertEquals("Settings",Texts.t("설정"));
-        AppLanguage.set(context,"ko");assertEquals("설정",Texts.t("설정"));
-        AppLanguage.initialize(context);assertEquals("ko",AppLanguage.choice(context));
+        assertThrows(IllegalArgumentException.class, () -> AppLanguage.set(context, "ko"));
+        context.getSharedPreferences("appearance", 0).edit().putString("language", "ko").commit();
+        AppLanguage.initialize(context);assertEquals("zh-CN",AppLanguage.choice(context));
+        assertEquals("设置", Texts.t("설정"));
         AppLanguage.set(context,"en");assertEquals("Settings",Texts.t("설정"));assertEquals("user content",Texts.t("user content"));
         AppLanguage.set(context,"zh-CN");assertEquals("设置",Texts.t("설정"));assertEquals("设置",Texts.t("Settings"));
         AppLanguage.initialize(context);assertEquals("zh-CN",AppLanguage.choice(context));
         assertEquals("user content",Texts.t("user content"));
         assertThrows(IllegalArgumentException.class,()->AppLanguage.set(context,"unsupported"));
+    }
+    @Test @Config(qualifiers="ko")
+    public void koreanDeviceLocaleFallsBackToSimplifiedChinese() throws Exception {
+        var context = RuntimeEnvironment.getApplication();
+        AppLanguage.initialize(context);
+        AppLanguage.set(context, "system");
+        assertEquals("ko", context.getResources().getConfiguration().getLocales().get(0).getLanguage());
+        assertEquals(java.util.Locale.SIMPLIFIED_CHINESE, AppLanguage.locale(context));
+        assertEquals("设置", Texts.t("설정"));
     }
 }

@@ -39,4 +39,37 @@ public class WorkHistoryTest {
         assertEquals("pwd", messages.getJSONObject(2).getString("detail"));
         assertEquals("reply", messages.getJSONObject(3).getString("id"));
     }
+
+    @Test public void searchCompletionUpdatesTheSavedRowWithoutDuplicatingIt() throws Exception {
+        JSONArray messages = array();
+        JSONObject search = obj("id", "search", "type", "webSearch", "query", "Codex models");
+        assertTrue(WorkHistory.record(messages, search, "turn", false, 0));
+        assertFalse(messages.getJSONObject(0).getBoolean("completed"));
+        assertTrue(WorkHistory.record(messages, search.put("query", "Codex app models"), "turn", true, 1));
+        assertFalse(WorkHistory.record(messages, search, "turn", false, 1));
+        assertEquals(1, messages.length());
+        JSONObject row = messages.getJSONObject(0);
+        assertEquals("searching", row.getString("activityKind"));
+        assertEquals("Codex app models", row.getString("detail"));
+        assertTrue(row.getBoolean("completed"));
+    }
+
+    @Test public void dynamicSearchKeepsItsPositionAndQueryWhenCompletionOmitsArguments() throws Exception {
+        JSONArray messages = array(obj("id", "intro", "role", "assistant"));
+        JSONObject search = obj("id", "search", "type", "dynamicToolCall", "tool", "mobile_search",
+            "arguments", obj("query", "README", "unrelated", "hidden"));
+        assertTrue(WorkHistory.record(messages, search, "turn", false, messages.length()));
+        messages.put(obj("id", "reply", "role", "assistant"));
+        search.remove("arguments");
+        search.put("contentItems", array(obj("type", "inputImage", "imageUrl", "hidden"), obj("type", "inputText", "text", "README.md")));
+        assertTrue(WorkHistory.record(messages, search, "turn", true, messages.length()));
+        assertEquals(3, messages.length());
+        JSONObject row = messages.getJSONObject(1);
+        assertEquals("searching", row.getString("activityKind"));
+        assertEquals("mobile_search · README", row.getString("detail"));
+        assertEquals("README.md", row.getString("output"));
+        assertTrue(row.getBoolean("completed"));
+        assertFalse(row.toString().contains("hidden"));
+        assertEquals("reply", messages.getJSONObject(2).getString("id"));
+    }
 }

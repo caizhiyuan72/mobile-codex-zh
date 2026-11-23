@@ -34,20 +34,25 @@ final class AppLanguage {
         } catch (Exception failure) { android.util.Log.e("AppLanguage", "Unable to load bundled translations", failure); }
         return Map.of();
     }
-    static String choice(Context context) { return context.getSharedPreferences("appearance", 0).getString("language", "zh-CN"); }
+    static String choice(Context context) {
+        String saved = context.getSharedPreferences("appearance", 0).getString("language", "zh-CN");
+        return saved.equals("system") || saved.equals("en") ? saved : "zh-CN";
+    }
     static Locale locale(Context context) {
         String choice = choice(context);
-        return choice.equals("system") ? context.getResources().getConfiguration().getLocales().get(0) : Locale.forLanguageTag(choice);
+        if (!choice.equals("system")) return Locale.forLanguageTag(choice);
+        Locale device = context.getResources().getConfiguration().getLocales().get(0);
+        return "en".equals(device.getLanguage()) ? device : Locale.SIMPLIFIED_CHINESE;
     }
     static String brandName() { return "fresh".equals(BuildConfig.BUILD_TYPE) ? "大肥龙" : ""; }
     static void configure(Context context) {
         String language = locale(context).getLanguage();
-        Texts.configure(language.equals("ko"), language.equals("zh") ? chinese : english, brandName());
+        Texts.configure(false, language.equals("zh") ? chinese : english, brandName());
     }
     static JSONObject snapshot(Context context) { return obj("brandName", brandName(), "choice", choice(context), "systemLanguage", context.getResources().getConfiguration().getLocales().get(0).toLanguageTag()); }
     @android.annotation.SuppressLint("ApplySharedPref")
     static void set(Context context, String value) throws java.io.IOException {
-        if (!Set.of("system", "zh-CN", "en", "ko").contains(value)) throw new IllegalArgumentException("Unsupported language");
+        if (!Set.of("system", "zh-CN", "en").contains(value)) throw new IllegalArgumentException("Unsupported language");
         if (!context.getSharedPreferences("appearance", 0).edit().putString("language", value).commit()) throw new java.io.IOException("Unable to save language setting");
         configure(context);
     }

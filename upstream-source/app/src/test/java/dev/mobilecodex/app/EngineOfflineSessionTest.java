@@ -116,9 +116,45 @@ public class EngineOfflineSessionTest {
     private static Object field(Engine engine, String name) throws Exception { java.lang.reflect.Field value = Engine.class.getDeclaredField(name); value.setAccessible(true); return value.get(engine); }
     private static void setField(Engine engine, String name, Object value) throws Exception { java.lang.reflect.Field field = Engine.class.getDeclaredField(name); field.setAccessible(true); field.set(engine, value); }
     private JSONObject handle(Engine engine, String action, JSONObject args) throws Exception {
+        return handleAsync(engine, action, args).get(5, TimeUnit.SECONDS);
+    }
+    private CompletableFuture<JSONObject> handleAsync(Engine engine, String action, JSONObject args) {
         CompletableFuture<JSONObject> done = new CompletableFuture<>();
         engine.handle(action, args, (value, error) -> { if (error != null) done.completeExceptionally(error); else done.complete(value); });
-        return done.get(5, TimeUnit.SECONDS);
+        return done;
+    }
+    @Test public void rapidChatSwitchSkipsQueuedNavigationAndPublishesOneSnapshot() throws Exception {
+        JSONArray saved = array(
+            obj("id", "older", "title", "Older", "workspaceKey", "", "workHistoryVersion", 1, "messages", array()),
+            obj("id", "latest", "title", "Latest", "workspaceKey", "", "workHistoryVersion", 1,
+                "messages", array(obj("id", "message", "role", "user", "text", "latest history"))));
+        dev.mobilecodex.app.core.Utf8Files.write(new File(context.getFilesDir(), "sessions.json").toPath(), saved.toString());
+        Engine engine = new Engine(context);
+        java.util.List<JSONObject> states = new java.util.ArrayList<>();
+        CountDownLatch release = new CountDownLatch(1);
+        try {
+            engine.attach(new Engine.Ui() {
+                @Override public void event(String name, JSONObject data) { if (name.equals("state")) states.add(data); }
+                @Override public void approval(Engine.Approval approval) { }
+            });
+            handle(engine, "state", obj());
+            states.clear();
+            engine.io.submit(() -> { release.await(); return null; });
+            var older = handleAsync(engine, "chat.resume", obj("id", "older", "eventOnly", true));
+            var latest = handleAsync(engine, "chat.resume", obj("id", "latest", "eventOnly", true));
+            release.countDown();
+
+            assertTrue(older.get(5, TimeUnit.SECONDS).getBoolean("superseded"));
+            JSONObject reply = latest.get(5, TimeUnit.SECONDS);
+            assertTrue(reply.getBoolean("ok"));
+            assertFalse(reply.has("messages"));
+            assertEquals(1, states.size());
+            assertEquals("latest", states.get(0).getString("threadId"));
+            assertEquals("latest history", states.get(0).getJSONArray("messages").getJSONObject(0).getString("text"));
+        } finally {
+            release.countDown();
+            engine.io.shutdownNow();
+        }
     }
     @Test public void retiredProMigrationPreservesHistoryAndNeverRestoresRemoteJournalOrResends() throws Exception {
         File file = new File(context.getFilesDir(), "sessions.json");
@@ -350,7 +386,7 @@ public class EngineOfflineSessionTest {
         assertEquals("gpt-6-astra", turn.getString("model"));
         engine.io.shutdownNow();
     }
-    @Test public void iconPreferenceChangesInstructionsForTheNextTurnInTheSameThread() throws Exception {
+    @Test public void instructionsOmitLegacyStickerGuidance() throws Exception {
         Engine engine = new Engine(context);
         java.util.ArrayList<JSONObject> calls = new java.util.ArrayList<>();
         engine.setTestTransport((method, params) -> {
@@ -360,23 +396,10 @@ public class EngineOfflineSessionTest {
             if (method.equals("turn/start")) return obj("turn", obj("id", "turn-" + calls.size()));
             throw new AssertionError(method);
         });
-        handle(engine, "chat.send", obj("text", "first", "chatIconsEnabled", true));
+        handle(engine, "chat.send", obj("text", "first"));
         JSONObject started = calls.stream().filter(c -> c.optString("method").equals("thread/start")).findFirst().orElseThrow().getJSONObject("params");
-        assertTrue(started.getString("developerInstructions").contains("[[icon:태그명]]"));
-        assertTrue(started.getString("developerInstructions").contains("검토완료"));
-        setField(engine, "busy", false);
-        handle(engine, "chat.icons.set", obj("enabled", false));
-        handle(engine, "chat.send", obj("text", "second", "chatIconsEnabled", false));
-        JSONObject disabled = calls.stream().filter(c -> c.optString("method").equals("thread/resume")).reduce((a,b) -> b).orElseThrow().getJSONObject("params");
-        assertEquals("icon-thread", disabled.getString("threadId"));
-        assertFalse(disabled.getString("developerInstructions").contains("[[icon:태그명]]"));
-        assertTrue(disabled.getString("developerInstructions").contains("You are Codex"));
-        setField(engine, "busy", false);
-        handle(engine, "chat.send", obj("text", "third", "chatIconsEnabled", true));
-        JSONObject enabled = calls.stream().filter(c -> c.optString("method").equals("thread/resume")).reduce((a,b) -> b).orElseThrow().getJSONObject("params");
-        assertEquals("icon-thread", enabled.getString("threadId"));
-        assertTrue(enabled.getString("developerInstructions").contains("[[icon:태그명]]"));
-        assertEquals(2, calls.stream().filter(c -> c.optString("method").equals("thread/resume")).count());
+        assertFalse(started.getString("developerInstructions").contains("[[icon:"));
+        assertTrue(started.getString("developerInstructions").contains("You are Codex"));
         engine.io.shutdownNow();
     }
     private java.util.Set<String> types(JSONArray input) throws Exception {

@@ -19,6 +19,15 @@ public class ApiProviderPolicyTest {
         try { ApiProviderPolicy.protocol("anthropic_messages"); fail(); }
         catch (IOException expected) { assertTrue(expected.getMessage().contains("尚未实现")); }
     }
+    @Test public void providerEntryAddressesAcceptWebsiteAndCompleteApiEndpoints() throws Exception {
+        assertEquals("https://example.test", ApiProviderPolicy.providerUrl("https://example.test/"));
+        assertEquals("https://example.test/v1", ApiProviderPolicy.providerUrl("https://example.test/v1/models/"));
+        assertEquals("https://example.test/gateway/v2", ApiProviderPolicy.providerUrl("https://example.test/gateway/v2/chat/completions"));
+        assertEquals("https://example.test/gateway", ApiProviderPolicy.providerUrl("https://example.test/gateway/responses"));
+        assertEquals("https://example.test", ApiProviderPolicy.providerUrl("https://example.test/responses"));
+        try { ApiProviderPolicy.providerUrl("https://example.test/v1/models?key=example"); fail(); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("查询参数")); }
+    }
     @Test public void modelsAreDeduplicatedAndBounded() throws Exception {
         assertEquals("[\"a\",\"org/b\"]", ApiProviderPolicy.models("a\norg/b,a").toString());
         JSONArray tooMany = new JSONArray();

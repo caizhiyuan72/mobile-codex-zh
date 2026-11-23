@@ -1,18 +1,36 @@
-/* Model controls stay readable within the phone composer and popover. */
-#model-summary { font-size: calc(var(--fs-md) + 2px); font-weight: 650; }
-#effort-summary { font-size: calc(var(--fs-md) + 2px); font-weight: 550; }
-#model-picker { width: 320px; }
-.model-picker-heading { align-items: flex-start; gap: 8px; padding: 10px 12px; }
-.model-picker-heading > span { order: -1; width: 100%; justify-content: space-between; }
-#model-heading { font-size: calc(var(--fs-xl, 22px) + 2px); font-weight: 650; line-height: 1.35; color: var(--text); }
-#picker-provider-row select { max-width: 100%; }
-#effort-heading { font-size: var(--fs-lg); font-weight: 600; color: var(--text-2); }
-#model-picker .model-choice strong { font-size: var(--fs-lg); line-height: 1.4; }
-#reasoning-control { padding: 2px 12px 14px; }
-#effort-slider { height: 44px; }
-#effort-slider::-webkit-slider-runnable-track { height: 8px; }
-#effort-slider::-webkit-slider-thumb { width: 28px; height: 28px; margin-top: -10px; }
-.effort-levels { display: flex; justify-content: space-between; gap: 6px; font-size: var(--fs-md); line-height: 1.5; color: var(--text-2); }
+.composer-bottom .options-button { gap: 7px; height: 36px; min-height: 36px; padding: 0 10px; border-radius: 999px; background: var(--fill-1); }
+.composer-bottom .options-button:hover, .composer-bottom .options-button[aria-expanded="true"] { background: var(--fill-2); }
+#model-summary { font-weight: 550; }
+#effort-summary { padding-inline-start: 7px; border-inline-start: 1px solid var(--border); }
+#model-picker { width: 304px; border-radius: 16px; }
+.model-picker-head { padding-inline-start: 12px; color: var(--text-2); font-weight: 600; }
+.model-picker-panel { padding: 0 4px 6px; }
+.model-picker-heading { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; min-height: 44px; padding: 0 10px; background: var(--fill-1); text-align: start; }
+.model-picker-heading:hover, .model-picker-heading:active { background: var(--fill-2); }
+.model-picker-heading > .model-picker-label { flex: none; color: var(--text-2); font-size: var(--fs-sm); }
+.model-picker-heading > .model-picker-icon { width: 16px; height: 16px; color: var(--text-2); }
+.model-picker-heading > .model-picker-arrow { color: var(--text-3); }
+#model-heading { margin-inline-start: auto; font-size: var(--fs-sm); line-height: 1.4; }
+#picker-provider-row:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 6px; color: var(--text-2); font-size: var(--fs-xs); }
+#picker-provider-row select { min-width: 0; max-width: 66%; }
+#reasoning-control { --effort-accent: var(--text); padding: 10px 10px 5px; }
+#reasoning-control[data-effort="low"] { --effort-accent: #179378; }
+#reasoning-control[data-effort="medium"] { --effort-accent: #168ba8; }
+#reasoning-control[data-effort="high"] { --effort-accent: #4779e8; }
+#reasoning-control[data-effort="xhigh"] { --effort-accent: #7464e8; }
+#reasoning-control[data-effort="max"] { --effort-accent: #ad58d4; }
+#reasoning-control[data-effort="ultra"] { --effort-accent: #df5689; }
+.effort-caption { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-sm); }
+#effort-heading { padding: 2px 7px; border-radius: 999px; background: var(--fill-1); color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
+#effort-slider { height: 32px; }
+#effort-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  background: linear-gradient(to right, var(--effort-accent) var(--effort-fill, 0%), var(--fill-2) var(--effort-fill, 0%));
+}
+#effort-slider::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -7px; border-width: 3px; background: var(--effort-accent); }
+.effort-levels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px; font-size: min(var(--fs-xs), 14px); line-height: 1.5; color: var(--text-2); }
+.effort-levels span { flex: 1; text-align: center; }
+.effort-levels span.selected { color: var(--text); font-weight: 600; }
 .effort-levels span { flex: 1; text-align: center; }
 .effort-levels span:first-child { text-align: left; }
 .effort-levels span:last-child { text-align: right; }

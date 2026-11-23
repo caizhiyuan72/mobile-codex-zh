@@ -51,6 +51,16 @@ Codex 与 code-mode host 是包体中的主要部分，同时承担核心编程�
 
 服务商配置显式保留 `protocol` 字段，当前只接受 `responses`。以后增加 Claude 原生 Messages 适配仍需要实现并测试协议、流式事件、工具与停止处理；本轮不会把设置中的 Claude 名称当成已接入。
 
+## New API 中转站的模型发现
+
+在「添加服务商 → 导入 New API 连接」可以粘贴 `newapi_channel_conn` 导出信息。导入只填表，获取模型和保存由用户操作。
+
+接口地址支持裸域名、API Base URL 和完整接口 URL。新配置的裸域名默认补 `/v1`，完整 URL 会去掉 `/models`、`/responses` 或 `/chat/completions`，保留前面的路径。已有毛利配置若保存的是裸域名，可重新导入连接 JSON 或把接口地址改成带 `/v1` 的地址。
+
+扫描优先用密钥读取 `/models`。标准 `/v1` 路径读不到有效列表时，同一站点的 `/api/pricing` 可以提供公开模型 ID。该请求不携带密钥，界面会注明来源和原始列表错误，并标明价目表中仅列 Chat Completions 的模型。保存前可以手动编辑模型 ID。
+
+毛利 API 的 `GET /models` 返回网页。2026 年 11 月 19 日用令牌测试 `GET /v1/models` 返回 7 个模型，包含 `gpt-6.2-sol`。同一令牌调用 Responses 和 Chat Completions 都返回 `HTTP 403 insufficient_user_quota`，服务端报告无有效订阅。公开价目表给该模型只列了 Chat Completions，实际 Responses 推理需用有额度的令牌验证。
+
 ## 验证记录与边界
 
 - 前端完整测试：260 项全部通过，无失败或跳过，覆盖 API、草稿、文件、流式更新、停止、诊断与界面交互；其中 GitHub 设置与授权交互测试 17 项。

@@ -39,7 +39,7 @@ function setup(task = {}, overrides = {}) {
       });
     }
   };
-  for (const file of ['translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(path.join(webRoot, file), 'utf8'));
+  for (const file of ['appearance.js', 'translations.js', 'locale.js', 'ui-core.js', 'reasoning-policy.js', 'app.js']) w.eval(fs.readFileSync(path.join(webRoot, file), 'utf8'));
   return {w, calls, snapshot};
 }
 

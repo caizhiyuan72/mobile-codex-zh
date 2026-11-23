@@ -13,7 +13,7 @@ public final class GitHubAuthPolicy {
     public static final String TOKEN_URL = "https://github.com/login/oauth/access_token";
     public static final String USER_URL = "https://api.github.com/user";
     public static final String VERIFICATION_URI = "https://github.com/login/device";
-    public static final String REQUESTED_SCOPE = "public_repo workflow";
+    public static final String REQUESTED_SCOPE = "public_repo workflow offline_access";
     public static final List<String> REQUESTED_SCOPES = List.of("public_repo", "workflow");
     public static final long MIN_POLL_MILLIS = 5000;
     public static final int MAX_RESPONSE_BYTES = 64 * 1024;
@@ -89,7 +89,7 @@ public final class GitHubAuthPolicy {
         return Math.max(MIN_POLL_MILLIS, seconds(value, 5, 3600, "GitHub 返回的授权轮询间隔无效，请重新授权。") * 1000);
     }
 
-    /** Missing expires_in means GitHub did not declare an expiry; refresh tokens are not retained. */
+    /** Missing expires_in means GitHub did not declare an expiry. */
     public static long tokenLifetimeSeconds(Object value) throws IOException {
         return seconds(value, 0, 366L * 24 * 60 * 60, "GitHub 返回的凭据有效期无效，请重新授权。");
     }

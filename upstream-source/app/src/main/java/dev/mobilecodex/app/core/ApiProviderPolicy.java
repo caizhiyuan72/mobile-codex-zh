@@ -22,6 +22,14 @@ public final class ApiProviderPolicy {
     }
 
     public static String baseUrl(String value) throws IOException {
+        return baseUrl(value, false);
+    }
+
+    public static String providerUrl(String value) throws IOException {
+        return baseUrl(value, true);
+    }
+
+    private static String baseUrl(String value, boolean acceptEndpoint) throws IOException {
         try {
             URI uri = new URI(value == null ? "" : value.trim());
             if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getHost().isBlank()
@@ -31,8 +39,14 @@ public final class ApiProviderPolicy {
             String normalized = uri.normalize().toASCIIString();
             while (normalized.endsWith("/")) normalized = normalized.substring(0, normalized.length() - 1);
             if (normalized.length() > 512) throw new IllegalArgumentException();
-            if (normalized.endsWith("/responses") || normalized.endsWith("/chat/completions"))
-                throw new IOException("请填写 API Base URL，不要包含 /responses 或 /chat/completions。");
+            for (String endpoint : new String[]{"/chat/completions", "/responses", "/models"}) {
+                if (!normalized.endsWith(endpoint)) continue;
+                if (acceptEndpoint) {
+                    normalized = normalized.substring(0, normalized.length() - endpoint.length());
+                }
+                else if (!endpoint.equals("/models")) throw new IOException("请填写 API Base URL，不要包含 /responses 或 /chat/completions。");
+                break;
+            }
             return normalized;
         } catch (IOException error) { throw error; }
         catch (Exception error) { throw new IOException("请填写 HTTPS 的 API Base URL，不能包含账号、查询参数或片段。", error); }
@@ -55,10 +69,15 @@ public final class ApiProviderPolicy {
     private static void addModel(Set<String> ids, String value) throws IOException {
         String id = value.trim();
         if (id.isEmpty()) return;
-        if (id.length() > 200 || id.chars().anyMatch(c -> Character.isISOControl(c) || Character.isWhitespace(c)))
+        if (!validModelId(id))
             throw new IOException("模型 ID 不能包含空白或控制字符，最长 200 个字符。");
         ids.add(id);
         if (ids.size() > MAX_MODELS) throw new IOException("最多可保存 150 个模型。");
+    }
+
+    static boolean validModelId(String id) {
+        return !id.isEmpty() && id.length() <= 200
+            && id.chars().noneMatch(character -> Character.isISOControl(character) || Character.isWhitespace(character));
     }
 
     public static String apiKey(String value) throws IOException {

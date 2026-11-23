@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Codex CN</title>
+  <script src="appearance.js"></script>
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="visual-system.css">
   <link rel="stylesheet" href="spacing.css">
   <link rel="stylesheet" href="github-auth.css">
   <link rel="stylesheet" href="model-controls.css">
+  <link rel="stylesheet" href="katex/katex.min.css">
+  <link rel="stylesheet" href="liquid-glass.css">
   <script src="ui-core.js" defer></script>
   <script src="translations.js" defer></script>
   <script src="translations-zh.js" defer></script>
@@ -17,6 +20,7 @@
   <script src="api-providers.js" defer></script>
   <script src="github-auth.js" defer></script>
   <script src="reasoning-policy.js" defer></script>
+  <script src="katex/katex.min.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -62,7 +66,7 @@
   <main class="main">
     <header class="topbar"><div class="topbar-left"><button class="icon-button sidebar-toggle" aria-label="사이드바 열기"><svg><use href="#i-menu"/></svg></button><button id="header-project" class="project-switch" type="button" aria-label="选择项目"><span id="header-project-label">普通聊天</span><svg><use href="#i-down"/></svg></button><span class="topbar-divider">/</span><span id="header-title">Codex CN</span><button id="header-api" type="button" class="outline-button" dir="auto">API</button></div><div class="topbar-actions"><button id="files-toggle" class="outline-button"><svg><use href="#i-panel"/></svg><span>파일</span></button></div></header>
     <div class="workspace-body">
-      <section class="conversation">
+      <section id="conversation" class="conversation">
         <div id="chat-scroll" class="chat-scroll">
           <div id="welcome" class="welcome">
             <div id="welcome-character" class="welcome-character" hidden></div><div class="welcome-mark"><img src="codex-logo.png?v=2" alt="Codex CN"></div>
@@ -74,6 +78,7 @@
             </div>
             <div class="suggestions" id="suggestions" hidden><button data-prompt="이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘."><svg><use href="#i-folder"/></svg>폴더 살펴보기</button><button data-prompt="이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘."><svg><use href="#i-edit"/></svg>프로젝트 이해하기</button><button data-prompt="이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘."><svg><use href="#i-search"/></svg>변경 사항 검토</button></div>
           </div>
+          <button id="history-load" class="history-load" type="button" hidden></button>
           <div id="messages" class="messages" aria-live="polite"></div>
           <section id="conversation-failure" class="conversation-failure" role="status" aria-live="polite" hidden>
             <strong>本次请求未完成</strong>
@@ -82,15 +87,15 @@
             <small>新对话保留当前项目选择，任务进度需自行补充。</small>
           </section>
 
-          <div id="live-work"><div id="activity" class="activity" hidden><span id="activity-character" class="activity-character"></span><span class="pulse-dot" aria-hidden="true"></span><button id="activity-details" type="button" title="작업 기록"><span id="activity-text" role="status">작업 중</span></button></div>
+          <div id="live-work">
           <div id="task-activities" class="task-activities"></div>
           <div id="stream-retry" class="subagent-usage" role="status" hidden>与服务商的响应流中断，正在重试…</div>
           <div id="subagent-usage" class="subagent-usage" role="status" hidden></div>
-          <div id="turn-connection" class="subagent-usage" hidden></div>
-          <details id="turn-summary" class="task-activity-row turn-summary" hidden><summary>推理摘要</summary><div id="turn-summary-text"></div></details></div>
+          </div>
         </div>
         <div class="composer-wrap">
           <button id="jump-latest" class="jump-latest" aria-label="최신 메시지로 이동" hidden><svg><use href="#i-down"/></svg><span>최신 메시지</span></button>
+          <div id="activity" class="activity" hidden><span id="activity-character" class="activity-character"></span><span class="pulse-dot" aria-hidden="true"></span><button id="activity-details" type="button" title="작업 기록"><span id="activity-text" role="status">작업 중</span></button></div>
           <form id="composer" class="composer composer-expanded">
             <section id="dictation" class="dictation" aria-label="음성 입력" hidden>
               <div class="dictation-top"><span id="dictation-status" role="status"></span><span id="dictation-time" aria-label="녹음 시간">0:00</span></div>
@@ -119,20 +124,22 @@
         </div>
       </section>
       <aside id="file-panel" class="file-panel" hidden><div class="panel-head"><strong>파일</strong><div><button id="file-up" class="icon-button" aria-label="상위 폴더"><svg><use href="#i-up"/></svg></button><button id="file-new" class="icon-button" aria-label="새 파일"><svg><use href="#i-plus"/></svg></button><button id="folder-new" class="icon-button" aria-label="새 폴더"><svg><use href="#i-folder"/></svg></button><button id="file-close" class="icon-button" aria-label="파일 탐색 닫기"><svg><use href="#i-close"/></svg></button></div></div><div class="file-search"><svg><use href="#i-search"/></svg><input id="file-query" placeholder="파일 이름 검색" aria-label="파일 이름 검색"></div><div id="breadcrumbs" class="breadcrumbs">작업 폴더</div><div id="file-list" class="file-list"></div></aside>
+      <div id="chat-switch-status" class="chat-switch-status" role="status" hidden></div>
     </div>
   </main>
   <dialog id="model-picker" aria-labelledby="model-picker-title">
-    <div class="model-picker-head"><span id="model-picker-title">模型与思考强度</span><button class="icon-button" data-close="model-picker" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div>
+    <div class="model-picker-head"><span id="model-picker-title">설정</span><button class="icon-button" data-close="model-picker" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div>
     <div id="model-picker-panels" class="model-picker-panels">
       <section id="reasoning-panel" class="model-picker-panel">
-        <button id="model-picker-model" type="button" class="model-picker-heading" aria-controls="model-panel" aria-expanded="false"><strong id="effort-heading"></strong><span><span id="model-heading"></span><svg><use href="#i-down"/></svg></span></button>
+        <button id="model-picker-model" type="button" class="model-picker-heading" aria-controls="model-panel" aria-expanded="false"><svg class="model-picker-icon" aria-hidden="true"><use href="#i-code"/></svg><span class="model-picker-label">모델</span><strong id="model-heading"></strong><svg class="model-picker-arrow" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
         <div id="reasoning-control" class="reasoning-control">
-          <input id="effort-slider" type="range" min="0" max="0" step="1" value="0" aria-label="思考强度" aria-describedby="effort-heading">
+          <div class="effort-caption"><span id="effort-label">추론 강도</span><strong id="effort-heading"></strong></div>
+          <input id="effort-slider" type="range" min="0" max="0" step="1" value="0" aria-labelledby="effort-label">
           <div id="effort-levels" class="effort-levels" aria-hidden="true"></div>
         </div>
       </section>
       <section id="model-panel" class="model-picker-panel" inert aria-hidden="true">
-        <button id="model-picker-back" type="button" class="model-picker-back"><svg><use href="#i-back"/></svg><span>추론 강도</span></button>
+        <button id="model-picker-back" type="button" class="model-picker-back"><svg><use href="#i-back"/></svg><span>설정</span></button>
         <label id="picker-provider-row" hidden>API 服务商 <select id="picker-provider"></select></label>
         <div id="model-list" class="model-list" role="radiogroup" aria-label="모델"></div>
       </section>
@@ -152,8 +159,16 @@
   <dialog id="file-actions-dialog" class="sheet-dialog" aria-labelledby="file-actions-title"><button type="button" class="sheet-grip" data-close="file-actions-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="file-actions-title">파일 관리</h2><button class="icon-button" data-close="file-actions-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="file-actions"></div></dialog>
   <dialog id="project-link-dialog" class="sheet-dialog" aria-labelledby="project-link-title"><button type="button" class="sheet-grip" data-close="project-link-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="project-link-title">프로젝트 연결</h2><button class="icon-button" data-close="project-link-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><p id="project-link-description" class="muted"></p><div id="project-link-choices" class="project-actions"></div></dialog>
   <dialog id="tool-menu-dialog" class="sheet-dialog" aria-labelledby="tool-menu-title"><button type="button" class="sheet-grip" data-close="tool-menu-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><h2 id="tool-menu-title">도구</h2><button class="icon-button" data-close="tool-menu-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="tool-menu" class="project-actions"><button id="show-terminal" class="nav-button"><svg><use href="#i-code"/></svg>터미널</button><button id="show-tools-panel" class="nav-button"><svg><use href="#i-settings"/></svg>플러그인 · 스킬 · MCP</button><button id="show-changes" class="nav-button"><svg><use href="#i-edit"/></svg>변경 사항</button><button id="show-recovery" class="nav-button"><svg><use href="#i-clock"/></svg>복구 사본</button></div></dialog>
-  <dialog id="settings-dialog" class="settings-dialog"><button type="button" class="sheet-grip" data-close="settings-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><div><p class="eyebrow">Codex CN</p><h2>설정</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div class="settings-layout"><nav class="settings-nav" aria-label="설정 분류"><button class="active" data-settings-tab="general">일반</button><button data-settings-tab="personal">맞춤 지침</button><button data-settings-tab="tools">도구</button><button data-settings-tab="advanced">고급</button><button data-settings-tab="updates">업데이트</button></nav><div class="settings-content"><section class="settings-section" data-settings-panel="general"><h3>일반</h3><div class="settings-row"><span><strong>언어</strong><small>앱 화면의 언어를 선택합니다. 대화 내용과 파일은 바뀌지 않습니다.</small></span><select id="language" aria-label="언어"><option value="system">기기 설정 따르기</option><option value="en">English</option><option value="ko">한국어</option><option value="zh-CN">简体中文</option></select></div><div class="settings-row"><span><strong>테마</strong><small>시스템 설정을 따르거나 직접 고릅니다.</small></span><select id="theme"><option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option></select></div><div class="settings-row"><span><strong id="chat-icons-label">대화 아이콘</strong><small id="chat-icons-description">답변과 작업 상태에 캐릭터 아이콘을 표시합니다.</small></span><label class="toggle-switch"><input id="chat-icons-toggle" type="checkbox" role="switch" aria-labelledby="chat-icons-label" aria-describedby="chat-icons-description"><span class="toggle-track" aria-hidden="true"></span></label></div></section><section class="settings-section" data-settings-panel="personal" hidden><h3>개인 맞춤 지침</h3><p class="muted">답변 언어, 말투, 작업 방식 등 모든 대화에 적용할 기본 지침을 작성하세요. 프로젝트의 AGENTS.md와 함께 사용됩니다.</p><label for="instructions-editor">Codex가 알아야 할 지침</label><textarea id="instructions-editor" class="instructions-editor" rows="8" placeholder="예: 한국어로 답변하고, 수정 전에 관련 코드를 확인해 주세요." disabled></textarea><p id="instructions-path" class="muted"></p><p id="instructions-status" role="status" class="muted"></p><div class="instructions-actions"><button id="instructions-reload" class="secondary-button">다시 불러오기</button><button id="instructions-save" class="primary-button" disabled>저장</button></div><p class="muted">앱의 .codex 폴더에 저장하며 다음 요청부터 적용합니다. 비워서 저장하면 현재 파일의 지침을 해제합니다. override를 비우면 기본 AGENTS.md가 다시 적용됩니다.</p></section><section class="settings-section" data-settings-panel="tools" hidden><h3>도구</h3><section class="devtools-card" aria-labelledby="phone-title"><strong id="phone-title">휴대폰 제어</strong><p id="phone-status" class="muted" role="status">접근성 연결 상태를 확인하는 중입니다.</p><p class="muted">요청한 작업을 위해 다른 앱의 화면을 읽고 탭·입력·스크롤합니다. 화면 내용과 이미지는 AI 서비스로 전송되며 Codex 기록에 남을 수 있습니다.</p><div class="phone-actions"><button id="phone-settings" class="secondary-button">접근성 설정 열기</button><button id="floating-chat" class="secondary-button">플로팅 대화 열기</button><button id="phone-enable" class="primary-button" disabled>휴대폰 제어 켜기</button><button id="phone-disable" class="secondary-button subtle-danger" hidden>제어 중지</button></div><p id="phone-thread-note" class="muted" hidden>이전 버전의 대화에는 휴대폰 도구가 없습니다. 새 대화를 시작해 주세요.</p><p id="phone-screenshot-note" class="muted"></p></section><p id="storage-status" class="muted"></p><button id="storage-access" class="secondary-button">기기 파일 접근 허용</button><section class="devtools-card" aria-labelledby="devtools-title"><strong id="devtools-title">번들 개발 도구</strong><p id="devtools-status" class="muted" role="status">개발 도구 정보를 확인하는 중입니다.</p><div id="devtools-versions" class="devtools-versions" aria-label="개발 도구 버전"></div><button id="devtools-check" class="secondary-button">도구 실행 확인</button><pre id="devtools-output" class="console devtools-output" aria-live="polite" hidden></pre><p class="muted">Python·Node.js·Git을 포함합니다. npm·pip 확장은 Android용 네이티브 빌드가 필요할 수 있으며, Git HTTPS 인증 정보는 직접 입력해야 합니다.</p></section></section><section class="settings-section" data-settings-panel="advanced" hidden>
-  <h3>高级</h3><button id="report-open" class="secondary-button" hidden>오류 정보 보내기</button><section class="devtools-card runtime-card"><div class="settings-row"><span><strong>Codex 运行时</strong><small id="settings-status">尚未连接</small></span><span id="settings-indicator" class="status-pill">待配置</span></div><p id="pending-deletions" class="muted" role="status" hidden></p><div class="runtime-actions"><button id="restart" class="secondary-button">启动 / 重新连接</button><button id="engine-stop" class="secondary-button subtle-danger">停止运行时</button><button id="battery-settings" class="secondary-button">系统电池设置</button></div></section>
+  <dialog id="settings-dialog" class="settings-dialog"><button type="button" class="sheet-grip" data-close="settings-dialog" aria-label="아래로 끌거나 눌러서 닫기"><span aria-hidden="true"></span></button><div class="dialog-head"><div><p class="eyebrow">Codex CN</p><h2>설정</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div>
+    <div class="appearance-setting">
+      <strong id="appearance-title">界面主题</strong>
+      <div class="appearance-choices" role="radiogroup" aria-labelledby="appearance-title">
+        <label><input id="appearance-classic" name="interface-style" type="radio" value="classic" checked><span>原版</span></label>
+        <label><input id="appearance-glass" name="interface-style" type="radio" value="glass"><span>液态玻璃</span></label>
+      </div>
+    </div>
+    <div class="settings-layout"><nav class="settings-nav" aria-label="설정 분류"><button class="active" data-settings-tab="general">일반</button><button data-settings-tab="personal">맞춤 지침</button><button data-settings-tab="tools">도구</button><button data-settings-tab="advanced">고급</button><button data-settings-tab="updates">업데이트</button></nav><div class="settings-content"><section class="settings-section" data-settings-panel="general"><h3>일반</h3><div class="settings-row"><span><strong>언어</strong><small>앱 화면의 언어를 선택합니다. 대화 내용과 파일은 바뀌지 않습니다.</small></span><select id="language" aria-label="언어"><option value="system">기기 설정 따르기</option><option value="en">English</option><option value="zh-CN">简体中文</option></select></div><div class="settings-row"><span><strong>테마</strong><small>시스템 설정을 따르거나 직접 고릅니다.</small></span><select id="theme"><option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option></select></div></section><section class="settings-section" data-settings-panel="personal" hidden><h3>개인 맞춤 지침</h3><p class="muted">답변 언어, 말투, 작업 방식 등 모든 대화에 적용할 기본 지침을 작성하세요. 프로젝트의 AGENTS.md와 함께 사용됩니다.</p><label for="instructions-editor">Codex가 알아야 할 지침</label><textarea id="instructions-editor" class="instructions-editor" rows="8" placeholder="例如：用简体中文回答，修改前先检查相关代码。" disabled></textarea><p id="instructions-path" class="muted"></p><p id="instructions-status" role="status" class="muted"></p><div class="instructions-actions"><button id="instructions-reload" class="secondary-button">다시 불러오기</button><button id="instructions-save" class="primary-button" disabled>저장</button></div><p class="muted">앱의 .codex 폴더에 저장하며 다음 요청부터 적용합니다. 비워서 저장하면 현재 파일의 지침을 해제합니다. override를 비우면 기본 AGENTS.md가 다시 적용됩니다.</p></section><section class="settings-section" data-settings-panel="tools" hidden><h3>도구</h3><section class="devtools-card" aria-labelledby="phone-title"><strong id="phone-title">휴대폰 제어</strong><p id="phone-status" class="muted" role="status">접근성 연결 상태를 확인하는 중입니다.</p><p class="muted">요청한 작업을 위해 다른 앱의 화면을 읽고 탭·입력·스크롤합니다. 화면 내용과 이미지는 AI 서비스로 전송되며 Codex 기록에 남을 수 있습니다.</p><div class="phone-actions"><button id="phone-settings" class="secondary-button">접근성 설정 열기</button><button id="floating-chat" class="secondary-button">플로팅 대화 열기</button><button id="phone-enable" class="primary-button" disabled>휴대폰 제어 켜기</button><button id="phone-disable" class="secondary-button subtle-danger" hidden>제어 중지</button></div><p id="phone-thread-note" class="muted" hidden>이전 버전의 대화에는 휴대폰 도구가 없습니다. 새 대화를 시작해 주세요.</p><p id="phone-screenshot-note" class="muted"></p></section><p id="storage-status" class="muted"></p><button id="storage-access" class="secondary-button">기기 파일 접근 허용</button><section class="devtools-card" aria-labelledby="devtools-title"><strong id="devtools-title">번들 개발 도구</strong><p id="devtools-status" class="muted" role="status">개발 도구 정보를 확인하는 중입니다.</p><div id="devtools-versions" class="devtools-versions" aria-label="개발 도구 버전"></div><button id="devtools-check" class="secondary-button">도구 실행 확인</button><pre id="devtools-output" class="console devtools-output" aria-live="polite" hidden></pre><p class="muted">Python·Node.js·Git을 포함합니다. npm·pip 확장은 Android용 네이티브 빌드가 필요할 수 있으며, Git HTTPS 인증 정보는 직접 입력해야 합니다.</p></section></section><section class="settings-section" data-settings-panel="advanced" hidden>
+  <h3>高级</h3><button id="report-open" class="secondary-button" hidden>오류 정보 보내기</button><section class="devtools-card runtime-card"><div class="settings-row"><span><strong>Codex 运行时</strong><small id="settings-status">尚未连接</small></span><span id="settings-indicator" class="status-pill">待配置</span></div><p id="pending-deletions" class="muted" role="status" hidden></p><div class="runtime-actions"><button id="restart" class="secondary-button">启动 / 重新连接</button><button id="engine-stop" class="secondary-button subtle-danger">停止运行时</button><button id="battery-settings" class="secondary-button">允许后台运行</button></div></section>
   <section class="devtools-card cn-subagent-card" aria-labelledby="subagents-title">
     <strong id="subagents-title">原生 Codex 子智能体</strong>
     <p class="muted">让 Codex 分派、并行处理和汇总项目任务。</p>

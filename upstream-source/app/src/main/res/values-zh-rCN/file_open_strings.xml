@@ -1,0 +1,10 @@
+<resources>
+    <string name="file_open_with">其他应用打开</string>
+    <string name="file_no_viewer">没有找到能打开此文件的应用。</string>
+    <string name="file_preview_back">返回</string>
+    <string name="file_preview_loading">正在打开…</string>
+    <string name="file_preview_failed">无法预览此文件，可尝试用其他应用打开。</string>
+    <string name="file_preview_previous">上一页</string>
+    <string name="file_preview_next">下一页</string>
+    <string name="file_preview_page">第 %1$d 页，共 %2$d 页</string>
+</resources>

@@ -1,6 +1,7 @@
 package dev.mobilecodex.app;
 
 import android.app.Application;
+import android.os.PowerManager;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -9,6 +10,7 @@ import org.robolectric.annotation.Config;
 import dev.mobilecodex.app.core.*;
 import org.json.JSONObject;
 import java.io.*;
+import java.util.Map;
 import java.util.concurrent.*;
 import static dev.mobilecodex.app.core.Json.*;
 import static org.junit.Assert.*;
@@ -54,6 +56,39 @@ public class EngineForegroundLifecycleTest {
             assertFalse(engine.hasForegroundWork()); assertTrue(replacement.alive);
             eof(engine,replacement); assertFalse(engine.hasForegroundWork());
         } finally { engine.io.shutdownNow(); }
+    }
+    @Test public void approvalWaitReleasesCpuWithoutStoppingServiceAndReplyAcquiresItAgain() throws Exception {
+        Engine engine = engine();
+        var wakeLock = (PowerManager.WakeLock) field(engine, "taskCpu");
+        var power = Engine.class.getDeclaredMethod("syncTaskCpu"); power.setAccessible(true);
+        var request = Engine.class.getDeclaredMethod("onRequest", RpcClient.class, Object.class, String.class, JSONObject.class);
+        request.setAccessible(true);
+        var output = new ByteArrayOutputStream();
+        try (var rpc = new RpcClient(InputStream.nullInputStream(), output, null)) {
+            field(engine, "sessions", array(obj("id", "local", "codexThreadId", "remote", "messages", array())));
+            var turns = (Map<String, String>) field(engine, "runningTurns");
+            turns.put("local", "turn"); power.invoke(engine);
+            assertTrue(wakeLock.isHeld());
+            request.invoke(engine, rpc, "approval", "item/commandExecution/requestApproval", obj("threadId", "remote", "turnId", "turn"));
+            var requests = (Map<?, ?>) field(engine, "requests");
+            assertFalse(wakeLock.isHeld());
+            assertNull(field(engine, "turnMonitor"));
+            assertTrue(engine.hasForegroundWork());
+            assertNull(shadowOf(RuntimeEnvironment.getApplication()).getNextStoppedService());
+            turns.put("other", "second"); power.invoke(engine);
+            assertTrue(wakeLock.isHeld());
+            turns.remove("other"); power.invoke(engine);
+            assertFalse(wakeLock.isHeld());
+            call(engine, "rpc.respond", obj("key", requests.keySet().iterator().next(), "result", obj("decision", "decline")));
+            assertTrue(wakeLock.isHeld());
+            assertTrue(output.toString().contains("decline"));
+            turns.clear(); power.invoke(engine);
+            assertFalse(wakeLock.isHeld());
+        } finally {
+            if (wakeLock.isHeld()) wakeLock.release();
+            engine.io.shutdownNow();
+            ((ScheduledExecutorService) field(engine, "approvalTimer")).shutdownNow();
+        }
     }
     @Test public void terminalControlsRespondOutsideOccupiedEngineQueueAndTerminalSurvivesEof() throws Exception {
         Engine engine = engine(); TerminalSession terminal = (TerminalSession)field(engine,"terminal");

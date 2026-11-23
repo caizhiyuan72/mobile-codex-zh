@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const {JSDOM} = require('jsdom');
 const root = 'app/src/main/assets/web/';
 const html = fs.readFileSync(root+'index.html','utf8');
-const css = ['app.css','visual-system.css','spacing.css'].map(file=>fs.readFileSync(root+file,'utf8')).join('\n');
+const css = ['app.css','visual-system.css','spacing.css','model-controls.css'].map(file=>fs.readFileSync(root+file,'utf8')).join('\n');
 
 test('composer keeps equal touch targets and one action row at supported text sizes',()=>{
  const dom=new JSDOM(html.replace('</head>','<style>'+css+'</style></head>'));
@@ -36,7 +36,20 @@ test('long model names may shrink while actions retain their target sizes',()=>{
  assert.equal(getComputedStyle(model).textOverflow,'ellipsis');
  assert.equal(getComputedStyle(model).whiteSpace,'nowrap');
  assert.equal(getComputedStyle(model).minWidth,'0');
- assert.equal(getComputedStyle(document.getElementById('composer-options')).minWidth,'0');
+ const options=getComputedStyle(document.getElementById('composer-options'));
+ assert.equal(options.minWidth,'0');
+ assert.equal(options.flexGrow,'0');
+ assert.equal(options.flexShrink,'1');
+ assert.equal(options.flexBasis,'auto');
+ assert.equal(options.borderRadius,'999px');
+ assert.equal(getComputedStyle(document.getElementById('model-picker-model')).flexDirection,'row');
+ const control=document.getElementById('reasoning-control');
+ const accents=['low','medium','high','xhigh','max','ultra'].map(effort=>{
+  control.dataset.effort=effort;
+  return getComputedStyle(control).getPropertyValue('--effort-accent');
+ });
+ assert.ok(accents.every(Boolean));assert.equal(new Set(accents).size,6);
+ assert.equal(getComputedStyle(document.getElementById('send')).marginInlineStart,'auto');
  assert.ok(document.getElementById('header-project').tagName==='BUTTON');
  assert.ok(document.getElementById('choose-folder').closest('#onboarding'));
  dom.window.close();

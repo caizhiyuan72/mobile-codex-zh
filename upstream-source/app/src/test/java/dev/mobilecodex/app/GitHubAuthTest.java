@@ -61,9 +61,15 @@ public class GitHubAuthTest {
         return new GitHubAuth.Response(200, obj("device_code", DEVICE, "user_code", "ABCD-EFGH", "verification_uri", GitHubAuthPolicy.VERIFICATION_URI, "expires_in", expiry, "interval", interval));
     }
     private static GitHubAuth.Response token(String scope, int expiry) {
-        JSONObject body = obj("access_token", TOKEN, "token_type", "bearer", "scope", scope, "refresh_token", REFRESH);
+        JSONObject body = obj("access_token", TOKEN, "token_type", "bearer", "scope", scope);
+        if (expiry > 0) try { body.put("refresh_token", REFRESH); body.put("refresh_token_expires_in", 18000); }
+        catch (Exception error) { throw new AssertionError(error); }
         if (expiry > 0) try { body.put("expires_in", expiry); } catch (Exception error) { throw new AssertionError(error); }
         return new GitHubAuth.Response(200, body);
+    }
+    private static GitHubAuth.Response refreshedToken() {
+        return new GitHubAuth.Response(200, obj("access_token", "fixture-refreshed-access-token", "token_type", "bearer",
+            "expires_in", 3600, "refresh_token", "fixture-rotated-refresh-token", "refresh_token_expires_in", 18000));
     }
     private void pending(int expiry, int interval) throws Exception {
         auth.configure(CLIENT); network.add(device(expiry, interval)); auth.begin();
@@ -83,7 +89,7 @@ public class GitHubAuthTest {
         assertEquals(5000, scheduler.nextDelay());
         Request request = network.requests.get(0);
         assertEquals("POST", request.method); assertEquals(GitHubAuthPolicy.DEVICE_URL, request.url);
-        assertEquals(Map.of("client_id", CLIENT, "scope", "public_repo workflow"), request.form);
+        assertEquals(Map.of("client_id", CLIENT, "scope", "public_repo workflow offline_access"), request.form);
         assertEquals("", request.token);
         assertEquals("ABCD-EFGH", github().getString("userCode"));
         assertEquals(GitHubAuthPolicy.VERIFICATION_URI, auth.verificationUri());
@@ -267,13 +273,80 @@ public class GitHubAuthTest {
         assertFalse(scheduler.hasTasks()); assertEquals("idle", state());
     }
 
-    @Test public void tokenExpiryIsEnforcedDuringUseAndAfterRestartWithoutKeepingRefreshToken() throws Exception {
-        connected(10); long expiry = github().getLong("expiresAt");
-        clock.advance(10000);
-        assertEquals("", auth.credentialFor("https", "github.com", "owner/project.git"));
-        assertEquals("expired", state()); assertEquals(expiry, github().getLong("expiresAt"));
+    @Test public void expiringTokensRefreshAndRotateBeforeExpiryAndSurviveRestart() throws Exception {
+        connected(3600);
+        String encryptedBefore = preferences.getString("credential", "");
+        assertFalse(encryptedBefore.contains(REFRESH));
+        assertEquals(TimeUnit.SECONDS.toMillis(3300), scheduler.nextDelay());
+        network.add(refreshedToken());
+        scheduler.runNext();
+        assertEquals("connected", state());
+        assertEquals("fixture-refreshed-access-token", auth.credentialFor("https", "github.com", "owner/project.git"));
+        assertEquals(3, network.requests.get(3).form.size());
+        assertEquals("refresh_token", network.requests.get(3).form.get("grant_type"));
+        assertEquals(REFRESH, network.requests.get(3).form.get("refresh_token"));
+        String encryptedAfter = preferences.getString("credential", "");
+        assertFalse(encryptedAfter.contains("fixture-rotated-refresh-token"));
         auth.close(); scheduler = new ManualScheduler(clock); auth = create(scheduler);
-        assertEquals("expired", state()); assertEquals("", auth.credentialFor("https", "github.com", ""));
+        assertEquals("connected", state());
+        assertEquals("fixture-refreshed-access-token", auth.credentialFor("https", "github.com", ""));
+        String persisted = preferences.getString("credential", "");
+        String plain = new FixtureCipher().open(new JSONObject(persisted));
+        assertTrue(plain.contains("fixture-rotated-refresh-token"));
+    }
+
+    @Test public void expiredAccessTokenTriggersRefreshAndInvalidRefreshExpiresSession() throws Exception {
+        connected(10);
+        clock.advance(TimeUnit.SECONDS.toMillis(10));
+        assertEquals("", auth.credentialFor("https", "github.com", "owner/project.git"));
+        network.add(request -> new GitHubAuth.Response(400, obj("error", "invalid_grant")));
+        scheduler.runNext();
+        assertEquals("expired", state());
+        assertFalse(preferences.contains("credential"));
+    }
+
+    @Test public void temporaryRefreshErrorKeepsCredentialsAndHonorsRetryDelay() throws Exception {
+        connected(10);
+        clock.advance(TimeUnit.SECONDS.toMillis(10));
+        network.add(new GitHubAuth.Response(503, obj("error", "temporarily_unavailable")));
+        scheduler.runNext();
+        assertEquals("connected", state());
+        assertEquals("", auth.credentialForGit("https", "github.com", "owner/project.git"));
+        assertEquals(60000, scheduler.nextDelay());
+        String stored = new FixtureCipher().open(new JSONObject(preferences.getString("credential", "")));
+        assertTrue(stored.contains(REFRESH));
+        network.add(refreshedToken());
+        scheduler.runNext();
+        assertEquals("connected", state());
+        assertEquals("fixture-refreshed-access-token", auth.credentialForGit("https", "github.com", ""));
+    }
+
+    @Test public void firstGitRequestAfterRestartWaitsForTheRotatedCredential() throws Exception {
+        connected(10);
+        auth.close(); clock.advance(10000);
+        scheduler = new ManualScheduler(clock); auth = create(scheduler);
+        assertEquals(0, scheduler.nextDelay());
+        network.add(refreshedToken());
+        java.util.concurrent.FutureTask<String> result = new java.util.concurrent.FutureTask<>(
+            () -> auth.credentialForGit("https", "github.com", "owner/project.git"));
+        Thread git = new Thread(result, "github-credential-test");
+        git.start();
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (git.getState() != Thread.State.TIMED_WAITING && !result.isDone() && System.nanoTime() < deadline)
+                Thread.sleep(1);
+            assertEquals(Thread.State.TIMED_WAITING, git.getState());
+            scheduler.runNext();
+            assertEquals("fixture-refreshed-access-token", result.get(5, TimeUnit.SECONDS));
+        } finally { result.cancel(true); git.join(5000); }
+    }
+
+    @Test public void refreshingDoesNotSaveARotatedCredentialAfterDisconnect() throws Exception {
+        connected(3600);
+        network.add(request -> { auth.disconnect(); return refreshedToken(); });
+        scheduler.runNext();
+        assertEquals("idle", state());
+        assertFalse(preferences.contains("credential"));
         assertFalse(scheduler.hasTasks());
     }
 

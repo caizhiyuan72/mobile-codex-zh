@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const L = window.MobileCodexLocale, t = L.t;
+  const appearance = window.MobileCodexAppearance;
   const LEGACY_PRO_MODEL = 'chatgpt-web:gpt-6-pro';
   const $ = id => document.getElementById(id), C = window.UiCore;
   const pending = new Map(), requestQueue = new Map();
@@ -11,7 +12,7 @@
   let reportsUi = null;
   let terminalState = {id:'', revision:-1, running:false, stopping:false}, terminalSending = false;
   const dialogs = [], frame = fn => (window.requestAnimationFrame || (cb => setTimeout(cb, 0)))(fn);
-  let following = true, draftScope = '', draftProvider = '', sending = null, configOriginal = '', sidebarFocus = null, openedImage = null;
+  let following = true, draftScope = '', draftProvider = '', sending = null, chatSelection = null, configOriginal = '', sidebarFocus = null, openedImage = null;
   let historyView = {threadId:'', hasMore:false, beforeId:'', total:0, loading:false, loaded:false, top:0};
   const imageReads = new Map();
   let viewerImages = [], viewerIndex = 0, viewerGroup = null;
@@ -22,8 +23,6 @@
   const handledReceipts = new Set(), handledVoiceReceipts = new Set();
   let dictationState = {phase:'idle'}, dictationTimer = null;
   let voiceStarting = false, voiceActive = false, voiceRecoveryGeneration = 0;
-  let chatIconsEnabled = localStorage.getItem('chat-icons') !== 'off';
-  let characterState = {folderName:'', folderConfigured:false, selectedPackId:'builtin', packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}}]};
   let instructionsOriginal = '', instructionsLoaded = false, instructionsSaving = false, devtoolsCheckResult = null, devtoolsCheckSummary = '', devtoolsChecking = false;
   const toolCache = [null, null, null];
   let updateState = {}, updateSourceDirty = false, updateRequestPending = false;
@@ -77,7 +76,7 @@
   }
 
   function ensureNotificationSettings() {
-    const toggle = $('chat-icons-toggle')?.closest('.settings-row');
+    const toggle = $('theme')?.closest('.settings-row');
     if (!toggle) return;
     const make = (id, title, description) => { const row = node('div', null, 'settings-row'), copy = node('span'), strong = node('strong', title), small = node('small', description), label = node('label', null, 'toggle-switch'), input = node('input'); input.id = id; input.type = 'checkbox'; input.setAttribute('role', 'switch'); input.checked = localStorage.getItem(id) !== 'off'; input.addEventListener('change', () => { try { localStorage.setItem(id, input.checked ? 'on' : 'off'); } catch {} call('notifications.configure', {enabled: $('notifications-toggle')?.checked !== false, vibration: $('notification-vibration-toggle')?.checked !== false}).catch(error => toast(error.message)); }); label.append(input, node('span', null, 'toggle-track')); copy.append(strong, small); row.append(copy, label); return row; };
     const parent = toggle.parentElement;
@@ -101,50 +100,6 @@
     window.refreshNotificationSettings = refreshNotificationSettings;
     refreshNotificationSettings();
   }
-  function characterPack(value) { const packs = Array.isArray(value?.packs) ? value.packs : characterState.packs; return packs.find(pack => pack.id === (value?.selectedPackId || characterState.selectedPackId)) || packs.find(pack => pack.id === 'builtin') || packs[0]; }
-  function characterVisualKey() { const pack = characterPack(); return characterState.selectedPackId + ':' + JSON.stringify(pack?.icons || {}); }
-  function characterErrorText(error) { const text = String(error || ''); for (const prefix of ['아이콘이 없습니다: ', '지원하지 않는 이미지입니다: ']) if (text.startsWith(prefix)) return t(prefix) + text.slice(prefix.length); return t(text); }
-  function characterPackName(pack) { return pack?.id === 'builtin' ? t('기본 캐릭터') : (pack?.name || pack?.id || ''); }
-  function characterIconUrl(name, pack = characterPack()) { return pack?.icons?.[name] || C.chatIconUrl(name) || C.chatIconUrl('explaining'); }
-  function setCharacterState(value) { const next = value?.characters || value; if (!next || !Array.isArray(next.packs)) return; characterState = {...characterState, ...next}; renderCharacterPacks(); }
-  function characterIcon(name, cls = '', pack = null) {
-    const img = node('img', null, 'chat-character ' + cls); img.src = characterIconUrl(name, pack || undefined); img.alt = ''; img.setAttribute('aria-hidden', 'true'); img.width = 96; img.height = 96; img.loading = 'lazy'; img.decoding = 'async';
-    img.addEventListener('error', () => { if (img.dataset.fallback) { img.hidden = true; return; } img.dataset.fallback = 'builtin'; img.src = C.chatIconUrl(name) || C.chatIconUrl('explaining'); });
-    return img;
-  }
-  function ensureCharacterPackUi() {
-    if ($('character-pack-card')) return;
-    const toggle = $('chat-icons-toggle')?.closest('.settings-row'); if (!toggle) return;
-    const card = node('section', null, 'character-pack-card'); card.id = 'character-pack-card';
-    const head = node('div', null, 'settings-row'), copy = node('span'), folderLabel = node('small', '', 'character-pack-folder'); folderLabel.id = 'character-pack-folder'; copy.append(node('strong', t('캐릭터 팩')), folderLabel); const refresh = button(t('새로고침'), refreshCharacterPacks, 'secondary-button'); refresh.id = 'character-pack-refresh'; refresh.dataset.restoreFocus = 'true'; refresh.setAttribute('aria-label', t('캐릭터 팩 새로고침')); head.append(copy, refresh);
-    const actions = node('div', null, 'character-pack-actions'); const choose = button(t('폴더 선택'), chooseCharacterPackFolder, 'secondary-button'); choose.id = 'character-pack-folder-button'; const change = button(t('폴더 변경'), chooseCharacterPackFolder, 'secondary-button'); change.id = 'character-pack-change'; actions.append(choose, change);
-    const status = node('p', '', 'muted'); status.id = 'character-pack-status'; status.setAttribute('role','status'); const list = node('div', null, 'character-pack-list'); list.id = 'character-pack-list'; card.append(head, actions, status, list); toggle.after(card);
-  }
-  function renderCharacterPacks() {
-    ensureCharacterPackUi(); const card = $('character-pack-card'); if (!card) return;
-    const folder = $('character-pack-folder'), status = $('character-pack-status'), list = $('character-pack-list'); folder.textContent = characterState.folderName || t('기본 캐릭터'); status.textContent = characterErrorText(characterState.error) || (characterState.loading ? t('캐릭터 팩을 불러오는 중…') : (characterState.folderConfigured ? t('캐릭터 팩 폴더가 연결되었습니다.') : '')); $('character-pack-change').hidden = !characterState.folderConfigured; $('character-pack-folder-button').hidden = characterState.folderConfigured; $('character-pack-folder-button').disabled = !!characterState.loading; $('character-pack-refresh').disabled = !!characterState.loading; $('character-pack-change').disabled = !!characterState.loading;
-    list.replaceChildren(); const packs = characterState.packs || []; if (characterState.folderConfigured && packs.length <= 1) { list.append(node('p', t('폴더 안에 팩 폴더와 mapping.json, 32개 PNG를 넣어 주세요.'), 'empty-note')); }
-    for (const pack of packs) { const row = button('', () => selectCharacterPack(pack.id), 'character-pack-option'); row.dataset.packId = pack.id; row.disabled = !pack.valid || !!characterState.loading; const displayName = characterPackName(pack); row.setAttribute('aria-label', t('캐릭터 팩 선택') + ': ' + displayName); row.setAttribute('aria-pressed', String(pack.id === characterState.selectedPackId)); const preview = node('span', null, 'character-pack-preview'); for (const name of C.chatIconNames().slice(0, 3)) { const image = characterIcon(name, 'character-pack-icon', pack); image.classList.remove('chat-character'); preview.append(image); } const info = node('span', null, 'character-pack-info'); info.append(node('strong', displayName), node('small', pack.valid ? t('32개 상태') : (characterErrorText(pack.error) || t('사용할 수 없음')))); row.append(preview, info, node('span', pack.id === characterState.selectedPackId ? '✓' : '', 'character-pack-check')); list.append(row); }
-  }
-  let characterListRequest = null;
-  async function loadCharacterPacks() {
-    if (characterListRequest || characterState.loading) return characterListRequest;
-    characterListRequest = characterRequest('characters.list').finally(() => { characterListRequest = null; });
-    return characterListRequest;
-  }
-  async function characterRequest(action, args) {
-    if (characterState.loading) return;
-    const focusedPack = document.activeElement?.dataset?.packId || '';
-    characterState = {...characterState, loading:true, error:''}; renderCharacterPacks();
-    try {
-      const result = await call(action, args);
-      if (!result?.cancelled) { setCharacterState(result); renderDraftContext(); drawStatusIcons(); drawMessages(); }
-    } catch (error) { characterState = {...characterState, error:error.message}; }
-    finally { characterState = {...characterState, loading:false}; renderCharacterPacks(); const row = focusedPack && document.querySelector(`[data-pack-id="${CSS.escape(focusedPack)}"]`); if (row) row.focus(); }
-  }
-  async function chooseCharacterPackFolder() { return characterRequest('characters.chooseFolder'); }
-  async function refreshCharacterPacks() { return characterRequest('characters.refresh'); }
-  async function selectCharacterPack(id) { return characterRequest('characters.select', {id}); }
   function show(id) {
     sidebar(false);
     if (!$(id).open) { dialogs.push(id); $(id).showModal(); }
@@ -222,8 +177,35 @@
   function setTheme() {
     const choice = $('theme').value;
     try { localStorage.setItem('theme', choice); } catch {}
-    document.documentElement.dataset.theme = choice === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : choice;
-    call('ui.theme', {theme:choice}).catch(() => {});
+    appearance.applyTheme(choice);
+    syncNativeTheme();
+  }
+  function syncNativeTheme() {
+    call('ui.theme', {theme:$('theme').value, liquidGlass:document.documentElement.hasAttribute('data-liquid-glass')}).catch(() => {});
+  }
+  function setupInterfaceStyle() {
+    const root = document.documentElement;
+    const composerWrap = $('composer').parentElement;
+    function updateGlassInset() {
+      if (!root.hasAttribute('data-liquid-glass')) return;
+      root.style.setProperty('--glass-composer-height', composerWrap.offsetHeight + 'px');
+    }
+    $('appearance-' + (root.hasAttribute('data-liquid-glass') ? 'glass' : 'classic')).checked = true;
+    updateGlassInset();
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => { updateGlassInset(); if (root.hasAttribute('data-liquid-glass')) followLatest(); });
+      observer.observe(composerWrap);
+    }
+    for (const choice of document.querySelectorAll('[name="interface-style"]')) {
+      choice.addEventListener('change', () => {
+        const anchor = readingPosition();
+        root.toggleAttribute('data-liquid-glass', choice.value === 'glass');
+        try { localStorage.setItem('interfaceStyle', choice.value); } catch {}
+        updateGlassInset();
+        syncNativeTheme();
+        if (following) followLatest(); else restoreReadingPosition(anchor);
+      });
+    }
   }
   function applyTextSize(value) {
     const percent = Number(value);
@@ -255,6 +237,34 @@
         applyTextSize(result.percent); viewportChanged();
       } catch (error) { applyTextSize(previous); toast(error.message); }
       finally { select.disabled = false; }
+    });
+  }
+  function updateReplyIndentLabels() {
+    const [title, description] = $('reply-indent-label').children;
+    const english = L.language() === 'en';
+    title.textContent = english ? 'First-line indent in replies' : '回复首行缩进两格';
+    description.textContent = english ? 'Indent reply paragraphs by two characters.' : '应用于助手回复的正文段落。';
+  }
+  function setupReplyIndentSetting() {
+    const row = node('div', null, 'settings-row');
+    const label = node('label');
+    label.id = 'reply-indent-label'; label.htmlFor = 'reply-indent';
+    label.append(node('strong'), node('small'));
+    const checkbox = node('input');
+    checkbox.type = 'checkbox'; checkbox.id = 'reply-indent';
+    label.firstElementChild.id = 'reply-indent-title'; label.lastElementChild.id = 'reply-indent-description';
+    checkbox.setAttribute('aria-labelledby', 'reply-indent-title');
+    checkbox.setAttribute('aria-describedby', 'reply-indent-description');
+    row.append(label, checkbox); $('text-size').closest('.settings-row').after(row);
+    updateReplyIndentLabels();
+    try { checkbox.checked = localStorage.getItem('replyIndent') === 'true'; } catch {}
+    const apply = () => document.documentElement.toggleAttribute('data-reply-indent', checkbox.checked);
+    apply();
+    checkbox.addEventListener('change', () => {
+      const anchor = readingPosition();
+      try { localStorage.setItem('replyIndent', String(checkbox.checked)); } catch {}
+      apply();
+      if (following) followLatest(); else restoreReadingPosition(anchor);
     });
   }
   function contextScope(scope = draftScope) { return scope ? scope + ':context' : ''; }
@@ -339,7 +349,7 @@
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
     $('voice-input').setAttribute('aria-busy', String(voiceStarting || voiceActive));
     const hasDraft = !!$('prompt').value.trim() || !!draftContext.attachments.length;
-    $('send').disabled = !hasDraft || !!sending || providerSwitchPending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false);
+    $('send').disabled = !hasDraft || !!sending || !!chatSelection || providerSwitchPending || voiceStarting || voiceActive || (state.workspace?.selected && state.workspace.available === false);
     const steering = state.busy && !!state.turnId;
     $('stop').hidden = !state.busy || hasDraft;
     $('send').hidden = !$('stop').hidden;
@@ -357,8 +367,25 @@
     const choices = [...$('composer-add-menu').querySelectorAll('button:not(:disabled)')];
     (last ? choices.at(-1) : choices[0])?.focus();
   }
-  function updateJumpLatest() { $('jump-latest').hidden = following || !!state.busy || !state.messages.length; }
-  function scrollLatest() { following = true; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight; historyView.top = $('chat-scroll').scrollTop; $('jump-latest').hidden = true; }
+  let chatTouch = null, unreadAssistantOutput = false;
+  function updateJumpLatest() {
+    if (following) unreadAssistantOutput = false;
+    $('jump-latest').hidden = !unreadAssistantOutput || !state.messages.length;
+  }
+  function pauseFollowing() { following = false; updateJumpLatest(); }
+  function scrollLatest() {
+    following = true;
+    const area = $('chat-scroll'), height = area.scrollHeight;
+    if (height - area.scrollTop - area.clientHeight > 1) area.scrollTop = height;
+    historyView.top = area.scrollTop;
+    updateJumpLatest();
+  }
+  function followLatest() { if (following && !chatTouch) scrollLatest(); }
+  function chatReadingTop() {
+    return document.documentElement.hasAttribute('data-liquid-glass')
+      ? document.querySelector('.topbar').getBoundingClientRect().bottom
+      : $('chat-scroll').getBoundingClientRect().top;
+  }
   function readingPosition() { return following ? null : visibleMessageAnchor(); }
   function toggleInPlace(control, toggle) {
     const area = $('chat-scroll'), top = control.getBoundingClientRect().top;
@@ -378,7 +405,7 @@
       element = summary ? rows.find(el => el.dataset.id === summary) : null;
     }
     // Keep the same line on screen when a snapshot changes content above it.
-    const adjustment = element ? element.getBoundingClientRect().top - area.getBoundingClientRect().top - anchor.offset : 0;
+    const adjustment = element ? element.getBoundingClientRect().top - chatReadingTop() - anchor.offset : 0;
     if (element) { if (adjustment) area.scrollTop += adjustment; }
     else area.scrollTop = anchor.scrollTop;
     historyView.top = area.scrollTop;
@@ -429,7 +456,7 @@
     const layoutKey = [field.clientWidth, line, padding, textSizePercent].join('\u0000');
     if ((layoutKey !== composerLayoutKey || field.clientHeight !== composerMeasuredHeight) && document.activeElement === field && field.clientHeight && contentHeight > field.clientHeight) revealComposerSelection(field, styles, line);
     composerLayoutKey = layoutKey; composerMeasuredHeight = field.clientHeight;
-    if (following) scrollLatest();
+    followLatest();
   }
   function sizeComposer() {
     updateSend();
@@ -492,14 +519,16 @@
     $('reasoning-panel').inert = models; $('model-panel').inert = !models;
     $('reasoning-panel').setAttribute('aria-hidden', String(models)); $('model-panel').setAttribute('aria-hidden', String(!models));
     $('model-picker-model').setAttribute('aria-expanded', String(models));
-    $('model-picker-title').textContent = t(models ? '모델' : '추론 강도');
+    $('model-picker-title').textContent = t(models ? '모델' : '설정');
     sizeModelPicker();
     if (focus) (models ? $('model-list').querySelector('input:checked, input') || $('model-picker-back') : $('model-picker-model')).focus({preventScroll:true});
   }
   function previewReasoning() {
     const options = [...$('effort').options].filter(option => option.value), slider = $('effort-slider');
     const option = options[Number(slider.value)];
+    $('reasoning-control').dataset.effort = option?.value || '';
     if (option && $('effort').value) $('effort-heading').textContent = option.textContent;
+    [...$('effort-levels').children].forEach((level, index) => level.classList.toggle('selected', index === Number(slider.value)));
     slider.setAttribute('aria-valuetext', option?.textContent || t('추론 강도 조절 미지원'));
     slider.style.setProperty('--effort-fill', (options.length > 1 ? Number(slider.value) / (options.length - 1) * 100 : 0) + '%');
   }
@@ -509,7 +538,7 @@
     const signature = JSON.stringify([state.models, $('model').value, $('effort').value, L.language()]);
     if (signature === reasoningSignature) return;
     reasoningSignature = signature;
-    $('model-heading').textContent = $('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요');
+    $('model-heading').textContent = shortModelName($('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요'));
     $('effort-heading').textContent = $('effort').value;
     slider.max = String(Math.max(0, options.length - 1));
     slider.value = String(Math.max(0, options.findIndex(option => option.value === $('effort').value)));
@@ -768,20 +797,43 @@
       if (result.status) drawUpdates(result);
     } finally { updateRequestPending = false; drawUpdates(updateState); }
   }
+  function renderMath(target, formula, source, displayMode = false) {
+    const math = node(displayMode ? 'div' : 'span', null, displayMode ? 'chat-math chat-math-display' : 'chat-math');
+    try {
+      if (window.katex && formula.trim() && formula.length <= 8192) {
+        window.katex.render(formula, math, {displayMode, trust:false, maxExpand:500, maxSize:50});
+      } else math.textContent = source;
+    } catch {
+      math.textContent = source;
+    }
+    target.append(math);
+  }
+  const inlinePattern = new RegExp([
+    /(?<ticks>`+)(?<code>[^`\n]+?)\k<ticks>/,
+    /\*\*(?<bold>[^*\n]+)\*\*/,
+    /\[(?<label>[^\]]+)\]\((?<url>https?:\/\/[^\s)]+)\)/,
+    /\\\((?<parenMath>(?:\\[^)`\r\n]|[^`\\\r\n])*)\\\)/,
+    /(?<!\$)\$(?![\s$])(?<dollarMath>(?:\\[^`\r\n]|[^`$\\\r\n])+?)(?<!\s)\$(?![\d$])/,
+    /\\[\\$]/
+  ].map(token => token.source).join('|'), 'g');
   function inline(target, text) {
-    // Text nodes only, including untrusted Markdown. Safe links open in external browser.
-    const pattern = /(`+)([^`\n]+?)\1|\*\*([^*\n]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
     let position = 0;
-    for (const m of text.matchAll(pattern)) {
-      target.append(document.createTextNode(text.slice(position, m.index)));
-      if (m[2] != null) target.append(node('code', m[2]));
-      else if (m[3] != null) target.append(node('strong', m[3]));
-      else if (m[4] != null && m[5] != null) {
-        const link = button(m[4], () => call('ui.openLink', {url: m[5]}), 'inline-link');
-        link.title = m[5];
-        target.append(link);
+    for (const match of text.matchAll(inlinePattern)) {
+      const {code, bold, label, url, parenMath, dollarMath} = match.groups;
+      target.append(document.createTextNode(text.slice(position, match.index)));
+      if (code != null) target.append(node('code', code));
+      else if (bold != null) {
+        const strong = node('strong');
+        inline(strong, bold);
+        target.append(strong);
       }
-      position = m.index + m[0].length;
+      else if (url != null) {
+        const link = button(label, () => call('ui.openLink', {url}), 'inline-link');
+        link.title = url;
+        target.append(link);
+      } else if (parenMath != null || dollarMath != null) renderMath(target, parenMath ?? dollarMath, match[0]);
+      else target.append(document.createTextNode(match[0]));
+      position = match.index + match[0].length;
     }
     target.append(document.createTextNode(text.slice(position)));
   }
@@ -793,7 +845,7 @@
     const img = node('img'); img.src = attachment.url; img.alt = label || attachment.name || t('생성 이미지'); img.loading = 'lazy'; img.decoding = 'async';
     if (attachment.width && attachment.height) { img.width = attachment.width; img.height = attachment.height; }
     const error = node('p', t('이미지를 불러오지 못했습니다.'), 'muted'); error.hidden = true;
-    img.addEventListener('load', () => { if (following) scrollLatest(); });
+    img.addEventListener('load', followLatest);
     img.addEventListener('error', () => { error.hidden = false; });
     open.append(img); figure.append(open, error);
     const caption = node('figcaption'); caption.append(node('span', attachment.name || label || t('이미지')));
@@ -896,31 +948,51 @@
       toast(t('클립보드에 복사하지 못했습니다.'));
     }
   }
-  function codeCard(lang, codeText) {
+  function codeCard(lang, codeText, allowCopy) {
     const card = node('div', null, 'code-card');
     const head = node('div', null, 'code-head');
     const langSpan = node('span', (lang || 'code').trim().toLowerCase(), 'code-lang');
     head.append(langSpan);
+    if (allowCopy && codeText) {
+      const copy = button(t('복사'), () => copyText(codeText, copy), 'code-copy-btn');
+      copy.title = t('코드 복사');
+      copy.prepend(icon('copy'));
+      head.append(copy);
+    }
     const pre = node('pre');
     pre.append(node('code', codeText));
     card.append(head, pre);
     return card;
   }
-  function parseMarkdownBlocks(text) {
-    const blocks = [];
-    const codeFence = /```([^\n]*)\n([\s\S]*?)(?:```|$)/g;
-    let lastIndex = 0, match;
-    while ((match = codeFence.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        blocks.push({type:'prose', content: text.slice(lastIndex, match.index)});
+  function* parseMarkdownBlocks(text) {
+    const openings = /```|^[ \t]*(\$\$|\\\[)/gm;
+    let start = 0, opening;
+    while ((opening = openings.exec(text))) {
+      if (opening.index > start) yield {type:'prose', start, content:text.slice(start, opening.index)};
+      const bodyStart = openings.lastIndex;
+      if (opening[1]) {
+        const closing = opening[1] === '$$' ? /(?<!\\)\$\$[ \t]*(?=\r?$)/gm : /\\\][ \t]*(?=\r?$)/gm;
+        closing.lastIndex = bodyStart;
+        const close = closing.exec(text);
+        if (!close) {
+          yield {type:'pending', content:text.slice(opening.index)};
+          return;
+        }
+        start = closing.lastIndex;
+        yield {type:'math', end:start, content:text.slice(bodyStart, close.index), source:text.slice(opening.index, start)};
+      } else {
+        const newline = text.indexOf('\n', bodyStart);
+        if (newline < 0) {
+          yield {type:'pending', content:text.slice(opening.index)};
+          return;
+        }
+        const closing = text.indexOf('```', newline + 1);
+        start = closing < 0 ? text.length : closing + 3;
+        yield {type:'code', end:closing < 0 ? null : start, lang:text.slice(bodyStart, newline), content:text.slice(newline + 1, closing < 0 ? text.length : closing)};
       }
-      blocks.push({type:'code', lang: match[1], content: match[2]});
-      lastIndex = codeFence.lastIndex;
+      openings.lastIndex = start;
     }
-    if (lastIndex < text.length) {
-      blocks.push({type:'prose', content: text.slice(lastIndex)});
-    }
-    return blocks;
+    if (start < text.length) yield {type:'prose', start, content:text.slice(start)};
   }
   function tableCells(line) {
     const cells = [''];
@@ -973,7 +1045,7 @@
         paragraph = null; list = null;
         continue;
       }
-      const item = line.match(/^\s*(?:[-*+] |\d+[.)] )(.*)$/), heading = line.match(/^#{1,6} (.*)$/);
+      const item = line.match(/^\s*(?:[-*+] |\d+[.)] |[•●◦▪]\s*)(.*)$/), heading = line.match(/^#{1,6} (.*)$/);
       if (item) {
         const tag = /^\s*\d/.test(line) ? 'ol' : 'ul';
         if (!list || list.tagName.toLowerCase() !== tag) { list = node(tag); target.append(list); }
@@ -988,12 +1060,13 @@
       }
     }
   }
-  function prose(target, text) {
+  function prose(target, text, streaming = false) {
     target.replaceChildren();
     // Deliberately construct text nodes: model output and file names cannot inject HTML.
     const blocks = parseMarkdownBlocks(text);
     for (const block of blocks) {
-      if (block.type === 'code') target.append(codeCard(block.lang, block.content));
+      if (block.type === 'code') target.append(codeCard(block.lang, block.content, !streaming || block.end != null));
+      else if (block.type === 'math') renderMath(target, block.content, block.source, true);
       else renderProseLines(target, block.content);
     }
   }
@@ -1003,7 +1076,7 @@
     const nodes = [];
     while (walker.nextNode()) {
       const textNode = walker.currentNode;
-      if (!textNode.parentElement?.closest('code,pre,button')) nodes.push(textNode);
+      if (!textNode.parentElement?.closest('code,pre,button,.chat-math')) nodes.push(textNode);
     }
     for (const textNode of nodes) {
       const text = textNode.nodeValue || '';
@@ -1029,14 +1102,12 @@
   // A blank line outside a fence, or a closed fence, ends a block whose
   // Markdown cannot be changed by the next delta.
   function completeProseLength(text) {
-    const separators = /```|\n[^\S\n]*\n/g;
-    let end = 0, match;
-    while ((match = separators.exec(text))) {
-      if (match[0] !== '```') { end = separators.lastIndex; continue; }
-      const openingEnd = text.indexOf('\n', separators.lastIndex);
-      const closing = openingEnd < 0 ? -1 : text.indexOf('```', openingEnd + 1);
-      if (closing < 0) break;
-      end = separators.lastIndex = closing + 3;
+    let end = 0;
+    for (const block of parseMarkdownBlocks(text)) {
+      if (block.type === 'prose') {
+        for (const separator of block.content.matchAll(/\n[^\S\n]*\n/g)) end = block.start + separator.index + separator[0].length;
+      } else if (block.type === 'code' && block.end != null) end = block.end;
+      else if (block.type === 'math' && /[\r\n]/.test(text[block.end] || '')) end = block.end;
     }
     return end;
   }
@@ -1047,7 +1118,7 @@
     const pending = text.slice(view.prefix), ready = completeProseLength(pending);
     const append = content => {
       const fragment = document.createDocumentFragment();
-      prose(fragment, content);
+      prose(fragment, content, true);
       renderMessageIconTags(fragment, true);
       const children = [...fragment.childNodes];
       target.insertBefore(fragment, view.footer);
@@ -1058,50 +1129,42 @@
     view.prefix += ready;
     view.text = text;
   }
-  function drawStatusIcons() {
-    for (const id of ['welcome-character', 'activity-character']) {
-      const host = $(id); if (host) { host.hidden = true; host.replaceChildren(); }
-    }
-  }
   const taskActivityLabels = {
-    thinking:['思考中', 'Thinking', '생각 중'], reading:['读取文件', 'Reading files', '파일 읽는 중'],
-    searching:['搜索中', 'Searching', '검색 중'], command:['运行命令', 'Running command', '명령 실행 중'],
-    editing:['修改文件', 'Editing files', '파일 수정 중'], tool:['调用工具', 'Using tool', '도구 사용 중'],
-    responding:['正在回复', 'Responding', '응답 중'], approval:['等待审批', 'Waiting for approval', '승인 대기 중']
+    thinking:['思考中', 'Thinking'], reading:['读取文件', 'Reading files'],
+    searching:['搜索中', 'Searching'], command:['运行命令', 'Running command'],
+    editing:['修改文件', 'Editing files'], tool:['调用工具', 'Using tool'],
+    responding:['正在回复', 'Responding'], approval:['等待审批', 'Waiting for approval']
   };
   function taskActivityLabel(kind) {
     const labels = taskActivityLabels[kind] || taskActivityLabels.tool;
-    return labels[L.language() === 'zh-CN' ? 0 : L.language() === 'ko' ? 2 : 1];
+    return labels[L.language() === 'zh-CN' ? 0 : 1];
   }
   const taskActivities = new Map(), dirtyActivities = new Set(), evictedActivities = new Set(), activityOutputLimit = 12000;
   let activityFramePending = false, activityStatus = '';
-  let progressTimer = 0, summaryScope = '';
+  let progressTimer = 0;
   function drawTurnProgress() {
     const p = state.turnProgress, valid = state.busy && p && state.turnId && p.turnId === state.turnId;
-    const link = $('turn-connection'), panel = $('turn-summary'), body = $('turn-summary-text');
-    const scope = valid ? JSON.stringify([state.threadId, state.turnId]) : '';
-    if (scope !== summaryScope) { panel.open = false; summaryScope = scope; }
-    link.hidden = !valid; panel.hidden = !valid || !p.summary;
-    if (!valid) {
-      clearInterval(progressTimer); progressTimer = 0; link.textContent = ''; body.textContent = ''; return;
+    const visible = !document.hidden;
+    if (!valid || !visible) {
+      clearInterval(progressTimer); progressTimer = 0;
+      if (visible) $('activity-details').title = t('작업 기록');
+      return;
     }
-    if (!progressTimer) progressTimer = setInterval(drawTurnProgress, 3000);
+    if (!progressTimer) progressTimer = setInterval(drawTurnProgress, 1000);
     const age = stamp => Math.max(0, Math.floor((Date.now() - stamp) / 1000));
     const quiet = age(p.lastEventAt);
     const phase = state.streamRetrying ? '响应流中断，正在重连' : !state.ready ? '本机引擎未连接' :
-      quiet >= 30 ? '等待新的任务进展' : p.phase === 'reasoning' ? '收到推理进展' : p.phase === 'waiting' ? '等待下一步' : taskActivityLabel(p.phase);
-    const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+      quiet >= 30 ? '等待新的任务进展' : p.phase === 'waiting' ? '等待下一步' : taskActivityLabel(p.phase === 'reasoning' ? 'thinking' : p.phase);
     const pendingApproval = [...requestQueue.values()].some(r => requestThread(r) === state.threadId &&
       (!r.params?.turnId || r.params.turnId === state.turnId) && String(r.method).includes('requestApproval'));
-    setText($('activity-text'), pendingApproval && !state.streamRetrying ? taskActivityLabel('approval') : phase);
+    const label = pendingApproval && !state.streamRetrying ? taskActivityLabel('approval') : phase;
+    const sinceVisible = age(p.lastVisibleAt ?? p.lastEventAt);
+    const timer = state.ready && !state.streamRetrying && !pendingApproval ?
+      (L.language() === 'en' ? ` · ${sinceVisible}s since activity` : ` · 思考 ${sinceVisible} 秒了`) : '';
+    const status = $('activity-text');
+    if (status.textContent !== label + timer) status.textContent = label + timer;
     const engine = !state.ready ? '本机引擎未连接' : !p.engineReplyAt ? '等待本机引擎回应' : `本机引擎 ${age(p.engineReplyAt)} 秒前有回应`;
-    setText(link, state.streamRetrying ? '正在重连' : !state.ready ? '引擎未连接' : pendingApproval ? '等待审批' : `思考 ${quiet} 秒了`);
-    link.title = engine;
-    if (!panel.hidden) {
-      const text = String(p.summary);
-      setText(panel.querySelector('summary'), '推理摘要 · ' + (text.trim().split('\n')[0] || '').slice(0, 96));
-      setText(body, text);
-    } else setText(body, '');
+    $('activity-details').title = engine;
   }
   function showTaskActivity(activity, data) {
     const thread = data.threadId || data.params?.threadId;
@@ -1117,7 +1180,6 @@
       }
       return;
     }
-    if (state.persistedWorkActivity && ['commandExecution', 'fileChange'].includes(data.params?.item?.type)) return;
     if (!state.liveTaskActivity) {
       if (activity.append || activity.approval) return;
       const anchor = readingPosition();
@@ -1128,7 +1190,7 @@
         logEvent(activity.completed && !activity.failed ? label + ' · ' + t('완료') : status,
           [activity.detail, activity.output].filter(Boolean).join('\n\n').slice(0, 24000));
       }
-      if (following) scrollLatest(); else restoreReadingPosition(anchor);
+      if (following) followLatest(); else restoreReadingPosition(anchor);
       return;
     }
     if (activity.key) {
@@ -1208,24 +1270,24 @@
       if (state.turnProgress) drawTurnProgress();
       else if (activityStatus && $('activity-text').textContent !== activityStatus) $('activity-text').textContent = activityStatus;
       activityStatus = '';
-      if (viewportChanged) { if (following) scrollLatest(); else restoreReadingPosition(anchor); }
+      if (viewportChanged) { if (following) followLatest(); else restoreReadingPosition(anchor); }
     });
   }
   function resetTaskActivities() {
     $('task-activities').replaceChildren();
     taskActivities.clear(); dirtyActivities.clear(); evictedActivities.clear(); activityStatus = '';
   }
-  function setChatIcons() {
-    chatIconsEnabled = $('chat-icons-toggle').checked;
-    try { localStorage.setItem('chat-icons', chatIconsEnabled ? 'on' : 'off'); } catch { toast(t('아이콘 설정을 저장하지 못했습니다.')); }
-    drawStatusIcons(); drawMessages();
-    syncChatIcons();
-  }
-  function syncChatIcons() { call('chat.icons.set', {enabled:chatIconsEnabled}).catch(() => {}); }
   function historyStatus(message = '') {
     let status = $('history-status');
-    if (!status) { status = node('p', '', 'history-status'); status.id = 'history-status'; status.setAttribute('role','status'); $('messages').before(status); }
+    if (!status) { status = node('p', '', 'history-status'); status.id = 'history-status'; status.setAttribute('role','status'); $('history-load').before(status); }
     status.textContent = message; status.hidden = !message;
+  }
+  function updateHistoryControl() {
+    const control = $('history-load');
+    control.hidden = !historyView.hasMore || !historyView.beforeId;
+    control.disabled = historyView.loading;
+    const label = L.language() === 'en' ? 'Load earlier messages' : '加载更早的消息';
+    if (control.textContent !== label) control.textContent = label;
   }
   function historySnapshot(next, changedThread) {
     const incoming = next.messages || [], meta = next.messageHistory;
@@ -1243,17 +1305,35 @@
     }
     return next;
   }
+  function hasNewAssistantOutput(next) {
+    const messages = next.messages || [];
+    const previous = new Map(state.messages.map(message => [message.id, message]));
+    const previousTail = state.messages.at(-1)?.id;
+    const tailIndex = previousTail ? messages.findIndex(message => message.id === previousTail) : -1;
+    const total = next.messageHistory?.total;
+    const previousTotal = state.messageHistory?.total ?? state.messages.length;
+    const appended = Number.isInteger(total) ? Math.max(0, total - previousTotal) : previousTotal ? 0 : messages.length;
+    const firstNew = tailIndex >= 0 ? tailIndex + 1 : messages.length - appended;
+    return messages.some((message, index) => {
+      const before = previous.get(message.id);
+      if (message.role !== 'assistant' || (message.kind && message.kind !== 'image') || (!before && index < firstNew)) return false;
+      const text = !message.kind && message.text?.trim();
+      return (text && !(before?.text?.trim() || '').startsWith(text)) ||
+        message.images?.some(image => image.id && !before?.images?.some(older => older.id === image.id));
+    });
+  }
   function visibleMessageAnchor() {
-    const area = $('chat-scroll'), top = area.getBoundingClientRect().top;
+    const area = $('chat-scroll'), top = chatReadingTop();
     const element = [...$('messages').children].find(el => el.dataset.id && !el.hidden && el.getBoundingClientRect().bottom > top);
     return {id:element?.dataset.id, offset:element ? element.getBoundingClientRect().top - top : 0,
       scrollTop:area.scrollTop, height:area.scrollHeight};
   }
-  async function loadEarlierMessages() {
+  async function loadEarlierMessages(revealOnShortPage = false) {
     const view = historyView;
-    if (view.loading || !view.hasMore || !view.beforeId || !state.threadId) return;
+    if (chatSelection || view.loading || !view.hasMore || !view.beforeId || !state.threadId) return;
     const hadHistory = view.loaded;
     view.loading = true; view.loaded = true;
+    updateHistoryControl();
     historyStatus(t('이전 대화 불러오는 중…'));
     try {
       const result = await call('chat.history', {threadId:state.threadId, beforeId:view.beforeId, limit:40});
@@ -1261,6 +1341,8 @@
       if (result.threadId !== state.threadId || !Array.isArray(result.messages) || !result.messageHistory)
         throw new Error(t('이전 대화를 불러오지 못했습니다. 위로 올려 다시 시도해 주세요.'));
       // Capture at response time so scrolling while the request is pending is respected.
+      const area = $('chat-scroll');
+      const revealEarlier = revealOnShortPage && area.scrollHeight <= area.clientHeight;
       const anchor = visibleMessageAnchor(), preservePosition = !following;
       const ids = new Set(state.messages.map(m => m.id)), older = [];
       for (const message of result.messages) if (message.id && !ids.has(message.id)) { ids.add(message.id); older.push(message); }
@@ -1268,19 +1350,20 @@
       view.beforeId = result.messageHistory.beforeId || '';
       view.hasMore = result.messageHistory.hasMore === true;
       view.total = Math.max(Number(result.messageHistory.total) || 0, view.total);
+      updateHistoryControl();
       historyStatus(); drawMessages(null, false);
       if (preservePosition) {
-        const area = $('chat-scroll'), element = [...$('messages').children].find(el => el.dataset.id === anchor.id);
-        const adjustment = element ? element.getBoundingClientRect().top - area.getBoundingClientRect().top - anchor.offset : area.scrollHeight - anchor.height;
+        const element = [...$('messages').children].find(el => el.dataset.id === anchor.id);
+        const adjustment = element ? element.getBoundingClientRect().top - chatReadingTop() - anchor.offset : area.scrollHeight - anchor.height;
         const behavior = area.style.scrollBehavior; area.style.scrollBehavior = 'auto';
-        area.scrollTop = anchor.scrollTop + adjustment; area.style.scrollBehavior = behavior;
+        area.scrollTop = revealEarlier ? 0 : anchor.scrollTop + adjustment; area.style.scrollBehavior = behavior;
         view.top = area.scrollTop;
       }
     } catch (_) {
       if (view !== historyView || view.threadId !== state.threadId) return;
       view.loaded = hadHistory;
-      historyStatus(t('이전 대화를 불러오지 못했습니다. 위로 올려 다시 시도해 주세요.'));
-    } finally { if (view === historyView) view.loading = false; }
+      historyStatus(L.language() === 'en' ? 'Could not load earlier messages. Try again.' : '无法加载更早的消息，请重试。');
+    } finally { if (view === historyView) { view.loading = false; updateHistoryControl(); } }
   }
   function messageDate(value) {
     if (value === undefined || value === null || value === '') return null;
@@ -1291,17 +1374,13 @@
     time.dateTime = date.toISOString(); time.title = date.toLocaleString(L.language());
     time.setAttribute('aria-label', time.title); return time;
   }
-  function agentCharacter(id) {
-    const chosen = (state.agents || []).find(a => a.id === id)?.character;
-    return chosen ? characterState.packs.find(p => p.id === chosen && p.valid !== false) || null : null;
-  }
   function agentSpeaker(m) {
     const name = m.agent ? (m.agentName || m.agent) : L.brand('Codex'), label = node('div', null, 'agent-speaker');
     const avatar = node('span', name.slice(0, 1), 'agent-avatar'); avatar.dataset.agent = m.agent || 'codex'; avatar.setAttribute('aria-hidden', 'true');
     label.append(avatar, node('strong', name)); return label;
   }
   const dirtyMessages = new Set(), messageLookup = new Map(), renderedMessages = new Map();
-  const pendingCommandReplies = new Set(), expandedCommandGroups = new Set();
+  const pendingToolReplies = new Set(), expandedToolGroups = new Set();
   let messagesFramePending = false, groupedMessages = false;
   function scheduleMessageDraw(id) {
     dirtyMessages.add(id);
@@ -1314,52 +1393,78 @@
       drawMessages(ids);
     });
   }
+  function emptyAssistantMessage(message) {
+    return message.role === 'assistant' && !message.kind && !message.agent && !message.text?.trim() &&
+      !message.images?.length && !message.imageStatus && !message.imageError;
+  }
   function workFolds(messages) {
-    const final = new Set(), folds = new Map();
-    const inlineTurns = new Set(messages.filter(message => message.kind === 'toolActivity').map(message => message.activityTurnId));
-    for (let i = messages.length - 1; i >= 0; --i) {
-      const m = messages[i], id = m.completedTurnId;
-      if (!id || inlineTurns.has(id) || m.agent || m.kind || m.role !== 'assistant' || m.images?.length || !m.text?.trim() ||
-          (state.busy && state.turnId === id)) continue;
-      if (m.finalForTurn || m.phase === 'final_answer') final.add(id);
-      else if (final.has(id) && (!m.phase || m.phase === 'commentary')) {
-        if (!folds.has(id)) folds.set(id, new Set());
-        folds.get(id).add(m.id);
+    const final = new Map(), folds = new Map();
+    messages.forEach((message, index) => {
+      if (!message.kind && !message.agent && message.role === 'assistant' && message.completedTurnId &&
+          message.text?.trim() && (message.finalForTurn || message.phase === 'final_answer')) {
+        final.set(message.completedTurnId, index);
       }
-    }
+    });
+    let section = null;
+    messages.forEach((message, index) => {
+      if (emptyAssistantMessage(message) || (message.kind === 'taskSummary' && !legacySummaryNotice(message))) return;
+      const isTool = message.kind === 'toolActivity';
+      const turn = isTool ? message.activityTurnId : message.completedTurnId;
+      const commentary = index < final.get(turn) && !message.kind && message.role === 'assistant' &&
+        message.text?.trim() && !message.images?.length && !message.finalForTurn &&
+        (!message.phase || message.phase === 'commentary');
+      if (!final.has(turn) || message.agent || (!isTool && !commentary)) {
+        section = null;
+        return;
+      }
+      if (section?.turn !== turn) {
+        section = {turn, key:JSON.stringify(['work',state.threadId,turn,message.id]), count:0};
+      }
+      section.count++;
+      folds.set(message.id, section);
+    });
     return folds;
   }
-  function commandFolds(messages) {
-    pendingCommandReplies.clear();
+  function toolFolds(messages) {
+    pendingToolReplies.clear();
     const folds = new Map();
-    let groups = [], current = null, turn;
+    let rows = [];
+    const fold = () => {
+      if (!rows.length) return;
+      const group = {key:JSON.stringify(['tools',state.threadId,rows[0].id]), commands:0, edits:0, searches:0, other:0};
+      for (const row of rows) {
+        if (!row.completed) continue;
+        if (row.activityKind === 'command') group.commands++;
+        else if (row.activityKind === 'editing') group.edits++;
+        else if (row.activityKind === 'searching') group.searches++;
+        else group.other++;
+        folds.set(row.id, group);
+      }
+      rows = [];
+    };
     for (const message of messages) {
       if (message.kind === 'toolActivity') {
-        if (turn !== message.activityTurnId) { groups = []; current = null; turn = message.activityTurnId; }
-        if (!current) { current = []; groups.push(current); }
-        current.push(message);
-        continue;
-      }
-      current = null;
-      if (message.role === 'user') { groups = []; continue; }
-      if (message.role !== 'assistant' || message.kind || !groups.length) continue;
-      if (message.completedTurnId && turn && message.completedTurnId !== turn) { groups = []; continue; }
-      if (!message.text?.trim()) { pendingCommandReplies.add(message.id); continue; }
-      for (const rows of groups) {
-        const commands = rows.filter(row => row.activityKind === 'command').length;
-        if (!commands) continue;
-        const group = {key:JSON.stringify(['commands',state.threadId,rows.at(-1).id]), commands, edits:rows.length - commands};
-        for (const row of rows) folds.set(row.id, group);
-      }
-      groups = [];
+        const first = rows[0];
+        if (first && (first.activityTurnId !== message.activityTurnId || first.agent !== message.agent)) fold();
+        rows.push(message);
+      } else if (emptyAssistantMessage(message)) {
+        pendingToolReplies.add(message.id);
+      } else if (message.kind !== 'taskSummary' || legacySummaryNotice(message)) fold();
     }
+    fold();
     return folds;
   }
-  function commandGroupLabel({commands, edits}) {
-    const language = L.language();
-    if (language === 'zh-CN') return `运行了 ${commands} 条命令` + (edits ? ` · ${edits} 项文件修改` : '');
-    if (language === 'ko') return `명령 ${commands}개 실행` + (edits ? ` · 파일 변경 ${edits}건` : '');
-    return `Ran ${commands} command${commands === 1 ? '' : 's'}` + (edits ? ` · ${edits} file change${edits === 1 ? '' : 's'}` : '');
+  function toolGroupLabel({commands, edits, searches, other}) {
+    const labels = L.language() === 'zh-CN' ? [
+      commands && `运行了 ${commands} 条命令`, searches && `搜索了 ${searches} 次`,
+      edits && `${edits} 项文件修改`, other && `${other} 项工具操作`
+    ] : [
+      commands && `Ran ${commands} command${commands === 1 ? '' : 's'}`,
+      searches && `Searched ${searches} time${searches === 1 ? '' : 's'}`,
+      edits && `${edits} file change${edits === 1 ? '' : 's'}`,
+      other && `${other} tool action${other === 1 ? '' : 's'}`
+    ];
+    return labels.filter(Boolean).join(' · ');
   }
   function renderWorkRow(message, element) {
     const details = element.firstElementChild || node('details', null, 'task-activity-row');
@@ -1383,7 +1488,7 @@
     const anchor = preserveReading ? readingPosition() : null;
     const allMessages = state.messages || [];
     if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id) ||
-        (pendingCommandReplies.has(id) && messageLookup.get(id)?.text?.trim()))) dirtyIds = null;
+        (pendingToolReplies.has(id) && messageLookup.get(id)?.text?.trim()))) dirtyIds = null;
     if (!dirtyIds) {
       dirtyMessages.clear(); messageLookup.clear(); renderedMessages.clear();
       for (const message of allMessages) messageLookup.set(message.id, message);
@@ -1393,48 +1498,25 @@
     const elements = dirtyIds ? new Map([...dirtyIds].map(id => [id, renderedMessages.get(id)])) : new Map(Array.from($('messages').children).filter(n => n.hasAttribute('data-id')).map(n => [n.dataset.id, n]));
     const keep = new Set();
     const folds = dirtyIds ? null : workFolds(allMessages);
-    const commands = dirtyIds ? null : commandFolds(allMessages);
+    const tools = dirtyIds ? null : toolFolds(allMessages);
     const positionAfter = el => {
       const next = previous ? previous.nextSibling : $('messages').firstChild;
       if (el !== next) $('messages').insertBefore(el, next);
       previous = el;
     };
     let previous = null;
-    const liveWork = $('live-work');
-    const lastUser = !dirtyIds && state.busy ? [...allMessages].reverse().find(m => m.role === 'user') : null;
-    if (!dirtyIds && !state.busy && liveWork.parentElement === $('messages')) $('messages').after(liveWork);
     const grouped = groupedMessages;
     C.groupImageMessages(messages).forEach(m => {
       if (m.kind === 'taskSummary' && !legacySummaryNotice(m)) return;
       keep.add(m.id); let el = elements.get(m.id);
       if (!el) { el = node('article', null, m.kind === 'toolActivity' ? 'message-tool' : 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }
       if (!dirtyIds) {
-        const workTurn = m.completedTurnId;
-        const ids = folds.get(workTurn), folded = ids?.has(m.id);
-        const group = commands.get(m.id);
-        if (group) {
-          const {key} = group;
-          if (!keep.has(key)) {
-            let control = elements.get(key);
-            if (!control) {
-              control = button('', () => toggleInPlace(control, () => {
-                if (!expandedCommandGroups.delete(key)) {
-                  if (expandedCommandGroups.size >= 100) expandedCommandGroups.delete(expandedCommandGroups.values().next().value);
-                  expandedCommandGroups.add(key);
-                }
-                drawMessages(null, false);
-              }), 'work-toggle command-group');
-              control.dataset.id = key;
-            }
-            control.setAttribute('aria-expanded', String(expandedCommandGroups.has(key)));
-            control.textContent = commandGroupLabel(group);
-            keep.add(key); positionAfter(control);
-          }
-          el.dataset.workSummary = key;
-          el.hidden = !expandedCommandGroups.has(key);
-        } else if (folded) {
-          const key = JSON.stringify(['work',state.threadId,workTurn]);
-          let control = elements.get(key);
+        const section = folds.get(m.id);
+        const group = tools.get(m.id);
+        let workKey = '', workOpen = true;
+        if (section) {
+          workKey = section.key;
+          let control = elements.get(workKey);
           if (!control) {
             control = button('', () => {
               toggleInPlace(control, () => {
@@ -1442,20 +1524,42 @@
                 drawMessages(null, false);
               });
             }, 'work-toggle');
-            control.dataset.id = key; control.setAttribute('aria-expanded','false'); elements.set(key,control);
+            control.dataset.id = workKey; control.setAttribute('aria-expanded','false'); elements.set(workKey,control);
           }
-          const open = control.getAttribute('aria-expanded') === 'true';
+          workOpen = control.getAttribute('aria-expanded') === 'true';
+          if (!keep.has(workKey)) {
+            keep.add(workKey); positionAfter(control);
+            control.textContent = (workOpen ? '收起工作过程' : '查看工作过程') + `（${section.count}）`;
+          }
+        }
+        delete el.dataset.workSummary;
+        el.hidden = !workOpen || pendingToolReplies.has(m.id);
+        if (!workOpen) el.dataset.workSummary = workKey;
+        if (group) {
+          const {key} = group;
           if (!keep.has(key)) {
+            let control = elements.get(key);
+            if (!control) {
+              control = button('', () => toggleInPlace(control, () => {
+                if (!expandedToolGroups.delete(key)) {
+                  if (expandedToolGroups.size >= 100) expandedToolGroups.delete(expandedToolGroups.values().next().value);
+                  expandedToolGroups.add(key);
+                }
+                drawMessages(null, false);
+              }), 'work-toggle tool-group');
+              control.dataset.id = key;
+            }
+            control.hidden = !workOpen;
+            if (workOpen) delete control.dataset.workSummary;
+            else control.dataset.workSummary = workKey;
+            control.setAttribute('aria-expanded', String(expandedToolGroups.has(key)));
+            control.textContent = toolGroupLabel(group);
             keep.add(key); positionAfter(control);
-            control.textContent = (open ? '收起工作过程' : '查看工作过程') + `（${ids.size}）`;
           }
-          el.hidden = !open;
-        } else {
-          delete el.dataset.workSummary;
-          el.hidden = false;
+          if (workOpen) el.dataset.workSummary = key;
+          el.hidden = !workOpen || !expandedToolGroups.has(key);
         }
         positionAfter(el);
-        if (lastUser && m.id === lastUser.id) positionAfter(liveWork);
       }
       renderedMessages.set(m.id, el);
       if (m.kind === 'toolActivity') { renderWorkRow(m, el); return; }
@@ -1465,12 +1569,12 @@
       }
       el.classList.toggle('pro-consultation-message', m.kind === 'proConsultation');
       el.classList.toggle('agent-message', !!m.agent);
-      const agentPack = m.agent ? agentCharacter(m.agent) : null;
+      el.classList.toggle('assistant-prose', m.role === 'assistant' && !m.kind);
       const streaming = m.status === 'streaming' || (state.busy && m.id === allMessages[allMessages.length - 1]?.id);
       const text = m.text || '';
       const incremental = m.role !== 'user' && streaming && !!text.trim() && !m.images?.length && !m.imageStatus && !m.imageError && !m.kind;
       let view = streamViews.get(el);
-      const signature = JSON.stringify([m.agent, m.agentName, agentPack?.id, grouped, incremental ? null : m.text, m.kind, m.prompt, m.createdAt, m.status, m.source, m.backend, m.displayModel, m.error, m.images, m.attachments, m.imageStatus, m.imageError, L.language(), chatIconsEnabled, streaming, characterVisualKey()]);
+      const signature = JSON.stringify([m.agent, m.agentName, grouped, incremental ? null : m.text, m.kind, m.prompt, m.createdAt, m.status, m.source, m.backend, m.displayModel, m.error, m.images, m.attachments, m.imageStatus, m.imageError, L.language(), streaming]);
       if (el.dataset.signature !== signature || (incremental && !text.startsWith(view?.text ?? ''))) {
         el.dataset.signature = signature;
         streamViews.delete(el);
@@ -1506,7 +1610,7 @@
       if (incremental) { view.message = m; renderStreamProse(el, view, text); }
     });
     if (!dirtyIds) for (const [id, el] of elements) if (!keep.has(id)) el.remove();
-    if (following) scrollLatest();
+    if (following) followLatest();
     else { restoreReadingPosition(anchor); updateJumpLatest(); }
   }
   function efforts(previous = $('effort').value) {
@@ -1522,16 +1626,18 @@
   let modelListSignature = '';
   function renderModelList() {
     const provider = $('picker-provider'), profiles = (state.apiProviders || []).filter(profile => profile.hasKey);
+    const rebind = state.apiCanRebind === true;
     $('picker-provider-row').hidden = profiles.length === 0;
-    const choicesKey = JSON.stringify(profiles.map(profile => [profile.id, profile.name]));
+    const choicesKey = JSON.stringify([rebind, profiles.map(profile => [profile.id, profile.name])]);
     if (provider.dataset.choices !== choicesKey) {
       provider.dataset.choices = choicesKey;
-      provider.replaceChildren(new Option('选择 API', ''), ...profiles.map(profile => new Option(profile.name || profile.id, profile.id)));
+      provider.replaceChildren(new Option(rebind ? '重新绑定 API' : '选择 API', ''), ...profiles.map(profile => new Option(profile.name || profile.id, profile.id)));
       provider.options[0].disabled = true;
     }
-    provider.value = state.apiActive || '';
-    provider.disabled = !!state.threadId || !!state.busy || !!sending || providerSwitchPending;
-    provider.title = state.threadId ? '此聊天已绑定服务商。可在新聊天选择其他 API。' : '选择此聊天的 API';
+    provider.value = rebind ? '' : state.apiActive || '';
+    provider.disabled = (!!state.threadId && !rebind) || !!state.busy || !!sending || providerSwitchPending;
+    provider.title = rebind ? '为此聊天重新绑定 API' : state.threadId ? '此聊天已绑定服务商。可在新聊天选择其他 API。' : '选择此聊天的 API';
+    $('header-api').disabled = (!!state.threadId && !rebind) || providerSwitchPending;
     $('model-list').inert = providerSwitchPending;
     const signature = JSON.stringify([state.models, $('model').value, L.language()]);
     if (signature === modelListSignature) return;
@@ -1667,11 +1773,38 @@
       devtoolsChecking = false; renderDevtools();
     }
   }
-  async function selectProject(key) {
-    await call('projects.select', {key:key || ''}); sidebar(false);
+  function drawChatSelection() {
+    const status = $('chat-switch-status');
+    const switching = !!chatSelection;
+    status.parentElement.classList.toggle('chat-switching', switching);
+    for (const control of ['conversation', 'file-panel', 'header-project', 'header-api', 'files-toggle']) $(control).inert = switching;
+    status.hidden = !switching;
+    status.textContent = switching ? (L.language() === 'en' ? 'Opening conversation…' : '正在切换对话…') : '';
+    updateSend();
   }
-  async function newChat(workspaceKey) {
-    await call('chat.new', {workspaceKey:workspaceKey || ''}); sidebar(false);
+  async function navigateChat(action, args) {
+    const selection = {action, args};
+    chatSelection = selection;
+    sidebar(false);
+    chatTouch?.cancel();
+    drawChatSelection();
+    nextRequest();
+    try { await call(action, {...args, eventOnly:true}); }
+    catch (error) { if (chatSelection === selection) toast(error.message); }
+    finally {
+      if (chatSelection === selection) {
+        chatSelection = null;
+        drawChatSelection();
+        nextRequest();
+      }
+    }
+  }
+  const selectProject = key => navigateChat('projects.select', {key:key || ''});
+  const newChat = workspaceKey => navigateChat('chat.new', {workspaceKey:workspaceKey || ''});
+  function openChat(id) {
+    if (!chatSelection && id === state.threadId) { sidebar(false); nextRequest(); return; }
+    if (chatSelection?.action === 'chat.resume' && chatSelection.args.id === id) return;
+    return navigateChat('chat.resume', {id});
   }
   function removeProject(project) {
     const trigger = [...$('projects').querySelectorAll('[data-project-menu-key]')].find(item => item.dataset.projectMenuKey === project.key);
@@ -1709,44 +1842,129 @@
     return (state.sessions || []).some(session => session.workspaceKey === project.key && sessionWorkBusy(session))
       || (state.workspace?.key === project.key && (!!state.busy));
   }
-  let projectLinkReturnKey = '', projectLinkPending = false;
+  let projectLinkView = null, projectLinkPending = false;
+  const currentProjectLink = view => view === projectLinkView && $('project-link-dialog').open;
+  function syncProjectLinkControls() {
+    if (!$('project-link-dialog').open) return;
+    const busy = projectWorkBusy();
+    const list = $('project-link-choices');
+    list.setAttribute('aria-busy', String(projectLinkPending));
+    list.querySelectorAll('button').forEach(item => {
+      item.disabled = projectLinkPending || (busy && !item.hasAttribute('data-project-allowed-while-busy'));
+    });
+  }
   function projectChoices(title, description, choices, returnKey = '') {
-    projectLinkReturnKey = returnKey;
-    $('project-link-title').textContent = title;
+    const view = {returnKey};
+    projectLinkView = view;
+    const dialog = $('project-link-dialog'), heading = $('project-link-title');
+    heading.textContent = title;
+    heading.tabIndex = -1;
     $('project-link-description').textContent = description;
-    $('project-link-choices').replaceChildren(...choices.map(choice => {
-      const item = button('', async () => {
-        if (projectLinkPending || projectWorkBusy()) return;
-        projectLinkPending = true;
-        $('project-link-choices').querySelectorAll('button').forEach(b => { b.disabled = true; });
-        try { await choice.run(); }
-        finally { projectLinkPending = false; $('project-link-choices').querySelectorAll('button').forEach(b => { b.disabled = projectWorkBusy(); }); }
-      }, 'secondary-button project-choice');
-      item.append(node('span', choice.label));
+    if (description) dialog.setAttribute('aria-describedby', 'project-link-description');
+    else dialog.removeAttribute('aria-describedby');
+    const choiceButton = choice => {
+      const item = node('button', null, 'secondary-button project-choice');
+      item.type = 'button';
+      if (choice.whileBusy) item.dataset.projectAllowedWhileBusy = '';
+      if (choice.action) item.dataset.projectFolderAction = choice.action;
+      if (choice.folderPath !== undefined) item.dataset.workspaceFolder = choice.folderPath;
+      const label = node('span', choice.label);
+      if (choice.icon) {
+        const glyph = icon(choice.icon);
+        glyph.setAttribute('aria-hidden', 'true');
+        label.className = 'project-folder-label';
+        label.replaceChildren(glyph, node('span', choice.label));
+      }
+      item.append(label);
       if (choice.detail) item.append(node('small', choice.detail, 'muted'));
-      item.disabled = projectWorkBusy();
+      item.addEventListener('click', async () => {
+        if (item.disabled || !currentProjectLink(view) || projectLinkPending || (!choice.whileBusy && projectWorkBusy())) return;
+        projectLinkPending = true;
+        syncProjectLinkControls();
+        try { await choice.run(view); }
+        catch (error) { toast(error.message); }
+        finally {
+          projectLinkPending = false;
+          syncProjectLinkControls();
+          if (currentProjectLink(view) && !item.disabled && !document.querySelector('dialog[open]:not(#project-link-dialog)')) item.focus({preventScroll:true});
+        }
+      });
       return item;
+    };
+    $('project-link-choices').replaceChildren(...choices.map(choice => {
+      if (!choice.entries) return choiceButton(choice);
+      const group = node('div', null, 'model-list');
+      group.setAttribute('role', 'group'); group.setAttribute('aria-label', t('子文件夹'));
+      group.append(...choice.entries.map(choiceButton));
+      return group;
     }));
     show('project-link-dialog');
+    syncProjectLinkControls();
+    dialog.scrollTop = 0;
+    if (!document.querySelector('dialog[open]:not(#project-link-dialog)')) heading.focus({preventScroll:true});
+    return view;
+  }
+  function rootProjectChoices() {
+    return [
+      {label:t('프로젝트 가져오기'), action:'import', run:importProjects},
+      {label:t('Android 选择其他文件夹'), action:'pick', whileBusy:true, run:async view => {
+        const result = await pickFolder();
+        if (result && !result.cancelled && currentProjectLink(view)) close('project-link-dialog');
+      }},
+      {label:t('폴더 없이 프로젝트 만들기'), action:'metadata', whileBusy:true, run:createProjectFromChoice}
+    ];
+  }
+  async function createProjectFromChoice(view, path) {
+    const title = path === undefined ? t('프로젝트 만들기') : t('新建项目文件夹');
+    const name = (await input(title, t('프로젝트 이름을 입력하세요.')))?.trim();
+    if (!name || !currentProjectLink(view)) return;
+    if (path === undefined) await call('projects.create', {name});
+    else await call('projects.createWorkspaceFolder', {path, name});
+    if (currentProjectLink(view)) close('project-link-dialog');
+  }
+  async function loadProjectFolders(path, view, initial = false) {
+    const title = t('프로젝트 추가');
+    let listing;
+    try {
+      listing = await call('projects.workspaceFolders', {path});
+      if (typeof listing.path !== 'string' || !Array.isArray(listing.entries)) throw new Error(t('无法加载文件夹'));
+    } catch (error) {
+      if (!currentProjectLink(view)) return;
+      if (initial) projectChoices(title, t('无法加载文件夹'), [
+        {label:t('다시 시도'), action:'retry', whileBusy:true, run:current => loadProjectFolders('', current, true)},
+        ...rootProjectChoices()
+      ]);
+      toast(error.message);
+      return;
+    }
+    if (!currentProjectLink(view)) return;
+    const {rootName, path:currentPath, parent, entries} = listing;
+    const choices = [];
+    if (currentPath && typeof parent === 'string') {
+      choices.push({label:t('上一级'), icon:'up', action:'up', whileBusy:true, run:current => loadProjectFolders(parent, current)});
+      choices.push({label:t('关联当前文件夹'), action:'bind', whileBusy:true, run:async current => {
+        await call('projects.bindWorkspaceFolder', {path:currentPath});
+        if (currentProjectLink(current)) close('project-link-dialog');
+      }});
+    }
+    choices.push({label:t('新建项目文件夹'), icon:'plus', action:'create', whileBusy:true, run:current => createProjectFromChoice(current, currentPath)});
+    if (entries.length) choices.push({entries:entries.map(entry => ({
+      label:entry.name, icon:'folder', folderPath:entry.path, whileBusy:true, run:current => loadProjectFolders(entry.path, current)
+    }))});
+    if (!currentPath) choices.push(...rootProjectChoices());
+    projectChoices(title, [rootName, ...currentPath.split('/').filter(Boolean)].join(' / '), choices);
   }
   function addProject() {
-    if (projectLinkPending || projectWorkBusy()) return;
-    projectChoices(t('프로젝트 추가'), '', [
-      {label:t('로컬 폴더 연결'), run:async () => { close('project-link-dialog'); await pickFolder(); }},
-      {label:t('프로젝트 가져오기'), run:importProjects},
-      {label:t('폴더 없이 프로젝트 만들기'), run:async () => {
-        close('project-link-dialog');
-        const name = await input(t('프로젝트 만들기'), t('프로젝트 이름을 입력하세요.'));
-        if (name?.trim() && !projectWorkBusy()) await call('projects.create', {name:name.trim()});
-      }}
-    ]);
+    if (projectLinkPending || $('project-link-dialog').open) return;
+    const view = projectChoices(t('프로젝트 추가'), t('正在加载文件夹…'), []);
+    return loadProjectFolders('', view, true);
   }
-  async function importProjects() {
+  async function importProjects(view) {
     if (projectWorkBusy()) return;
     const picked = await call('ui.projects.importFile');
-    if (picked.cancelled) return;
-    if (projectWorkBusy()) return;
+    if (picked.cancelled || !currentProjectLink(view) || projectWorkBusy()) return;
     const preview = await call('projects.import.preview', {content:picked.content});
+    if (!currentProjectLink(view)) return;
     const summary = preview.result.summary;
     const names = summary.projects.map(p => p.name + (p.nameConflicts?.length ? '\n' + t('이름 충돌') + ': ' + p.nameConflicts.join(' / ') : '')).join('\n');
     projectChoices(t('프로젝트 가져오기'), t('새 변경 {count}개 · 병합 이력 {links}개', {count:preview.result.addedEvents, links:summary.linkCount}) + '\n\n' + names, [
@@ -1775,13 +1993,13 @@
     projectChoices(t('프로젝트 병합'), t('같은 프로젝트로 묶을 항목을 선택하세요. 폴더와 파일은 그대로 유지됩니다.'), candidates.map(target => ({
       label:target.name,
       detail:(target.bindings || []).map(b => b.uri || t('로컬 폴더 없음')).join('\n'),
-      run:async () => {
+      run:async view => {
         if (projectWorkBusy()) return;
         if (!confirm(t('“{source}”와 “{target}”을 같은 프로젝트로 묶을까요?\n\n대상 프로젝트의 이름과 기본 폴더를 사용합니다. 기존 대화는 각자의 폴더에 연결된 채 유지됩니다.', {source:project.name, target:target.name}))) return;
         const result = await call('projects.merge', {sourceKey:project.key, targetKey:target.key});
         if (result.projects) render({...state, projects:result.projects});
-        projectLinkReturnKey = target.key;
-        close('project-link-dialog');
+        view.returnKey = target.key;
+        if (currentProjectLink(view)) close('project-link-dialog');
         toast(t('프로젝트를 병합했습니다.'));
       }
     })), project.key);
@@ -1791,12 +2009,12 @@
     projectChoices(t('기본 로컬 폴더'), t('새 대화에서 사용할 폴더를 선택하세요. 기존 대화의 폴더는 바뀌지 않습니다.'), (project.bindings || []).map(binding => ({
       label:binding.name,
       detail:(binding.uri || t('로컬 폴더 없음')) + (binding.key === project.key ? '\n' + t('기본 폴더') : ''),
-      run:async () => {
+      run:async view => {
         if (projectWorkBusy()) return;
         const result = await call('projects.prefer', {key:binding.key});
         if (result.projects) render({...state, projects:result.projects});
-        projectLinkReturnKey = binding.key;
-        close('project-link-dialog');
+        view.returnKey = binding.key;
+        if (currentProjectLink(view)) close('project-link-dialog');
       }
     })), project.key);
   }
@@ -1996,10 +2214,19 @@
     actions.append(remove); card.append(actions);
     first.focus({preventScroll:true}); reveal();
   }
+  const sessionRows = new Map();
+  function setSessionActive(row, active) {
+    row.classList.toggle('active', active);
+    const button = row.firstElementChild;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
   function sessionRow(session) {
-    const active = session.id === state.threadId;
-    const row = node('div', null, 'session-row' + (active ? ' active' : ''));
-    const b = button('', async () => { await call('chat.resume', {id:session.id}); sidebar(false); nextRequest(); }, 'session' + (active ? ' active' : ''));
+    const row = node('div', null, 'session-row');
+    const b = node('button', '', 'session');
+    b.type = 'button';
+    b.addEventListener('click', () => openChat(session.id));
     b.append(node('span', session.title || t('제목 없는 대화'), 'session-title'));
     if (session.approvalPending) b.append(node('span', '!', 'session-approval-indicator'));
     else if (session.busy) b.append(node('span', '', 'session-progress-indicator'));
@@ -2010,13 +2237,14 @@
     menu.setAttribute('aria-label', (session.title || t('대화')) + t(' 관리'));
     menu.append(icon('more'));
     row.append(b, menu);
+    sessionRows.set(session.id, row);
+    setSessionActive(row, session.id === state.threadId);
     return row;
   }
   function renderProjects() {
     const target = $('projects'); target.replaceChildren();
     const projects = state.projects || [];
     const workBusy = projectWorkBusy();
-    $('add-project').disabled = workBusy;
     for (const project of projects) {
       const expandedKey = 'project-expanded:' + (project.projectId || project.key), expanded = localStorage.getItem(expandedKey) !== 'false';
       const section = node('section', null, 'project-tree' + (project.selected ? ' selected' : ''));
@@ -2056,7 +2284,10 @@
   function configuredApi() { return state.authState !== 'unconfigured' && !!(state.apiActive && (state.apiProviders || []).some(p => p.id === state.apiActive && p.hasKey)); }
   let navigationSignature = '';
   function render(next) {
-    const changedThread = state.threadId !== next.threadId;
+    const previousThread = state.threadId;
+    const changedThread = previousThread !== next.threadId;
+    if (changedThread) unreadAssistantOutput = false;
+    else if (!following && !unreadAssistantOutput && hasNewAssistantOutput(next)) unreadAssistantOutput = true;
     const changedTurn = !!state.turnId && state.turnId !== next.turnId;
     const anchor = changedThread ? null : readingPosition();
     const wasBusy = !!state.busy;
@@ -2065,15 +2296,14 @@
     setDraftScope(next); state = {...historySnapshot(next, changedThread), sessions:[...(next.sessions || [])].sort((left, right) => (right.lastMessageAt || 0) - (left.lastMessageAt || 0))};
     apiProvidersUi?.render(state);
     githubUi?.render(state);
-    state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {}; setCharacterState(state.characters);
+    state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {};
     const logged = configuredApi(), selected = state.workspace.selected;
     const name = selected ? state.workspace.name : t('일반 대화');
     $('project-label').textContent = workspaceFolderLabel(); $('header-project-label').textContent = name;
     $('header-title').textContent = (state.sessions || []).find(s => s.id === state.threadId)?.title || t('새 대화');
     const apiName = (state.apiProviders || []).find(profile => profile.id === state.apiActive)?.name;
-    $('header-api').textContent = 'API · ' + (apiName || (state.threadId ? '不可用' : '未选择')) + (apiName && !logged ? '（不可用）' : '');
+    $('header-api').textContent = state.apiCanRebind ? 'API · 重新绑定' : 'API · ' + (apiName || (state.threadId ? '不可用' : '未选择')) + (apiName && !logged ? '（不可用）' : '');
     $('header-api').title = $('header-api').textContent;
-    $('header-api').disabled = !!state.threadId || providerSwitchPending;
     $('welcome').hidden = state.messages.length > 0; $('onboarding').hidden = logged; $('suggestions').hidden = !logged;
     const generalPrompts = [t('작업을 계획하고 필요한 정보를 정리해줘.'),t('아이디어를 구조화하고 다음 단계를 제안해줘.'),t('무엇을 도와줄 수 있는지 알려줘.')];
     document.querySelectorAll('[data-prompt]').forEach((button, i) => { button.dataset.prompt = selected ? [t('이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘.'),t('이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘.'),t('이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘.')][i] : generalPrompts[i]; if (button.lastChild?.nodeType === Node.TEXT_NODE) button.lastChild.textContent = selected ? [t('폴더 살펴보기'),t('프로젝트 이해하기'),t('변경 사항 검토')][i] : [t('작업 계획하기'),t('아이디어 정리하기'),t('도움말 보기')][i]; });
@@ -2103,7 +2333,6 @@
     }
 
     drawTurnProgress();
-    drawStatusIcons();
     $('terminal-cwd').textContent = state.cwd || '';
     if (state.terminal) renderTerminal(state.terminal);
     $('storage-status').textContent = state.directWorkspace ? t('선택한 폴더에서 셸 명령을 실행합니다.') : t('폴더의 셸 접근은 기기 파일 권한이 필요합니다. 문서 제공자 폴더는 파일 도구로 접근합니다.');
@@ -2115,13 +2344,14 @@
     $('changes-turn-diff').textContent = state.turnDiff || t('이 대화에 기록된 작업 diff가 없습니다.');
     if (selectedChange) $('change-restore').disabled = restoringChange || !selectedChange.data.canRestore || !!state.busy || state.permissions === 'read-only';
     readChatFolders();
-    const navigationKey = JSON.stringify([folderScope, state.projects, state.sessions, state.workspace, state.threadId, !!state.busy, L.language()]);
+    const navigationKey = JSON.stringify([folderScope, state.projects, state.sessions, !state.projects.length && generalFolderAvailable(), projectWorkBusy(), L.language()]);
     if (navigationKey !== navigationSignature) {
       const scroller = $('sidebar').querySelector('.sidebar-scroll');
       let scrollTop = scroller.scrollTop;
       const focused = sessionCard?.card.contains(document.activeElement) ? document.activeElement : null;
+      sessionRows.clear();
       navigationSignature = navigationKey; renderProjects();
-      if ($('project-link-dialog')?.open) $('project-link-choices').querySelectorAll('button').forEach(button => { button.disabled = projectWorkBusy() || projectLinkPending; });
+      syncProjectLinkControls();
       $('sessions').replaceChildren();
       renderChatFolders();
       const projectWorkspaceKeys = new Set((state.projects || []).flatMap(projectKeys));
@@ -2130,14 +2360,12 @@
       if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
       if (sessionCard) {
         const current = (state.sessions || []).find(session => session.id === sessionCard.id);
-        const row = current && [...$('sidebar').querySelectorAll('.session-row')].find(row => row.dataset.sessionId === current.id);
+        const row = current && sessionRows.get(current.id);
         if (row) {
           const {card} = sessionCard;
           const menu = row.querySelector('.session-more');
           sessionCard.menu = menu;
           menu.setAttribute('aria-expanded', 'true'); menu.setAttribute('aria-controls', card.id);
-          const remove = card.querySelector('[data-session-delete]');
-          if (remove) remove.disabled = sessionEdits.has(current.id) || sessionWorkBusy(current);
           row.append(card);
           focused?.focus({preventScroll:true});
         } else {
@@ -2146,6 +2374,15 @@
         }
       }
       scroller.scrollTop = scrollTop;
+    } else if (changedThread) {
+      const previousRow = sessionRows.get(previousThread), currentRow = sessionRows.get(state.threadId);
+      if (previousRow) setSessionActive(previousRow, false);
+      if (currentRow) setSessionActive(currentRow, true);
+    }
+    if (sessionCard) {
+      const current = (state.sessions || []).find(session => session.id === sessionCard.id);
+      const remove = sessionCard.card.querySelector('[data-session-delete]');
+      if (current && remove) remove.disabled = sessionEdits.has(current.id) || sessionWorkBusy(current);
     }
     const key = JSON.stringify([state.apiActive || '', state.models]);
     if (key !== modelKey) {
@@ -2160,7 +2397,8 @@
     syncPermissionControls(state.permissions, anyBusy);
     syncApprovalControl(anyBusy);
     renderModelList();
-    if (changedThread) { following = true; $('event-log').replaceChildren(); if ($('live-work').parentElement === $('messages')) $('messages').after($('live-work')); $('messages').replaceChildren(); }
+    if (changedThread) { chatTouch?.cancel(); following = true; $('event-log').replaceChildren(); if ($('live-work').parentElement === $('messages')) $('messages').after($('live-work')); $('messages').replaceChildren(); }
+    updateHistoryControl();
     updateSend(); optionsSummary(); drawUpdates(updateState);
     drawMessages(null, false);
     agentUi?.render();
@@ -2215,7 +2453,19 @@
     try { const result = await input(title, description, value); requireFileContext(context); return result; }
     finally { if (fileInputContext === context) fileInputContext = null; }
   }
-  async function pickFolder(projectKey = '') { if (projectWorkBusy()) return; const result = await call('files.pick', projectKey ? {projectKey} : {}); if (!result.cancelled) { folder = ''; $('file-query').value = ''; if (!$('file-panel').hidden) await listFiles(); } }
+  async function pickFolder(projectKey = '') {
+    const busy = projectWorkBusy();
+    if (projectKey && busy) return;
+    const threadId = state.threadId, workspaceKey = state.workspace?.key || '';
+    const result = await call('files.pick', projectKey ? {projectKey} : {});
+    const onlyAdded = !projectKey && result.key && result.key !== workspaceKey
+      && threadId === state.threadId && workspaceKey === (state.workspace?.key || '');
+    if (!result.cancelled && !onlyAdded && !busy && !projectWorkBusy()) {
+      folder = ''; $('file-query').value = '';
+      if (!$('file-panel').hidden) await listFiles();
+    }
+    return result;
+  }
   async function listFiles(query = '') {
     const context = fileContext(), requestedFolder = folder, version = ++fileSeq;
     if (!workspaceFilesAvailable()) { $('file-list').replaceChildren(button(t('작업 폴더 선택'), pickFolder)); return; }
@@ -2240,12 +2490,18 @@
       if (version === fileReadSeq && sameFileContext(context)) previewImage(image);
       return;
     }
-    const result = await call('files.read', {path, workspaceKey:context.workspaceKey});
+    const result = await call('files.read', {path, workspaceKey:context.workspaceKey, preview:true});
     if (version !== fileReadSeq || !sameFileContext(context)) return;
+    if (result.openWithApp) return openFileWithApp(path, context, false);
     rememberFileDraft();
     const draft = fileDrafts.get(fileDraftKey(context, result.path || path));
     openedFile = {...result, context, ...(draft ? {content:draft.originalContent, sha256:draft.sha256} : {})};
     $('editor-title').textContent = openedFile.path; $('editor').value = draft ? draft.content : openedFile.content; show('editor-dialog');
+  }
+  function openFileWithApp(path, context, choose) {
+    requireFileContext(context);
+    fileReadSeq++;
+    return call('files.open', {path, workspaceKey:context.workspaceKey, choose});
   }
   function input(title, description, value = '') {
     if (inputResolve) inputResolve(null);
@@ -2271,7 +2527,8 @@
     $('file-actions').replaceChildren(
       action(t('이름 변경'), async () => { const name = await fileInput(context, t('이름 변경'), t('새 이름'), entry.name); if (name) await mutate('mobile_rename', {path:entry.path, name}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(C.parent(entry.path), name))); }),
       action(t('이동'), async () => { const destination = await fileInput(context, t('이동'), t('작업 폴더 기준 대상 폴더 경로 (루트는 빈칸)')); if (destination !== null) await mutate('mobile_move', {path:entry.path, destination}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(destination, C.basename(entry.path)))); }),
-      action(t('삭제'), () => mutate('mobile_delete', {path:entry.path}, context), 'secondary-button danger')
+      action(t('삭제'), () => mutate('mobile_delete', {path:entry.path}, context), 'secondary-button danger'),
+      ...(!entry.directory ? [action(t('다른 앱으로 열기'), () => openFileWithApp(entry.path, context, true))] : [])
     );
     show('file-actions-dialog');
   }
@@ -2570,14 +2827,14 @@
   function closeBackgroundRequest() {
     if (!displayedRequest) return;
     const req = requestQueue.get(displayedRequest), thread = requestThread(req);
-    if (thread && thread !== state.threadId) {
+    if (chatSelection || (thread && thread !== state.threadId)) {
       displayedRequest = null;
       if ($('request-dialog').open) close('request-dialog');
     }
   }
   function nextRequest() {
     closeBackgroundRequest();
-    if (displayedRequest || !requestQueue.size) return;
+    if (chatSelection || displayedRequest || !requestQueue.size) return;
     let entry;
     for (const candidate of requestQueue.entries()) {
       const thread = requestThread(candidate[1]);
@@ -2588,7 +2845,13 @@
     $('request-title').textContent = req.method.includes('requestUserInput') ? t('Codex 질문') : req.method.includes('requestApproval') ? t('작업 승인') : t('Codex 요청');
     $('request-reason').textContent = req.params.reason || req.params.message || req.method;
     $('request-detail').textContent = JSON.stringify(req.params, null, 2); $('request-fields').replaceChildren(); $('request-actions').replaceChildren();
-    const complete = async result => { result = await result; await call('rpc.respond', {key, result}); requestQueue.delete(key); displayedRequest = null; close('request-dialog'); nextRequest(); };
+    const complete = async result => {
+      result = await result;
+      await call('rpc.respond', {key, result});
+      requestQueue.delete(key);
+      if (displayedRequest === key) { displayedRequest = null; close('request-dialog'); }
+      nextRequest();
+    };
     const add = (text, result, cls) => $('request-actions').append(button(text, () => complete(typeof result === 'function' ? result() : result), cls));
     if (req.method === 'item/commandExecution/requestApproval' || req.method === 'item/fileChange/requestApproval') {
       add(t('거절'), {decision: 'decline'}); add(t('이번 대화에 허용'), {decision: 'acceptForSession'}); add(t('허용'), {decision: 'accept'}, 'primary-button');
@@ -2629,7 +2892,18 @@
     }
     else if (name === 'error') { if (!data.threadId || data.threadId === state.threadId) toast(data.message); }
     else if (name === 'notice') toast(data.message);
-    else if (name === 'message.delta') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(C.taskActivity(name, data), data); const entry = messageLookup.get(data.id); if (entry) entry.text += data.delta; else C.appendDelta(state.messages, data.id, data.delta); scheduleMessageDraw(data.id); }
+    else if (name === 'message.delta') {
+      if ((data.threadId && data.threadId !== state.threadId) || typeof data.delta !== 'string') return;
+      showTaskActivity(C.taskActivity(name, data), data);
+      let message = messageLookup.get(data.id);
+      if (message) message.text += data.delta;
+      else message = C.appendDelta(state.messages, data.id, data.delta);
+      if (!following && !unreadAssistantOutput && message.role === 'assistant' && !message.kind && data.delta.trim()) {
+        unreadAssistantOutput = true;
+        updateJumpLatest();
+      }
+      scheduleMessageDraw(data.id);
+    }
     else if (name === 'tool' || name === 'agent.event') { if (data.threadId && data.threadId !== state.threadId) return; showTaskActivity(C.taskActivity(name, data), data); }
     else if (name === 'files.changed' && (!data.threadId || data.threadId === state.threadId) && !$('file-panel').hidden) listFiles().catch(e => toast(e.message));
     else if (name === 'updates.changed') drawUpdates(data);
@@ -2652,7 +2926,7 @@
     else if (name === 'server.resolved') { requestQueue.delete(data.key); resolveTaskActivity(data.key); if (displayedRequest === data.key) { displayedRequest = null; close('request-dialog'); } nextRequest(); }
     else if (name === 'viewport') { document.body.classList.toggle('keyboard-open', !!data.keyboardVisible); viewportChanged(); }
     else if (name === 'theme') document.documentElement.dataset.theme = data.theme === 'dark' ? 'dark' : 'light';
-    else if (name === 'notification.open') { const resume = data.threadId ? call('chat.resume', {id:data.threadId}) : Promise.resolve(); resume.then(() => nextRequest()).catch(error => toast(error.message)); }
+    else if (name === 'notification.open') { if (data.threadId) openChat(data.threadId); else nextRequest(); }
     else if (name === 'widget.open') openProviderSettings();
     else if (name === 'notifications.changed') { window.refreshNotificationSettings?.(); }
     else if (name === 'back') window.mobileCodexBack();
@@ -2718,8 +2992,10 @@
   on('add-project', addProject);
   ['choose-folder', 'header-project'].forEach(id => on(id, () => pickFolder()));
   $('project-link-dialog').addEventListener('close', () => {
+    if ($('project-link-dialog').open) return;
+    const key = projectLinkView?.returnKey;
+    projectLinkView = null;
     if (document.querySelector('dialog[open]')) return;
-    const key = projectLinkReturnKey;
     const trigger = key ? [...document.querySelectorAll('[data-project-menu-key]')].find(b => b.dataset.projectMenuKey === key) : $('add-project');
     if (matchMedia('(max-width:760px)').matches && !document.body.classList.contains('sidebar-open')) sidebar(true);
     trigger?.focus({preventScroll:true});
@@ -2739,8 +3015,12 @@
   $('input-dialog').addEventListener('close', () => { if (inputResolve) { const r = inputResolve; inputResolve = null; r(null); } });
   on('input-value', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) $('input-confirm').click(); }, 'keydown');
   on('composer', async () => {
-    if (providerSwitchPending) return;
-    if (!configuredApi()) { openProviderSettings(); toast('请先配置 API 服务商。'); return; }
+    if (chatSelection || providerSwitchPending) return;
+    if (!configuredApi()) {
+      if (state.apiCanRebind) { $('header-api').click(); toast('请为此聊天重新绑定 API。'); }
+      else { openProviderSettings(); toast('请先配置 API 服务商。'); }
+      return;
+    }
     if (state.workspace?.selected && state.workspace.available === false) { toast(t('먼저 로컬 폴더를 연결해 주세요.')); return; }
     const value = $('prompt').value, text = value.trim();
     if ((!text && !draftContext.attachments.length) || sending || voiceStarting || voiceActive) return;
@@ -2754,7 +3034,7 @@
     closeComposerAddMenu(false);
     saveDraft(); updateSend(); scrollLatest();
     try {
-      await call(steer ? 'chat.steer' : 'chat.send', {text, expectedTurnId, expectedThreadId, expectedApiScope:state.apiScope, workspaceKey, model:$('model').value, effort:$('effort').value, chatIconsEnabled,
+      await call(steer ? 'chat.steer' : 'chat.send', {text, expectedTurnId, expectedThreadId, expectedApiScope:state.apiScope, workspaceKey, model:$('model').value, effort:$('effort').value,
 
         attachments:submitted.context.attachments.map(x => x.id), skills:submitted.context.skills, mentions:submitted.context.mentions});
       // Keep text typed during the request, or drafts from a different conversation.
@@ -2788,37 +3068,91 @@
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); $('composer').requestSubmit(); }
   });
   let autocompleteTimer; $('prompt').addEventListener('input', () => { saveDraft(); sizeComposer(); clearTimeout(autocompleteTimer); hideAutocomplete(); if (/[@$]$/.test($('prompt').value.slice(0, $('prompt').selectionStart))) queryAutocomplete(); else autocompleteTimer = setTimeout(queryAutocomplete, 120); });
-  $('prompt').addEventListener('focus', () => { if (following) frame(() => { if (following) scrollLatest(); }); });
+  $('prompt').addEventListener('focus', () => { if (following) frame(followLatest); });
   $('composer').addEventListener('click', e => { if (e.target === $('composer')) $('prompt').focus(); });
   $('prompt').addEventListener('click', () => queryAutocomplete());
-  $('chat-scroll').addEventListener('scroll', () => {
-    const area = $('chat-scroll'), upward = area.scrollTop < historyView.top;
-    historyView.top = area.scrollTop; following = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
-    updateJumpLatest();
-    if (upward && area.scrollTop <= 160) loadEarlierMessages();
+  const chatScroll = $('chat-scroll');
+  on('history-load', () => { pauseFollowing(); return loadEarlierMessages(true); });
+  function loadHistoryFromScroll() {
+    if (chatTouch?.requestedHistory) return;
+    if (chatTouch) chatTouch.requestedHistory = true;
+    loadEarlierMessages();
+  }
+  chatScroll.addEventListener('touchstart', event => {
+    if (event.touches.length !== 1) return;
+    chatTouch?.cancel();
+    const target = event.target;
+    const {identifier, clientY} = event.touches[0];
+    const gesture = {clientY, towardHistory:false, requestedHistory:false, cancel};
+    function move(touchEvent) {
+      if (touchEvent.touches.length !== 1 || touchEvent.touches[0].identifier !== identifier) return;
+      const currentY = touchEvent.touches[0].clientY, distance = currentY - gesture.clientY;
+      if (Math.abs(distance) <= 6) return;
+      gesture.clientY = currentY; gesture.towardHistory = distance > 0;
+      if (!gesture.towardHistory) return;
+      pauseFollowing();
+      if (chatScroll.scrollTop <= 0) loadHistoryFromScroll();
+    }
+    function cancel() {
+      target.removeEventListener('touchmove', move);
+      target.removeEventListener('touchend', end);
+      target.removeEventListener('touchcancel', end);
+      chatTouch = null;
+    }
+    function end(touchEvent) {
+      if (Array.from(touchEvent.touches).some(touch => touch.identifier === identifier)) return;
+      cancel(); followLatest();
+    }
+    chatTouch = gesture;
+    target.addEventListener('touchmove', move, {passive:true});
+    target.addEventListener('touchend', end, {passive:true});
+    target.addEventListener('touchcancel', end, {passive:true});
   }, {passive:true});
-  $('chat-scroll').addEventListener('wheel', e => { if (e.deltaY < 0 && $('chat-scroll').scrollTop <= 160) { following = false; loadEarlierMessages(); } }, {passive:true});
+  chatScroll.addEventListener('scroll', () => {
+    const top = chatScroll.scrollTop, previous = historyView.top;
+    historyView.top = top;
+    if (top !== previous) following = top > previous && !chatTouch?.towardHistory && chatScroll.scrollHeight - top - chatScroll.clientHeight <= 2;
+    updateJumpLatest();
+    if (top < previous && top <= 160) loadHistoryFromScroll();
+  }, {passive:true});
+  chatScroll.addEventListener('wheel', event => {
+    if (event.deltaY >= 0) return;
+    pauseFollowing();
+    if (chatScroll.scrollTop <= 160) loadEarlierMessages();
+  }, {passive:true});
   on('voice-input', () => { closeComposerAddMenu(false); return startVoiceInput(); });
   on('dictation-done', () => call('voice.stop'));
   on('dictation-cancel', () => call('voice.cancel'));
-  on('jump-latest', scrollLatest); on('composer-options', () => {
-    optionsSummary(); showModelPanel(false, false); show('model-picker');
+  function openModelPicker(showModels = false) {
+    optionsSummary(); showModelPanel(showModels, false); show('model-picker');
     $('composer-options').setAttribute('aria-expanded', 'true');
-    updateComposerExpansion(); sizeModelPicker(); $('model-picker-model').focus({preventScroll:true});
+    updateComposerExpansion(); sizeModelPicker();
+    (showModels && !$('picker-provider').disabled ? $('picker-provider') : $('model-picker-model')).focus({preventScroll:true});
     refreshPickerModels();
-  });
+  }
+  on('jump-latest', scrollLatest); on('composer-options', () => openModelPicker());
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
   on('header-api', () => {
     if (!(state.apiProviders || []).some(profile => profile.hasKey)) { openProviderSettings(); return; }
-    $('composer-options').click(); showModelPanel(true);
+    openModelPicker(true);
   });
   on('model-picker-back', () => showModelPanel(false));
   on('picker-provider', async () => {
     const id = $('picker-provider').value;
-    if (!id || id === state.apiActive || state.threadId || state.busy || sending || providerSwitchPending) return;
-    const expectedThreadId = state.threadId || '', workspaceKey = state.workspace?.key || '';
+    const rebind = state.apiCanRebind === true;
+    if (!id || (!rebind && (id === state.apiActive || state.threadId)) || state.busy || sending || providerSwitchPending) return;
+    const expectedThreadId = state.threadId || '', expectedApiScope = state.apiScope, workspaceKey = state.workspace?.key || '';
+    if (rebind) {
+      const name = (state.apiProviders || []).find(profile => profile.id === id)?.name || id;
+      if (!confirm(`将此聊天重新绑定到「${name}」？本地消息和项目会保留。新模型会从下一条消息开始建立上下文。`)) {
+        renderModelList(); return;
+      }
+    }
     providerSwitchPending = true; saveDraft(); renderModelList(); updateSend();
-    try { render(await call('chat.provider', {id, expectedThreadId, workspaceKey})); }
+    try {
+      render(await call(rebind ? 'chat.provider.rebind' : 'chat.provider', {id, expectedThreadId, expectedApiScope, workspaceKey}));
+      if (rebind) toast('已重新绑定 API。');
+    }
     finally { providerSwitchPending = false; renderModelList(); updateSend(); }
   }, 'change');
   on('model-picker-permissions', () => { close('model-picker'); show('options-dialog'); });
@@ -2849,7 +3183,7 @@
   }, {passive:true});
   $('image-stage').addEventListener('touchcancel', () => imageTouch = null, {passive:true});
   $('chat-scroll').addEventListener('click', event => {
-    const summary = event.target.closest('.task-activity-row > summary, #turn-summary > summary');
+    const summary = event.target.closest('.task-activity-row > summary');
     if (!summary || event.defaultPrevented) return;
     event.preventDefault();
     toggleInPlace(summary, () => { summary.parentElement.open = !summary.parentElement.open; });
@@ -2858,7 +3192,7 @@
     if (!state.liveTaskActivity) { show('activity-dialog'); return; }
     const latest = $('task-activities').lastElementChild;
     if (latest) {
-      toggleInPlace($('activity-details'), () => { latest.open = !latest.open; });
+      toggleInPlace(latest, () => { latest.open = !latest.open; });
     }
   });
   on('stop', () => call('chat.stop')); on('model', () => { efforts(); syncPermissionControls(state.permissions, !!state.busy); syncApprovalControl(!!state.busy); saveOptions(); updateSend(); renderModelList(); }, 'change'); on('effort', () => { optionsSummary(); saveOptions(); }, 'change');
@@ -2880,7 +3214,7 @@
   on('permissions', () => setPermissionMode($('permissions').value), 'change');
   on('approval-mode', () => setApprovalMode($('approval-mode').value), 'change');
   document.querySelectorAll('input[name="permission"]').forEach(r => r.addEventListener('change', () => setPermissionMode(r.value).catch(error => toast(error.message))));
-  ensureCharacterPackUi(); ensureNotificationSettings();
+  ensureNotificationSettings();
   apiProvidersUi?.init({call, refresh:()=>call('state').then(render), toast});
   githubUi?.init({call, refresh:()=>call('github.status').then(value => { state.github = value.github; githubUi?.render(value); }), toast});
   if ($('api-effort-choice')) on('api-effort-choice', () => {
@@ -3004,7 +3338,7 @@
   on('engine-stop', () => call('runtime.stop'));
   on('battery-settings', () => call('ui.batterySettings'));
   selectSettingsTab('general');
-  on('configure-api', openProviderSettings); on('settings', () => { ensureCharacterPackUi(); ensureNotificationSettings(); show('settings-dialog'); sidebar(false); if (!characterState.folderConfigured && characterState.packs.length <= 1) loadCharacterPacks(); });
+  on('configure-api', openProviderSettings); on('settings', () => { ensureNotificationSettings(); show('settings-dialog'); sidebar(false); });
   document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.addEventListener('click', () => {
     const selected = tab.dataset.settingsTab; selectSettingsTab(selected);
     if (selected === 'personal' && !instructionsLoaded) loadInstructions();
@@ -3016,6 +3350,8 @@
   $('update-repository').addEventListener('input', () => { updateSourceDirty = true; drawUpdates(updateState); });
   $('update-prereleases').addEventListener('change', () => { updateSourceDirty = true; drawUpdates(updateState); });
   ensureTextSizeSettings();
+  setupReplyIndentSetting();
+  setupInterfaceStyle();
   $('language').value = L.choice();
   on('language', async () => {
     const choice = $('language').value;
@@ -3026,12 +3362,11 @@
     sizeRow.querySelector('strong').textContent = t('글자 크기');
     sizeRow.querySelector('small').textContent = t('폰과 태블릿의 앱 화면에 적용됩니다.');
     $('text-size').setAttribute('aria-label', t('글자 크기')); $('text-size').options[0].textContent = t('기본 · 100%');
+    updateReplyIndentLabels();
     modelKey = ''; render(await call('state')); renderDraftContext(); drawDictation(dictationState); await loadUpdates();
     if (!$('file-panel').hidden) await listFiles();
     if ($('tools-dialog').open) await loadTools(false);
   }, 'change');
-  on('chat-icons-toggle', setChatIcons, 'change');
-  $('chat-icons-toggle').checked = chatIconsEnabled; drawStatusIcons(); syncChatIcons();
   on('instructions-reload', loadInstructions); on('instructions-save', saveInstructions);
   $('settings-dialog').addEventListener('cancel', event => { event.preventDefault(); dismiss('settings-dialog'); });
   on('storage-access', () => call('ui.storageAccess')); on('theme', setTheme, 'change');
@@ -3094,11 +3429,17 @@
   on('marketplace-add', async () => { const source = await input(t('마켓플레이스 추가'), t('Git URL 또는 기기의 로컬 경로')); if (source) { const result = await rpc('marketplace/add', {source}); toast(result.marketplaceName + t(' 추가 완료')); await loadTools(); } });
   on('skill-import', async () => { const r = await call('skills.import'); if (!r.cancelled) { toast(t('스킬 폴더를 가져왔습니다.')); await loadTools(); } });
   $('request-dialog').addEventListener('cancel', e => e.preventDefault());
-  $('theme').value = localStorage.getItem('theme') || 'system'; setTheme(); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', setTheme);
+  $('theme').value = appearance.choice;
+  syncNativeTheme();
+  appearance.systemTheme.addEventListener('change', setTheme);
   window.addEventListener('resize', viewportChanged);
   window.visualViewport?.addEventListener('resize', viewportChanged);
   window.addEventListener('pagehide', saveDraft);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) saveDraft(); else recoverVoiceInput(); });
+  document.addEventListener('visibilitychange', () => {
+    drawTurnProgress();
+    if (document.hidden) { chatTouch?.cancel(); saveDraft(); }
+    else { followLatest(); recoverVoiceInput(); }
+  });
   document.addEventListener('keydown', e => {
     if (dialogs.at(-1) === 'image-dialog' && !$('image-stage').classList.contains('zoomed') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); changeImage(e.key === 'ArrowRight' ? 1 : -1); }
     if (e.key === 'Escape' && !dialogs.length) window.mobileCodexBack();
@@ -3108,5 +3449,5 @@
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
   viewportChanged();
-  call('state').then(async initial => { render(initial); loadCharacterPacks(); recoverVoiceInput(); loadUpdates(); try { acceptPickedAttachments(await call('attachments.recover'), ''); } catch {} }).catch(e => toast(e.message));
+  call('state').then(async initial => { render(initial); recoverVoiceInput(); loadUpdates(); try { acceptPickedAttachments(await call('attachments.recover'), ''); } catch {} }).catch(e => toast(e.message));
 })();

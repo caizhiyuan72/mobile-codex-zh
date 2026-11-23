@@ -3,6 +3,7 @@ package dev.mobilecodex.app;
 import android.app.Application;
 import dev.mobilecodex.app.core.Texts;
 import org.json.JSONObject;
+import org.json.JSONException;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,7 +45,10 @@ public class EngineActivityEventTest {
         set("threadId", "current-local");
         engine.attach(new Engine.Ui() {
             @Override public void event(String name, JSONObject data) {
-                if ("agent.event".equals(name)) activity.add(data);
+                if ("agent.event".equals(name)) {
+                    try { activity.add(new JSONObject(data.toString())); }
+                    catch (JSONException error) { throw new AssertionError(error); }
+                }
             }
             @Override public void approval(Engine.Approval approval) { }
         });
@@ -81,28 +85,85 @@ public class EngineActivityEventTest {
         assertTrue(activity.isEmpty());
     }
 
+    @Test public void trackedOutputRecoversMissingStartAndStreamsLaterDeltasInPlace() throws Exception {
+        @SuppressWarnings("unchecked") Map<String,String> running = (Map<String,String>) get("runningTurns");
+        running.put("current-local", "turn");
+        TurnProgress progress = trackProgress("turn");
+        JSONObject active = (JSONObject) get("active");
+        active.getJSONArray("messages").put(obj("id", "intro", "role", "assistant", "text", "Checking"));
+        JSONObject delta = obj("threadId", "current-remote", "turnId", "turn", "itemId", "command", "delta", "first");
+        notifyEvent("item/commandExecution/outputDelta", delta);
+        assertTrue(progress.snapshot(0).getLong("lastVisibleAt") > 1);
+        progress.visibleActivity(2);
+        notifyEvent("item/commandExecution/outputDelta", delta.put("delta", " second"));
+        notifyEvent("item/completed", obj("threadId", "current-remote", "turnId", "turn", "item",
+            obj("id", "command", "type", "commandExecution", "command", "pwd")));
+        notifyEvent("item/commandExecution/outputDelta", delta.put("delta", " late"));
+        assertEquals(2L, progress.snapshot(0).getLong("lastVisibleAt"));
+        var messages = active.getJSONArray("messages");
+        assertEquals(2, messages.length());
+        assertEquals("intro", messages.getJSONObject(0).getString("id"));
+        assertEquals("pwd", messages.getJSONObject(1).getString("detail"));
+        assertEquals("first second", messages.getJSONObject(1).getString("output"));
+        assertEquals(1, activity.size());
+        assertEquals(" second", activity.get(0).getJSONObject("params").getString("delta"));
+    }
+
     @Test public void legacyImplicitCurrentThreadStillHasALocalScope() throws Exception {
         notifyEvent("item/commandExecution/outputDelta", obj("itemId", "command", "delta", "legacy output"));
         assertEquals(1, activity.size());
         assertEquals("current-local", activity.get(0).getString("threadId"));
     }
 
-    @Test public void reasoningOnlyExposesTheCurrentPublicSummary() throws Exception {
-        TurnProgress current = new TurnProgress("one", 1);
+    @Test public void reasoningOnlyExposesStatusAndTimestamps() throws Exception {
+        TurnProgress current = trackProgress("one");
         JSONObject part = obj("threadId", "current-remote", "turnId", "one", "itemId", "r", "summaryIndex", 0);
-        @SuppressWarnings("unchecked") Map<String,TurnProgress> tracked = (Map<String,TurnProgress>) get("turnProgress");
-        tracked.put("current-local", current);
-        notifyEvent("item/reasoning/summaryTextDelta", part.put("delta", "First "));
-        notifyEvent("item/reasoning/summaryTextDelta", part.put("delta", "step"));
+        notifyEvent("item/reasoning/summaryTextDelta", part.put("delta", "Public progress"));
+        JSONObject progress = current.snapshot(9);
         notifyEvent("item/reasoning/textDelta", part.put("delta", "private"));
         notifyEvent("item/reasoning/summaryTextDelta", part.put("turnId", "expired"));
         notifyEvent("item/reasoning/summaryTextDelta", part.put("turnId", "one").put("threadId", "background-remote"));
-        assertEquals("First step", current.snapshot(9).getString("summary"));
+        assertEquals("reasoning", progress.getString("phase"));
+        assertEquals(1L, progress.getLong("lastVisibleAt"));
+        assertEquals(progress.getLong("lastEventAt"), current.snapshot(9).getLong("lastEventAt"));
+        assertFalse(progress.has("summary"));
         notifyEvent("item/completed", obj("threadId", "current-remote", "turnId", "one", "item",
             obj("id", "r", "type", "reasoning", "summary", array("Public result"), "content", array("private"), "encrypted_content", "opaque")));
-        assertEquals("Public result", current.snapshot(9).getString("summary"));
+        assertFalse(current.snapshot(9).has("summary"));
+        assertEquals("waiting", current.snapshot(9).getString("phase"));
+        assertEquals(1L, current.snapshot(9).getLong("lastVisibleAt"));
         assertEquals(9L, current.snapshot(9).getLong("engineReplyAt"));
         assertTrue(activity.isEmpty());
+    }
+
+    @Test public void onlyVisibleReplyTextAndNewShellCommandsResetTheTimer() throws Exception {
+        @SuppressWarnings("unchecked") Map<String,String> running = (Map<String,String>) get("runningTurns");
+        running.put("current-local", "turn");
+        TurnProgress progress = trackProgress("turn");
+        JSONObject text = obj("threadId", "current-remote", "turnId", "turn", "itemId", "reply", "delta", " \n");
+        notifyEvent("item/agentMessage/delta", text);
+        assertEquals(1L, progress.snapshot(0).getLong("lastVisibleAt"));
+        notifyEvent("item/agentMessage/delta", text.put("delta", "Checking"));
+        assertTrue(progress.snapshot(0).getLong("lastVisibleAt") > 1);
+        progress.visibleActivity(2);
+        notifyEvent("item/completed", obj("threadId", "current-remote", "turnId", "turn", "item",
+            obj("id", "reply", "type", "agentMessage", "text", " \nChecking")));
+        assertEquals(2L, progress.snapshot(0).getLong("lastVisibleAt"));
+        JSONObject command = obj("threadId", "current-remote", "turnId", "turn", "item",
+            obj("id", "command", "type", "commandExecution", "command", "pwd"));
+        notifyEvent("item/started", command);
+        assertTrue(progress.snapshot(0).getLong("lastVisibleAt") > 2);
+        progress.visibleActivity(3);
+        notifyEvent("item/started", command);
+        notifyEvent("item/completed", command);
+        assertEquals(3L, progress.snapshot(0).getLong("lastVisibleAt"));
+    }
+
+    private TurnProgress trackProgress(String turn) throws Exception {
+        TurnProgress progress = new TurnProgress(turn, 1);
+        @SuppressWarnings("unchecked") Map<String,TurnProgress> tracked = (Map<String,TurnProgress>) get("turnProgress");
+        tracked.put("current-local", progress);
+        return progress;
     }
 
     private void notifyEvent(String name, JSONObject params) throws Exception {

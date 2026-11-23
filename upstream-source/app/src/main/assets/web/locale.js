@@ -5,7 +5,9 @@
   const catalog = {...english, ...chinese};
   let native = {};
   try { native = JSON.parse(window.Native?.locale?.() || '{}'); } catch {}
+  const languageChoices = ['system', 'en', 'zh-CN'];
   let choice = native.choice || localStorage.getItem('language') || 'system';
+  if (!languageChoices.includes(choice)) choice = 'zh-CN';
   if (native.brandName) document.documentElement.classList.add('portrait-brand');
   const deviceLanguage = native.systemLanguage || navigator.language || 'en';
   // The engine attribution names the upstream software, irrespective of the app brand.
@@ -20,10 +22,10 @@
   }
   const language = () => {
     const code = (choice === 'system' ? deviceLanguage : choice).toLowerCase();
-    return code.startsWith('ko') ? 'ko' : code.startsWith('en') ? 'en' : 'zh-CN';
+    return code.startsWith('en') ? 'en' : 'zh-CN';
   };
   const t = (key, args = {}) => {
-    const value = language() === 'ko' ? key : ((language() === 'zh-CN' ? chinese[key] : english[key]) ?? key);
+    const value = (language() === 'zh-CN' ? chinese[key] : english[key]) ?? key;
     // Apply the brand to packaged copy before interpolating user/project data.
     const label = key !== engineCredit && Object.hasOwn(catalog, key) ? brand(value) : value;
     return label.replace(/\{([a-zA-Z]+)\}/g, (token, name) => Object.hasOwn(args, name) ? String(args[name]) : token);
@@ -55,6 +57,6 @@
     }
   }
   window.MobileCodexLocale = {t, brand, language, choice:() => choice, apply,
-    set(value) { choice = ['system','en','ko','zh-CN'].includes(value) ? value : 'system'; localStorage.setItem('language', choice); apply(); }};
+    set(value) { choice = languageChoices.includes(value) ? value : 'zh-CN'; localStorage.setItem('language', choice); apply(); }};
   apply();
 })();

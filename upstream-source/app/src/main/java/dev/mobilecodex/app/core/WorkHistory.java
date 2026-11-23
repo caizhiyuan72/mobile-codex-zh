@@ -3,6 +3,7 @@ package dev.mobilecodex.app.core;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import java.util.Locale;
 import static dev.mobilecodex.app.core.Json.obj;
 
 public final class WorkHistory {
@@ -12,11 +13,20 @@ public final class WorkHistory {
     public static boolean record(JSONArray messages, JSONObject item, String turn, boolean completed, int position) throws JSONException {
         if (messages == null || item == null || turn.isBlank() || item.optString("id").isBlank()) return false;
         String kind = item.optString("type");
+        String activityKind;
         String detail, output;
+        boolean toolCall = "mcpToolCall".equals(kind) || "dynamicToolCall".equals(kind);
+        String subject = "";
         if ("commandExecution".equals(kind)) {
+            activityKind = "command";
             detail = item.optString("command");
             output = item.optString("aggregatedOutput", "");
+        } else if ("webSearch".equals(kind)) {
+            activityKind = "searching";
+            detail = item.optString("query");
+            output = "";
         } else if ("fileChange".equals(kind)) {
+            activityKind = "editing";
             StringBuilder paths = new StringBuilder(), diff = new StringBuilder();
             JSONArray changes = item.optJSONArray("changes");
             for (int index = 0; changes != null && index < changes.length() && paths.length() < OUTPUT_LIMIT; index++) {
@@ -27,11 +37,29 @@ public final class WorkHistory {
                 if (diff.length() < OUTPUT_LIMIT) diff.append(head(change.optString("diff"))).append('\n');
             }
             detail = paths.toString(); output = diff.toString().trim();
+        } else if (toolCall) {
+            String tool = item.optString("tool", item.optString("name"));
+            if (tool.startsWith("mobile_phone_")) return false;
+            String server = item.optString("server");
+            activityKind = toolActivityKind(tool);
+            JSONObject arguments = item.optJSONObject("arguments");
+            if (arguments != null) {
+                String field = switch (activityKind) {
+                    case "searching" -> "query";
+                    case "command" -> "command";
+                    default -> tool.startsWith("mobile_") ? "path" : "";
+                };
+                if (!field.isEmpty() && arguments.opt(field) instanceof String text) subject = text;
+            }
+            detail = server.isBlank() || tool.isBlank() ? server + tool : server + " · " + tool;
+            if (!subject.isBlank()) detail += " · " + head(subject);
+            output = completed ? toolOutput(item) : "";
         } else return false;
         String id = id(turn, item.optString("id"));
         String status = item.optString("status");
         boolean interrupted = "declined".equals(status) || "interrupted".equals(status);
-        boolean failed = "failed".equals(status) || item.optInt("exitCode", 0) != 0;
+        boolean failed = "failed".equals(status) || item.optInt("exitCode", 0) != 0
+            || (toolCall && (!item.optBoolean("success", true) || !item.isNull("error")));
         int existing = indexOf(messages, id);
         JSONObject row;
         if (existing >= 0) {
@@ -43,11 +71,35 @@ public final class WorkHistory {
             for (int index = messages.length(); index > insert; index--) messages.put(index, messages.get(index - 1));
             messages.put(insert, row);
         }
-        row.put("activityKind", "fileChange".equals(kind) ? "editing" : "command")
+        row.put("activityKind", activityKind)
             .put("completed", completed).put("failed", failed).put("interrupted", interrupted);
-        if (!detail.isBlank()) row.put("detail", head(detail));
+        if (!detail.isBlank() && (!toolCall || !subject.isBlank() || row.optString("detail").isBlank()))
+            row.put("detail", head(detail));
         if (!output.isBlank()) row.put("output", tail(output));
         return true;
+    }
+
+    private static String toolOutput(JSONObject item) {
+        Object result = item.opt("result");
+        if (result instanceof String text) return tail(text);
+        JSONArray parts = result instanceof JSONObject object ? object.optJSONArray("content") : item.optJSONArray("contentItems");
+        String output = "";
+        for (int index = 0; parts != null && index < parts.length(); index++) {
+            JSONObject part = parts.optJSONObject(index);
+            if (part == null || !("text".equals(part.optString("type")) || "inputText".equals(part.optString("type")))) continue;
+            if (part.opt("text") instanceof String text && !text.isBlank())
+                output = tail(output.isEmpty() ? text : output + '\n' + tail(text));
+        }
+        return output;
+    }
+
+    private static String toolActivityKind(String tool) {
+        String name = tool.toLowerCase(Locale.ROOT);
+        if (name.matches(".*(write|edit|patch|mutate|create|mkdir|rename|move|delete).*")) return "editing";
+        if (name.matches(".*(search|find).*")) return "searching";
+        if (name.matches(".*(read|list).*")) return "reading";
+        if (name.matches(".*(exec|command|terminal).*")) return "command";
+        return "tool";
     }
 
     public static void finish(JSONArray messages, String turn) throws JSONException {
@@ -58,11 +110,17 @@ public final class WorkHistory {
         }
     }
 
-    public static void append(JSONArray messages, String turn, String item, String delta) throws JSONException {
+    public static boolean append(JSONArray messages, String turn, String item, String delta) throws JSONException {
         int index = indexOf(messages, id(turn, item));
-        if (index < 0) return;
+        if (index < 0) return false;
         JSONObject row = messages.getJSONObject(index);
-        if (!row.optBoolean("completed")) row.put("output", tail(row.optString("output") + tail(delta)));
+        if (row.optBoolean("completed")) return false;
+        row.put("output", tail(row.optString("output") + tail(delta)));
+        return true;
+    }
+
+    public static boolean contains(JSONArray messages, String turn, String item) {
+        return indexOf(messages, id(turn, item)) >= 0;
     }
 
     public static void restore(JSONArray messages, JSONArray turns) throws JSONException {

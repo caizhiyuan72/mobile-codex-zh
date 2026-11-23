@@ -83,9 +83,9 @@ public class EngineFileContextTest {
         CompletableFuture<JSONObject> mutation = request("files.mutate", obj("workspaceKey", "", "operation", "mobile_write", "arguments",
             obj("path", source.getName(), "content", "pending edit", "expectedSha256", original.getString("sha256"))));
         Engine.Approval approval = shown.get(5, TimeUnit.SECONDS);
-        ExecutionException blocked = assertThrows(ExecutionException.class,
-            () -> handle("projects.create", obj("name", "Blocked during approval")));
-        assertTrue(blocked.getCause() instanceof java.io.IOException);
+        JSONObject added = handle("projects.create", obj("name", "Added during approval"));
+        assertFalse(added.getString("key").isEmpty());
+        assertFalse(approval.decision.isDone());
         assertTrue(handle("state", obj()).getJSONObject("workspace").getString("key").isEmpty());
         handle("projects.select", obj("key", anotherProject.getString("key")));
         assertEquals(anotherProject.getString("key"), handle("state", obj()).getJSONObject("workspace").getString("key"));

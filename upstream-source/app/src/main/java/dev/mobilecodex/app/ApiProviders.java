@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import dev.mobilecodex.app.core.ApiModelDiscovery;
 import dev.mobilecodex.app.core.ApiProviderPolicy;
 import dev.mobilecodex.app.core.Utf8Files;
 import org.json.JSONArray;
@@ -12,9 +13,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
-import javax.net.ssl.HttpsURLConnection;
 import java.io.*;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -115,7 +114,7 @@ final class ApiProviders {
         String name = args.optString("name").trim();
         if (name.isEmpty() || name.length() > 60 || name.chars().anyMatch(Character::isISOControl)) throw new IOException("服务商名称应为 1 至 60 个字符。");
         String protocol = ApiProviderPolicy.protocol(args.optString("protocol", previous == null ? "responses" : previous.optString("protocol", "responses")));
-        String baseUrl = ApiProviderPolicy.baseUrl(args.optString("baseUrl"));
+        String baseUrl = enteredBaseUrl(args.optString("baseUrl"), previous);
         if (previous != null && !baseUrl.equals(previous.optString("baseUrl")) && args.optString("apiKey").isBlank())
             throw new IOException("修改地址后，请重新填写该地址的 API Key。");
         JSONArray models = ApiProviderPolicy.models(args.opt("models"));
@@ -186,43 +185,23 @@ final class ApiProviders {
 
     JSONObject discover(JSONObject args) throws IOException {
         ApiProviderPolicy.protocol(args.optString("protocol"));
-        String baseUrl = ApiProviderPolicy.baseUrl(args.optString("baseUrl")), apiKey = args.optString("apiKey");
-        if (apiKey.isBlank()) {
-            synchronized (this) {
-                JSONObject saved = require(args.optString("id"));
-                if (!baseUrl.equals(saved.optString("baseUrl"))) throw new IOException("修改地址后，请填写该地址的 API Key 再扫描模型。");
+        String apiKey = args.optString("apiKey"), baseUrl;
+        synchronized (this) {
+            JSONObject saved = apiKey.isBlank() ? require(args.optString("id")) : profile(args.optString("id"));
+            baseUrl = enteredBaseUrl(args.optString("baseUrl"), saved);
+            if (apiKey.isBlank()) {
+                if (!baseUrl.equals(saved.optString("baseUrl")))
+                    throw new IOException("修改地址后，请填写该地址的 API Key 再扫描模型。");
                 apiKey = key(saved.optString("id"));
             }
         }
-        apiKey = ApiProviderPolicy.apiKey(apiKey);
-        HttpsURLConnection connection = null;
-        try {
-            connection = (HttpsURLConnection) new URL(baseUrl + "/models").openConnection();
-            connection.setInstanceFollowRedirects(false);
-            connection.setConnectTimeout(12000); connection.setReadTimeout(12000);
-            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
-            connection.setRequestProperty("Accept", "application/json");
-            int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) throw new IOException("读取模型列表失败（HTTP " + status + "），请检查地址、密钥或手动填写模型。");
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            try (InputStream input = connection.getInputStream()) {
-                byte[] block = new byte[8192]; int length;
-                while ((length = input.read(block)) != -1) {
-                    if (buffer.size() + length > 2 * 1024 * 1024) throw new IOException("模型列表响应过大，请手动填写模型 ID。");
-                    buffer.write(block, 0, length);
-                }
-            }
-            JSONObject response = new JSONObject(buffer.toString(StandardCharsets.UTF_8.name()));
-            JSONArray data = response.optJSONArray("data"), result = new JSONArray(); Set<String> seen = new LinkedHashSet<>();
-            if (data == null) throw new IOException("模型列表格式无效，请手动填写模型 ID。");
-            for (int i = 0; i < data.length() && seen.size() < 2000; i++) {
-                JSONObject model = data.optJSONObject(i); String id = model == null ? "" : model.optString("id");
-                if (!id.isBlank() && id.length() <= 200 && id.chars().noneMatch(Character::isISOControl) && seen.add(id)) result.put(id);
-            }
-            return obj("models", result, "verified", false);
-        } catch (IOException error) { throw error; }
-        catch (Exception error) { throw new IOException("读取模型列表失败，请检查 Responses API 地址或手动填写模型 ID。"); }
-        finally { if (connection != null) connection.disconnect(); }
+        return ApiModelDiscovery.discover(baseUrl, ApiProviderPolicy.apiKey(apiKey));
+    }
+
+    private static String enteredBaseUrl(String value, JSONObject saved) throws IOException {
+        String entered = value.trim();
+        if (saved != null && entered.equals(saved.optString("baseUrl"))) return ApiProviderPolicy.baseUrl(entered);
+        return ApiProviderPolicy.providerUrl(entered);
     }
 
     private JSONObject profile(String id) {
