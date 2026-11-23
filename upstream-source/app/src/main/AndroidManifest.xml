@@ -3,16 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
@@ -25,7 +22,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="false"
-        android:label="Mobile Codex"
+        android:label="Codex CN"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
@@ -34,11 +31,13 @@
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
-        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.proattachments"
+        <provider android:name=".WorkspaceFileProvider" android:authorities="${applicationId}.workspace-files"
             android:exported="false" android:grantUriPermissions="true">
-            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/pro_attachment_paths" />
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/workspace_paths" />
         </provider>
+        <activity android:name=".DocumentPreviewActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true"
+            android:theme="@style/MainActivityTheme"
             android:launchMode="singleTop"
             android:enableOnBackInvokedCallback="true" tools:targetApi="33"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
@@ -49,19 +48,6 @@
             </intent-filter>
         </activity>
         <receiver android:name=".CodexNotificationReceiver" android:exported="false" />
-        <receiver android:name=".UsageWidgetProvider$Codex" android:exported="false" android:label="@string/codex_usage_widget">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/codex_usage_widget" />
-        </receiver>
-        <receiver android:name=".UsageWidgetProvider$Claude" android:exported="false" android:label="@string/claude_usage_widget">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/claude_usage_widget" />
-        </receiver>
-        <receiver android:name=".UsageWidgetProvider$Gemini" android:exported="false" android:label="@string/gemini_usage_widget">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/gemini_usage_widget" />
-        </receiver>
-        <service android:name=".UsageWidgetJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <activity android:name=".VoiceInputActivity" android:exported="false"
             android:excludeFromRecents="true" android:taskAffinity="" android:enableOnBackInvokedCallback="true" tools:targetApi="33" android:theme="@android:style/Theme.Material.Light.Dialog.NoActionBar" />
         <service android:name=".PhoneUseService" android:exported="true"
@@ -72,9 +58,7 @@
         <service android:name=".EngineService" android:exported="false"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-initiated on-device AI file assistant, command execution, optional Linux installation and interactive account sign-in" />
+                android:value="User-initiated API coding assistant, project file operations, command execution and optional development environment installation" />
         </service>
-        <service android:name=".LiveAudioService" android:exported="false"
-            android:foregroundServiceType="microphone|mediaPlayback" />
     </application>
 </manifest>

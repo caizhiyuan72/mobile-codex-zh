@@ -55,7 +55,7 @@ final class AppTextSize {
             SharedPreferences.Editor restore = preferences.edit();
             if (hadPrevious) restore.putInt(KEY, previous); else restore.remove(KEY);
             restore.commit();
-            throw new IOException(t("글자 크기를 저장하지 못했습니다."));
+            throw new IOException(t("无法保存文字大小设置。"));
         }
     }
 }

@@ -70,11 +70,11 @@ public final class LinuxRuntime implements AutoCloseable {
 
     /** Starts a fresh staged installation. This method is intentionally the only download entrypoint. */
     public synchronized void install(File codexHome, File aliases) {
-        if (busy) throw new IllegalStateException(t("Linux 설치가 이미 진행 중입니다."));
-        if (!supported()) throw new IllegalStateException(t("이 기기에서는 Linux 런타임을 지원하지 않습니다."));
+        if (busy) throw new IllegalStateException(t("Linux 安装正在进行。"));
+        if (!supported()) throw new IllegalStateException(t("此设备不支持 Linux 运行环境。"));
         if (installed()) { state = "ready"; changed(); return; }
-        if (hasFiles()) throw new IllegalStateException(t("이전 Linux 설치 파일이 완전하지 않습니다. 삭제한 뒤 다시 설치해 주세요."));
-        if (availableBytes() < requiredFreeBytes()) throw new IllegalStateException(t("Linux 런타임 설치에 필요한 저장 공간이 부족합니다."));
+        if (hasFiles()) throw new IllegalStateException(t("上次 Linux 安装不完整，请移除后重新安装。"));
+        if (availableBytes() < requiredFreeBytes()) throw new IllegalStateException(t("剩余空间不足，无法安装 Linux 运行环境。"));
         busy = true; cancelled.set(false); error = ""; downloaded = 0; total = manifest.optLong("compressedBytes"); state = "downloading";
         changed();
         worker.execute(() -> installWorker(codexHome, aliases));
@@ -94,8 +94,8 @@ public final class LinuxRuntime implements AutoCloseable {
     }
 
     public synchronized void setEnabled(boolean value) {
-        if (busy) throw new IllegalStateException(t("Linux 설치가 끝난 뒤에 변경해 주세요."));
-        if (value && !installed()) throw new IllegalStateException(t("먼저 Linux 런타임을 설치해 주세요."));
+        if (busy) throw new IllegalStateException(t("请等待 Linux 安装完成后再更改此设置。"));
+        if (value && !installed()) throw new IllegalStateException(t("请先安装 Linux 运行环境。"));
         boolean previous = enabled;
         enabled = value;
         try { persistWrapperState(); }
@@ -107,7 +107,7 @@ public final class LinuxRuntime implements AutoCloseable {
 
     /** Explicit UI removal only. It removes the isolated rootfs, never a workspace or Codex home. */
     public synchronized void remove() {
-        if (busy) throw new IllegalStateException(t("Linux 설치가 진행 중일 때는 삭제할 수 없습니다."));
+        if (busy) throw new IllegalStateException(t("安装期间不能移除 Linux。"));
         try {
             deleteTree(rootfs.toPath()); cleanupStaging();
             enabled = false; state = "not_installed"; error = ""; downloaded = total = 0;
@@ -120,12 +120,12 @@ public final class LinuxRuntime implements AutoCloseable {
     /** Creates the host process that invokes PRoot; it never falls back to host tools. */
     public ProcessBuilder command(String command, File cwd, File codexHome, File aliases) {
         synchronized (this) {
-            if (!installed() || !enabled) throw new IllegalStateException(t("Linux 런타임이 설치 또는 활성화되지 않았습니다."));
+            if (!installed() || !enabled) throw new IllegalStateException(t("Linux 运行环境未安装或未启用。"));
         }
         try {
             copyRuntimeAssets();
             File selected = cwd == null ? null : cwd.getCanonicalFile();
-            if (selected == null || !selected.isDirectory()) throw new IOException(t("선택한 작업 폴더를 찾을 수 없습니다."));
+            if (selected == null || !selected.isDirectory()) throw new IOException(t("找不到所选工作文件夹。"));
             File proot = nativeFile("libproot.so"), loader = nativeFile("libproot_loader.so");
             File python = new File(devTools.prepare(), "bin/python3");
             List<String> argv = new ArrayList<>(List.of(python.getAbsolutePath(), script.getAbsolutePath(), "run",

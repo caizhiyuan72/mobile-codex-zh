@@ -225,7 +225,7 @@ def run_terminal(argv, env, output, json_input=True, columns=80, input_result=No
                             continue
                         pending_input += data
                         if len(pending_input) > 131072:
-                            raise ValueError('입력이 너무 깁니다.')
+                            raise ValueError('输入过长。')
                         while b'\n' in pending_input:
                             line, pending_input = pending_input.split(b'\n', 1)
                             request = json.loads(line)

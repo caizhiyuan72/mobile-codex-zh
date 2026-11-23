@@ -22,6 +22,14 @@ public class UpdateCatalogTest {
         JSONObject bad=release("9.0.0",false);bad.getJSONArray("assets").getJSONObject(0).put("digest","missing");releases.put(bad);
         assertEquals("0.1.12-alpha",UpdateCatalog.latest(releases,"owner/repo",true).getString("versionName"));
     }
+    @Test public void chineseForkRevisionsUpgradeWithoutEnablingPrereleases()throws Exception{
+        assertTrue(UpdateCatalog.compare("0.3.9-cn.6","0.3.9")>0);
+        assertTrue(UpdateCatalog.compare("0.3.9-cn.10","0.3.9-cn.6")>0);
+        assertTrue(UpdateCatalog.compare("0.3.10-cn.1","0.3.9-cn.10")>0);
+        JSONArray releases=array(release("0.3.9-cn.5",false),release("0.3.9-cn.6",false),release("0.3.10-beta.1",true));
+        assertEquals("0.3.9-cn.6",UpdateCatalog.latest(releases,"owner/repo",false).getString("versionName"));
+        assertThrows(IOException.class,()->UpdateCatalog.compare("0.3.9-cn","0.3.9"));
+    }
     @Test public void rejectsWrongRepositoryUrlsDraftsAndMalformedSources()throws Exception{
         JSONObject bad=release("9.0.0",false);bad.getJSONArray("assets").getJSONObject(0).put("browser_download_url","https://github.com/other/repo/releases/download/v9.0.0/mobile-codex-9.0.0-arm64.apk");
         assertNull(UpdateCatalog.latest(array(bad,release("8.0.0",false).put("draft",true)),"owner/repo",true));

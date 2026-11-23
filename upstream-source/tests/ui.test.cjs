@@ -7,9 +7,22 @@ const root = 'app/src/main/assets/web/';
 const opened = [];
 afterEach(() => { for (const dom of opened.splice(0)) dom.window.close(); });
 const tick = () => new Promise(r => setTimeout(r, 10));
+async function answerConfirmation(document, accept, message) {
+  await Promise.resolve();
+  const dialog = document.getElementById('confirm-dialog');
+  assert.equal(dialog.open, true);
+  const copy = document.getElementById('confirm-message').textContent;
+  assert.ok(copy.trim());
+  if (message) assert.match(copy, message);
+  assert.equal(document.activeElement.id, 'confirm-cancel');
+  document.getElementById(accept ? 'confirm-accept' : 'confirm-cancel').click();
+  await tick();
+  assert.equal(dialog.open, false);
+}
 const fastModel = {id:'fast-model',model:'fast-model',displayName:'Fast-capable model',isDefault:true,serviceTiers:[{id:'priority',name:'Fast'}]};
 const historyMessages = (from, to) => Array.from({length:to-from+1}, (_,i)=>({id:'m'+(from+i),role:(from+i)%2?'user':'assistant',text:'Message '+(from+i)}));
 const historyMeta = (before, total=100) => ({beforeId:before?'m'+before:'',hasMore:!!before,total});
+const workspaceRoot = {rootName:'大肥龙',path:'',parent:null,entries:[]};
 const resetCredit = (id, expiresAt) => ({id, expiresAt, grantedAt:1900000000, status:'available', resetType:'codexRateLimits'});
 function setup(overrides = {}, options = {}) {
   const dom = new JSDOM(fs.readFileSync(root+'index.html','utf8'), {url: 'https://appassets.androidplatform.net/index.html', runScripts: 'outside-only'}); opened.push(dom);
@@ -19,38 +32,71 @@ function setup(overrides = {}, options = {}) {
   if (options.drafts) for (const [key,value] of Object.entries(options.drafts)) w.localStorage.setItem(key,value);
   w.HTMLDialogElement.prototype.showModal = function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close = function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
-  w.confirm = options.confirm || (() => true);
-  const snapshot = {ready:true,busy:false,permissions:'workspace-write',models:[{id:'fixture-model',displayName:'Fixture model',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high'}],messages:[],sessions:[],account:{type:'chatgpt',email:'me@example.test'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'};
+  w.confirm = () => { throw new Error('Unexpected native confirmation'); };
+  const snapshot = {ready:true,busy:false,permissions:'workspace-write',models:[{id:'fixture-model',displayName:'Fixture model',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high'}],messages:[],sessions:[],account:{},apiActive:'fixture-api',apiProviders:[{id:'fixture-api',hasKey:true}],workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'};
   w.Native = {postMessage(raw){ const m=JSON.parse(raw); calls.push(m); queueMicrotask(async () => {
     if(m.action==='rpc.respond') responses.push(m.args);
     try {
       if (m.action === 'rpc' && m.args.method?.startsWith('sync.')) throw new Error('Sync belongs to the native bridge, not Codex RPC');
-      const result=m.action.startsWith('sync.') && overrides.sync ? await overrides.sync(m) : overrides[m.action] ? await overrides[m.action](m) : m.action==='state' ? snapshot : m.action==='rpc' ? {data:[],marketplaces:[]} : {};
+      const result=m.action.startsWith('sync.') && overrides.sync ? await overrides.sync(m) : overrides[m.action] ? await overrides[m.action](m) : m.action==='state' ? snapshot : m.action==='projects.workspaceFolders' ? workspaceRoot : m.action==='rpc' ? {data:[],marketplaces:[]} : {};
       w.mobileCodexEvent('response',{id:m.id,result});
     } catch(error) { w.mobileCodexEvent('response',{id:m.id,error:error.message}); }
   });}};
-  w.Native.locale = () => JSON.stringify({choice:options.language || 'ko',systemLanguage:options.systemLanguage || 'ko'});
+  w.Native.locale = () => JSON.stringify({brandName:options.brandName,choice:options.language || 'ko',systemLanguage:options.systemLanguage || 'ko'});
   w.Native.textSize = () => JSON.stringify({percent:options.textSize ?? 100});
-  w.eval(fs.readFileSync(root+'translations.js','utf8')); w.eval(fs.readFileSync(root+'locale.js','utf8'));
-  w.eval(fs.readFileSync(root+'ui-core.js','utf8')); w.eval(fs.readFileSync(root+'app.js','utf8'));
+  w.eval(fs.readFileSync(root+'translations.js','utf8')); w.eval(fs.readFileSync(root+'translations-zh.js','utf8')); w.eval(fs.readFileSync(root+'locale.js','utf8'));
+  for (const file of ['appearance.js','ui-core.js','reasoning-policy.js','app.js']) w.eval(fs.readFileSync(root+file,'utf8'));
   return {w,calls,responses,snapshot,frames};
 }
-test('a Codex widget opens usage settings and keeps the existing chat draft',async()=>{
- const {w,calls}=setup();await tick();
- w.document.getElementById('prompt').value='unsent draft';calls.length=0;
- w.mobileCodexEvent('widget.open',{provider:'codex'});await tick();
- assert.equal(w.document.getElementById('settings-dialog').open,true);
- assert.equal(w.document.getElementById('prompt').value,'unsent draft');
- assert.ok(calls.some(c=>c.action==='rpc'&&c.args.method==='account/rateLimits/read'));
- assert.equal(calls.some(c=>c.action==='chat.resume'||c.action==='chat.new'),false);
-});
-test('an invited-provider widget opens account settings without fetching Codex quota',async()=>{
- for(const provider of ['claude','agy']) {
-  const {w,calls}=setup();await tick();calls.length=0;
-  w.mobileCodexEvent('widget.open',{provider});await tick();
-  assert.equal(w.document.getElementById('settings-dialog').open,true);
-  assert.equal(calls.some(c=>c.action==='auth.refresh'||c.action==='rpc'),false);
- }
+test('liquid glass is opt-in and switching styles preserves the conversation and draft', async () => {
+ const {w, calls, snapshot} = setup({}, {drafts:{chatPreview:'true'}}); await tick();
+ const doc = w.document, rootElement = doc.documentElement;
+ const classic = doc.getElementById('appearance-classic');
+ const glass = doc.getElementById('appearance-glass');
+ w.mobileCodexEvent('state', {...snapshot, messages:[{id:'keep', role:'assistant', text:'Keep this reply'}]});
+ const message = doc.querySelector('[data-id="keep"]');
+ const prompt = doc.getElementById('prompt');
+ prompt.value = 'Unsent draft';
+ prompt.dispatchEvent(new w.Event('input'));
+
+ doc.getElementById('settings').click();
+ await tick();
+ assert.ok(glass.closest('#settings-dialog .settings-primary'));
+ const advanced = doc.getElementById('settings-advanced');
+ const segment = glass.closest('[role="radiogroup"]');
+ assert.equal(advanced.open, false);
+ assert.equal(segment.dataset.segment, '0');
+ assert.equal(doc.getElementById('chat-preview'), null);
+ assert.equal(classic.checked, true);
+ assert.equal(glass.checked, false);
+ assert.equal(rootElement.hasAttribute('data-liquid-glass'), false);
+ assert.equal(w.localStorage.getItem('interfaceStyle'), null);
+ assert.deepEqual(calls.find(call => call.action === 'ui.theme').args, {theme:'system', liquidGlass:false});
+
+ const callsBeforeSwitch = calls.length;
+ glass.click();
+ assert.equal(segment.dataset.segment, '1');
+ assert.equal(rootElement.hasAttribute('data-liquid-glass'), true);
+ assert.equal(w.localStorage.getItem('interfaceStyle'), 'glass');
+ const reopened = setup({}, {drafts:{interfaceStyle:w.localStorage.getItem('interfaceStyle')}});
+ assert.equal(reopened.w.document.getElementById('appearance-glass').checked, true);
+ assert.equal(reopened.w.document.documentElement.hasAttribute('data-liquid-glass'), true);
+ assert.deepEqual(reopened.calls.find(call => call.action === 'ui.theme').args, {theme:'system', liquidGlass:true});
+
+ classic.click();
+ assert.equal(segment.dataset.segment, '0');
+ assert.equal(rootElement.hasAttribute('data-liquid-glass'), false);
+ assert.equal(w.localStorage.getItem('interfaceStyle'), 'classic');
+ const restored = setup({}, {drafts:{interfaceStyle:w.localStorage.getItem('interfaceStyle')}});
+ assert.equal(restored.w.document.getElementById('appearance-classic').checked, true);
+ assert.equal(restored.w.document.documentElement.hasAttribute('data-liquid-glass'), false);
+ assert.equal(doc.querySelector('[data-id="keep"]'), message);
+ assert.equal(doc.getElementById('prompt'), prompt);
+ assert.equal(prompt.value, 'Unsent draft');
+ assert.deepEqual(calls.slice(callsBeforeSwitch).map(({action, args}) => ({action, args})), [
+   {action:'ui.theme', args:{theme:'system', liquidGlass:true}},
+   {action:'ui.theme', args:{theme:'system', liquidGlass:false}},
+ ]);
 });
 test('text size restores natively, saves explicitly and preserves the conversation and draft',async()=>{
  let saved=130;
@@ -65,7 +111,7 @@ test('text size restores natively, saves explicitly and preserves the conversati
   select.value=String(size);select.dispatchEvent(new w.Event('change'));await tick();
   assert.equal(saved,size);assert.equal(d.documentElement.dataset.textSize,String(size));assert.equal(select.disabled,false);
  }
- assert.equal(d.getElementById('prompt').value,'unsent draft');assert.equal(d.querySelector('[data-id="keep"]').textContent,'keep me');
+ assert.equal(d.getElementById('prompt').value,'unsent draft');assert.equal(d.querySelector('[data-id="keep"] .user-message-text').textContent,'keep me');
  assert.equal(calls.some(c=>c.action==='chat.send'||c.action==='config.save'||c.action==='projects.select'),false);
  const reopened=setup({}, {textSize:saved});await tick();assert.equal(reopened.w.document.getElementById('text-size').value,String(saved));
 });
@@ -88,37 +134,31 @@ test('text size rolls back failed saves and rejects an invalid native value',asy
  assert.match(w.document.getElementById('toast').textContent,/storage failed/);
  const invalid=setup({}, {textSize:999});await tick();assert.equal(invalid.w.document.getElementById('text-size').value,'100');
 });
-test('Fast is an explicit per-draft lightning toggle next to the model picker',async()=>{
- const {w,calls,snapshot}=setup();await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel]});
- const toggle=d.getElementById('fast-mode');
- assert.equal(toggle.previousElementSibling,d.getElementById('composer-options'));
- assert.equal(toggle.querySelector('use').getAttribute('href'),'#i-bolt');
- assert.equal(toggle.disabled,false);assert.equal(toggle.getAttribute('aria-pressed'),'false');
- toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- assert.equal(calls.some(c=>c.action==='chat.send'),false,'toggling never sends a paid request');
- d.getElementById('prompt').value='test';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(calls.find(c=>c.action==='chat.send').args.fastMode,true);
- toggle.click();await tick();d.getElementById('prompt').value='normal';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(calls.filter(c=>c.action==='chat.send').at(-1).args.fastMode,false);
- assert.equal(calls.some(c=>c.action==='config.write'||c.action==='permissions.set'),false);
-});
-test('Fast stays unavailable for unsupported models and sends only the selected Codex request',async()=>{
- const {w,calls,snapshot}=setup();await tick();const d=w.document,toggle=d.getElementById('fast-mode');
- assert.equal(toggle.disabled,true);
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel],busy:true});assert.equal(toggle.disabled,true);
- w.mobileCodexEvent('state',{...snapshot,models:[fastModel]});assert.equal(toggle.disabled,false);
- assert.equal(toggle.disabled,false);toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- d.getElementById('prompt').value='Pro test';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- const sent=calls.find(c=>c.action==='chat.send');assert.equal(sent.args.fastMode,true);assert.equal(sent.args.consultPro,undefined);
- assert.equal(calls.some(c=>c.action==='chat.pro.send'),false);
-});
-test('Fast choices are isolated between conversation drafts',async()=>{
- const {w,snapshot}=setup();await tick();const toggle=w.document.getElementById('fast-mode');
- const first={...snapshot,models:[fastModel]};w.mobileCodexEvent('state',first);
- toggle.click();await tick();assert.equal(toggle.getAttribute('aria-pressed'),'true');
- w.mobileCodexEvent('state',{...first,threadId:'second',fastMode:false});assert.equal(toggle.getAttribute('aria-pressed'),'false');
- w.mobileCodexEvent('state',first);assert.equal(toggle.getAttribute('aria-pressed'),'true');
+test('reply indent applies to prose in saved and streaming replies and restores on reopen',async()=>{
+ const {w,snapshot}=setup();await tick();const doc=w.document;
+ const style=doc.createElement('style');style.textContent=fs.readFileSync(root+'app.css','utf8');doc.head.append(style);
+ const messages=[
+  {id:'ask',role:'user',text:'Question'},
+  {id:'reply',role:'assistant',text:'First line\nSame paragraph\n\nSecond paragraph\n\n- **通用**\n• 设置\n◦圆点\n\n1. 编号\n\n```sh\npwd\n```'},
+  {id:'work:turn:cmd',role:'tool',kind:'toolActivity',activityKind:'command',detail:'pwd'},
+  {id:'stream',role:'assistant',text:'Streaming reply\n\n● 流式圆点',status:'streaming'}
+ ];
+ w.mobileCodexEvent('state',{...snapshot,busy:true,turnId:'turn',messages});
+ const checkbox=doc.getElementById('reply-indent');
+ const indent=selector=>w.getComputedStyle(doc.querySelector(selector)).textIndent;
+ assert.equal(checkbox.checked,false);
+ checkbox.click();
+ const prose=[...doc.querySelectorAll('.assistant-prose > .prose-line')];
+ assert.equal(prose.length,3);assert.ok(prose.every(paragraph=>w.getComputedStyle(paragraph).textIndent==='2em'));
+ assert.equal(prose[0].textContent,'First line\nSame paragraph');
+ const listItems=[...doc.querySelectorAll('.assistant-prose li')];
+ assert.deepEqual(listItems.map(item=>item.textContent),['通用','设置','圆点','编号','流式圆点']);
+ assert.ok(listItems.every(item=>w.getComputedStyle(item).textIndent!=='2em'));
+ for(const selector of ['.user-message-text','.message pre','.message-tool summary','.message-tool pre'])assert.notEqual(indent(selector),'2em');
+ assert.equal(w.localStorage.getItem('replyIndent'),'true');
+ const reopened=setup({}, {drafts:{replyIndent:w.localStorage.getItem('replyIndent')}});await tick();
+ assert.equal(reopened.w.document.getElementById('reply-indent').checked,true);
+ checkbox.click();assert.notEqual(indent('.assistant-prose > .prose-line'),'2em');
 });
 test('user bubbles show small dates only when a real timestamp exists',async()=>{
  const {w,snapshot}=setup();await tick();const now=Date.UTC(2026,8,29,12,34);
@@ -142,16 +182,21 @@ test('history lazy-loads in the existing scroller and keeps order, nodes and rea
  w.mobileCodexEvent('state',recent);await tick();assert.equal(list.children.length,40);
  assert.equal(calls.filter(c=>c.action==='chat.history').length,0);
  const original=d.querySelector('[data-id="m61"]');area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));await tick();
+ assert.equal(d.getElementById('jump-latest').hidden,true);
  area.dispatchEvent(new w.Event('wheel'));await tick();
  assert.equal(calls.filter(c=>c.action==='chat.history').length,1);
  assert.deepEqual(calls.find(c=>c.action==='chat.history').args,{threadId:'t',beforeId:'m61',limit:40});
  resolveHistory({threadId:'t',messages:historyMessages(21,61),messageHistory:historyMeta(21)});await tick();
  assert.equal(list.children.length,80);assert.equal(list.firstElementChild.dataset.id,'m21');assert.equal(list.lastElementChild.dataset.id,'m100');
  assert.equal(d.querySelector('[data-id="m61"]'),original);assert.equal(area.scrollTop,4100);
+ assert.equal(d.getElementById('jump-latest').hidden,true);
  assert.equal(d.querySelectorAll('#chat-scroll').length,1);assert.equal(d.querySelector('#history-status button'),null);
  w.mobileCodexEvent('state',{...recent,messages:historyMessages(62,101),messageHistory:historyMeta(62,101)});
  assert.equal(list.children.length,81);assert.equal(list.firstElementChild.dataset.id,'m21');assert.equal(list.lastElementChild.dataset.id,'m101');
  assert.equal(d.querySelector('[data-id="m61"]'),original);
+ assert.equal(d.getElementById('jump-latest').hidden,true);
+ w.mobileCodexEvent('state',{...recent,messages:historyMessages(63,102),messageHistory:historyMeta(63,102)});
+ assert.equal(d.getElementById('jump-latest').hidden,false);
 });
 test('deferred viewport and focus scrolling respects newer upward navigation',async()=>{
  for (const trigger of ['viewport','focus']) {
@@ -191,52 +236,33 @@ test('history preserves the live tail while a page is pending and errors retry o
  const area=w.document.getElementById('chat-scroll'),list=w.document.getElementById('messages');
  const recent={...snapshot,messages:historyMessages(61,100),messageHistory:historyMeta(61)};w.mobileCodexEvent('state',recent);
  area.dispatchEvent(new w.WheelEvent('wheel',{deltaY:-20}));await tick();assert.equal(list.children.length,40);
- assert.match(w.document.getElementById('history-status').textContent,/다시 시도/);await tick();assert.equal(attempt,1);
+ assert.match(w.document.getElementById('history-status').textContent,/重试/);await tick();assert.equal(attempt,1);
  area.dispatchEvent(new w.WheelEvent('wheel',{deltaY:-20}));await tick();
  w.mobileCodexEvent('state',{...recent,messages:historyMessages(62,101),messageHistory:historyMeta(62,101)});
  resolveHistory({threadId:'t',messages:historyMessages(21,60),messageHistory:historyMeta(21,100)});await tick();
  assert.equal(list.children.length,81);assert.equal(list.firstElementChild.dataset.id,'m21');assert.equal(list.lastElementChild.dataset.id,'m101');
  assert.equal(calls.filter(c=>c.action==='chat.history').length,2);assert.equal(w.document.getElementById('history-status').hidden,true);
 });
-test('cold startup keeps the normal screen while the account is restored silently',async()=>{
- let resolveState;
- const {w}=setup({state:()=>new Promise(resolve=>{resolveState=resolve;})});
- const d=w.document;
- assert.equal(d.getElementById('onboarding').hidden,true);
- assert.doesNotMatch(d.getElementById('quota-caption').textContent,/로그인/);
- await tick();
- resolveState({ready:false,account:{},authState:'unknown',accounts:[{active:true,email:'saved@example.test',planType:'Pro'}],messages:[],sessions:[],workspace:{},models:[]});
- await tick();
- assert.equal(d.getElementById('onboarding').hidden,true);
- assert.equal(d.getElementById('suggestions').hidden,false);
- assert.equal(d.getElementById('quota-percent').textContent,'saved@example.test');
- assert.equal(d.getElementById('prompt').disabled,false);
- assert.equal(d.querySelector('dialog[open]'),null);
-});
-test('account checks and temporary failures do not flash a login invitation',async()=>{
- const {w,snapshot}=setup();await tick();const d=w.document;
- for(const authState of ['unknown','checking','error']){
-   w.mobileCodexEvent('state',{...snapshot,ready:false,account:{},authState,authError:authState==='error'?'계정 정보를 불러오지 못했습니다. 다시 시도해 주세요.':''});
-   assert.equal(d.getElementById('onboarding').hidden,true);
-   assert.doesNotMatch(d.getElementById('quota-caption').textContent,/로그인/);
-   assert.equal(d.getElementById('toast').textContent,'');
- }
- w.mobileCodexEvent('state',{...snapshot,account:{},authState:'signed_out'});
- assert.equal(d.getElementById('onboarding').hidden,false);
- assert.match(d.getElementById('quota-caption').textContent,/로그인/);
- w.mobileCodexEvent('state',{...snapshot,authState:'signed_in'});
- assert.equal(d.getElementById('onboarding').hidden,true);
-});
-test('opening account settings retries an unconfirmed account without starting login',async()=>{
- let restored;
- const {w,calls,snapshot}=setup({'auth.refresh':()=>restored});await tick();
- restored={...snapshot,authState:'signed_in',rateLimits:{rateLimits:{primary:{usedPercent:12,windowDurationMins:300}}}};
- w.mobileCodexEvent('state',{...snapshot,account:{},authState:'error'});
- w.document.getElementById('account-button').click();await tick();await tick();
- assert.equal(calls.filter(c=>c.action==='auth.refresh').length,1);
- assert.equal(calls.some(c=>c.action==='auth.login'||c.action==='auth.add'),false);
- assert.equal(w.document.getElementById('login-dialog').open,false);
- assert.equal(w.document.getElementById('quota-percent').textContent,'88%');
+test('collapsed commands can load earlier history even without a scrollable page',async()=>{
+ let fail=true;
+ const {w,calls,snapshot}=setup({'chat.history':()=>{
+  if(fail) throw new Error('offline');
+  return {threadId:'t',messages:[{id:'earlier',role:'user',text:'Older question'}],messageHistory:historyMeta(0,3)};
+ }});await tick();
+ const d=w.document,area=d.getElementById('chat-scroll'),load=d.getElementById('history-load');
+ Object.defineProperties(area,{scrollHeight:{get:()=>d.querySelector('[data-id="earlier"]')?1200:500},clientHeight:{value:500}});
+ w.mobileCodexEvent('state',{...snapshot,messages:[{id:'m2',kind:'toolActivity',activityKind:'command',completed:true},{id:'m3',role:'assistant',text:'Done'}],messageHistory:historyMeta(2,3)});
+ assert.equal(d.querySelector('.tool-group').getAttribute('aria-expanded'),'false');
+ assert.equal(d.querySelector('[data-id="m2"]').hidden,true);
+ assert.equal(calls.some(call=>call.action==='chat.history'),false);
+ assert.equal(load.hidden,false);
+ load.click();await tick();
+ assert.match(d.getElementById('history-status').textContent,/重试/);assert.equal(load.disabled,false);
+ fail=false;load.click();load.click();await tick();
+ assert.equal(calls.filter(call=>call.action==='chat.history').length,2);
+ assert.ok(d.querySelector('[data-id="earlier"]'));assert.equal(load.hidden,true);
+ assert.equal(area.scrollTop,0,'newly loaded history stays in view when a short conversation becomes scrollable');
+ assert.equal(d.querySelector('[data-id="m2"]').hidden,true);
 });
 test('login URLs reject non-OpenAI hosts and embedded credentials',()=>{
  assert.equal(C.safeLoginUrl('https://auth.openai.com/codex/device'),true);
@@ -272,8 +298,8 @@ test('Linux progress and cancellation reflect native status events',async()=>{
  w.mobileCodexEvent('linux.changed',{...linux,state:'verifying'});await tick();
  assert.equal(progress.hasAttribute('value'),false);
   w.mobileCodexEvent('linux.changed',{...linux,busy:false,state:'cancelled'});await tick();
- assert.match(w.document.getElementById('linux-environment-status').textContent,/취소/);
- assert.equal(w.document.getElementById('linux-install').textContent,'다시 시도');
+ assert.match(w.document.getElementById('linux-environment-status').textContent,/取消/);
+ assert.equal(w.document.getElementById('linux-install').textContent,'重试');
 });
 test('Linux settings suppress duplicate bridge mutations and reset the terminal note after disabling',async()=>{
  let resolveInstall;
@@ -286,13 +312,13 @@ test('Linux settings suppress duplicate bridge mutations and reset the terminal 
  assert.equal(install.disabled,false);
  assert.match(w.document.getElementById('terminal-tools-note').textContent,/Debian/);
  w.mobileCodexEvent('linux.changed',{...linux,installed:true,state:'ready',enabled:false});await tick();
- assert.match(w.document.getElementById('terminal-tools-note').textContent,/번들 개발 도구는 사용할 수 없습니다/);
+ assert.match(w.document.getElementById('terminal-tools-note').textContent,/未提供捆绑开发工具/);
 });
 test('Linux installation errors retry only on click and failed enable never flips the toggle',async()=>{
  const {w,calls,snapshot}=setup({'linux.enable':()=>{throw new Error('<img src=x onerror=alert(1)>');}});await tick();
  const failed={supported:true,installed:false,enabled:false,busy:false,state:'error',label:'Debian',error:'network down'};
  w.mobileCodexEvent('state',{...snapshot,linux:failed});await tick();
- const install=w.document.getElementById('linux-install');assert.equal(install.textContent,'다시 시도');install.click();await tick();
+ const install=w.document.getElementById('linux-install');assert.equal(install.textContent,'重试');install.click();await tick();
  assert.equal(calls.filter(c=>c.action==='linux.install').length,1);
  const ready={supported:true,installed:true,enabled:false,busy:false,state:'ready',label:'Debian'};
  w.mobileCodexEvent('linux.changed',ready);await tick();
@@ -307,8 +333,11 @@ test('Linux incomplete installation can be explicitly removed without automatic 
  w.mobileCodexEvent('state',{...snapshot,linux:{supported:true,installed:false,hasFiles:true,enabled:false,busy:false,state:'error',error:'incomplete installation'}});await tick();
  const remove=w.document.getElementById('linux-remove');
  assert.equal(remove.hidden,false);
- w.confirm=()=>false;remove.click();await tick();assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
- w.confirm=()=>true;remove.click();await tick();assert.equal(calls.filter(c=>c.action==='linux.remove').length,1);
+ remove.click();assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
+ await answerConfirmation(w.document,false,/Linux/);
+ assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
+ remove.click();await answerConfirmation(w.document,true,/Linux/);
+ assert.equal(calls.filter(c=>c.action==='linux.remove').length,1);
  assert.equal(remove.hidden,true);assert.equal(calls.filter(c=>c.action==='linux.install').length,0);
 });
 test('submit is cancelled synchronously and calls native with chosen model and effort',async()=>{
@@ -317,32 +346,15 @@ test('submit is cancelled synchronously and calls native with chosen model and e
  assert.equal(e.defaultPrevented,true);await tick();
  assert.equal(calls.find(m=>m.action==='chat.send').args.text,'실제 파일 수정');
 });
-test('retired Pro transport is not started and legacy resources do not expose credentials',()=>{
+test('retired subscription and Live resources have no UI or transport entry',()=>{
  const main=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/MainActivity.java','utf8');
  const app=fs.readFileSync(root+'app.js','utf8');
- const web=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/ChatWebActivity.java','utf8');
- const transport=fs.readFileSync('app/src/main/java/dev/mobilecodex/app/ProWebTransport.java','utf8');
- const adapter=fs.readFileSync('app/src/main/assets/pro-web-transport.js','utf8');
- assert.equal(fs.existsSync('app/src/main/java/dev/mobilecodex/app/ChatWebTransport.java'),false);
+ const html=fs.readFileSync(root+'index.html','utf8');
  assert.doesNotMatch(main,/new ProWebTransport/);
- assert.match(app,/consultPro/);assert.doesNotMatch(app,/chat\.pro\.send/);
- assert.doesNotMatch(app,/chat\.web\.|chat-web-messages|chat-web-draft/);
- assert.doesNotMatch(web,/addJavascriptInterface|backend-api\/f\/conversation/);
- assert.doesNotMatch(transport,/addJavascriptInterface|getCookie|accessToken|Authorization|backend-api/);
- assert.match(transport,/onPermissionRequest\(PermissionRequest request\)[\s\S]*?request\.deny\(\)/);
- assert.doesNotMatch(adapter,/document\.cookie|localStorage|sessionStorage|accessToken|Authorization|backend-api|window\.fetch\s*=/);
- for(const name of ['chat-web-custom.js','chat-icon-renderer.js']) {
-   const script=fs.readFileSync('app/src/main/assets/'+name,'utf8');
-   assert.doesNotMatch(script,/window\.fetch\s*=|XMLHttpRequest|backend-api\/f\/conversation/);
- }
-});
-test('ChatGPT Pro message metadata is visible and uncertain sends warn against retry',async()=>{
- const {w,snapshot}=setup();await tick();
- w.mobileCodexEvent('state',{...snapshot,messages:[
-  {id:'u',role:'user',text:'검토',backend:'chatgpt-web',source:'ChatGPT Pro',displayModel:'GPT-6-Pro',status:'uncertain'},
-  {id:'a',role:'assistant',text:'답변',backend:'chatgpt-web',source:'ChatGPT Pro',status:'completed'}
- ]});
- const text=w.document.getElementById('messages').textContent;assert.match(text,/GPT-6-Pro/);assert.match(text,/ChatGPT Pro/);assert.match(text,/다시 보내기 전에/);
+ assert.doesNotMatch(app,/chat\.pro\.send|auth\.(?:login|add|refresh|switch|logout)|account\/rateLimits/);
+ assert.doesNotMatch(html,/id="(?:login-dialog|live-dialog|account-button|usage-limits|live-start)"/);
+ for(const name of ['pro-web-transport.js','chat-web-custom.js','chat-icon-renderer.js','pro-consult-mcp.py']) assert.equal(fs.existsSync('app/src/main/assets/'+name),false);
+ for(const name of ['live.js','live.css','agents-ui.js','agents.css']) assert.equal(fs.existsSync(root+name),false);
 });
 test('sidebar sections collapse independently and restore their state',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
@@ -359,7 +371,7 @@ test('sidebar sections collapse independently and restore their state',async()=>
  assert.equal(d.querySelector('.topbar .sidebar-toggle use').getAttribute('href'),'#i-menu');
  assert.equal(d.querySelector('#files-toggle use').getAttribute('href'),'#i-panel');
  for(const id of ['new-chat','projects','sessions']) assert.ok(d.getElementById(id).closest('.sidebar-scroll'));
- for(const id of ['show-tools','settings','account-button']) assert.equal(d.getElementById(id).closest('.sidebar-bottom'),d.querySelector('.sidebar-bottom'));
+ for(const id of ['show-tools','settings']) assert.equal(d.getElementById(id).closest('.sidebar-bottom'),d.querySelector('.sidebar-bottom'));
  assert.equal(d.querySelector('.sidebar-bottom').parentElement,d.getElementById('sidebar'));
  assert.equal(d.querySelector('.sidebar-bottom').closest('.sidebar-scroll'),null);
  const restored=setup({}, {drafts:{'sidebar-section-sessions':'collapsed'}});await tick();
@@ -373,14 +385,14 @@ test('work permissions contains approval review without changing file access',as
  select.value='allow-all';select.dispatchEvent(new w.Event('change'));await tick();
  assert.equal(calls.filter(m=>m.action==='approvals.set').at(-1).args.mode,'allow-all');
  assert.equal(w.document.getElementById('permissions').value,'workspace-write');
- assert.match(select.title,/모두 허용/);
+ assert.match(select.title,/全部允许/);
  w.mobileCodexEvent('state',{...snapshot,busy:true,approvalMode:'allow-all'});
  assert.equal(select.disabled,true);
 });
 test('approval UI returns original key and acceptance, never silently auto-approves',async()=>{
  const {w,responses}=setup();await tick();w.mobileCodexEvent('server.request',{key:'k',method:'item/commandExecution/requestApproval',params:{command:'pwd'}});
  assert.equal(responses.length,0);
- const approve=[...w.document.querySelectorAll('#request-actions button')].find(b=>b.textContent==='허용');approve.click();await tick();
+ const approve=[...w.document.querySelectorAll('#request-actions button')].find(b=>b.textContent==='允许');approve.click();await tick();
  assert.deepEqual(responses[0],{key:'k',result:{decision:'accept'}});
 });
 test('question UI preserves stable question ids and answer array',async()=>{
@@ -402,7 +414,7 @@ test('tool refresh keeps a prior category list when one protocol request fails',
  }});await tick();w.document.getElementById('show-tools').click();await tick();w.document.getElementById('show-tools-panel').click();await tick();await tick();
  assert.match(w.document.getElementById('tools-list').textContent,/Keep me/);
  w.document.getElementById('refresh-tools').click();await tick();await tick();
- assert.match(w.document.getElementById('tools-list').textContent,/이전 목록을 표시합니다/);
+ assert.match(w.document.getElementById('tools-list').textContent,/显示上次的列表/);
  assert.match(w.document.getElementById('tools-list').textContent,/Keep me/);
 });
 test('plugins, skills and MCP servers have separate tabs with counts and search',async()=>{
@@ -425,182 +437,6 @@ test('tool recovery action keeps protocol failures handled after menu relocation
  w.document.getElementById('show-tools').click();await tick();w.document.getElementById('show-recovery').click();await tick();await tick();
  assert.match(w.document.getElementById('toast').textContent,/recovery offline/);assert.equal(unhandled,0);
 });
-test('account usage reads the app-server snapshot and prefers multi-bucket limits',async()=>{
- const {w,calls}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?{rateLimits:{primary:{usedPercent:1}},rateLimitsByLimitId:{codex:{limitName:'Codex',primary:{usedPercent:42,windowDurationMins:300,resetsAt:2000000000}}}}:{data:[]}});await tick();
- w.document.querySelector('[data-settings-tab="account"]').click();await tick();await tick();
- assert.equal(calls.filter(c=>c.action==='rpc'&&c.args.method==='account/rateLimits/read').length,1);
- const text=w.document.getElementById('usage-limits').textContent;
- assert.match(text,/Codex/);assert.match(text,/남은 58%/);assert.match(text,/5시간/);
-});
-
-test('reset credits show available count and consume one after confirmation',async()=>{
- let reads=0, consumed=[];
- const {w,calls}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') { reads++; return {rateLimits:{primary:{usedPercent:40}},rateLimitResetCredits:{availableCount:2,credits:[resetCredit('late',2100000000),resetCredit('early',2000000000)]}}; }
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumed.push(m.args.params); return {outcome:'reset'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- const d=w.document; assert.match(d.getElementById('reset-credits').textContent,/2개 사용 가능/);
- const use=d.getElementById('reset-credit-use'); assert.ok(use); use.click(); for(let i=0;i<5;i++) await tick();
- assert.equal(consumed.length,1); assert.equal(consumed[0].creditId,'early'); assert.ok(consumed[0].idempotencyKey);
- assert.equal(reads,2); assert.match(d.getElementById('reset-credits').textContent,/사용 한도를 초기화했습니다/);
-});
-
-test('completed reset cannot spend another credit when the follow-up usage read fails',async()=>{
- let reads=0, consumed=0;
- const {w}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') { if(++reads>1) throw new Error('offline'); return {rateLimits:{},rateLimitResetCredits:{availableCount:2,credits:[resetCredit('first',2000000000),resetCredit('second',2100000000)]}}; }
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumed++; return {outcome:'alreadyRedeemed'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); for(let i=0;i<5;i++) await tick();
- assert.equal(consumed,1); assert.equal(reads,2);
- assert.equal(w.document.getElementById('reset-credit-use'),null);
- assert.match(w.document.getElementById('reset-credits').textContent,/사용 한도를 초기화했습니다/);
-});
-
-test('reset credits omit the action when count is unavailable or zero',async()=>{
- let count=0;
- const {w}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?{rateLimits:{},rateLimitResetCredits:count++?{availableCount:0}:{credits:null}}:{data:[]}}); await tick();
- w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/정보를 사용할 수 없습니다/); assert.equal(w.document.getElementById('reset-credit-use'),null);
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/사용 가능한 초기화권이 없습니다/); assert.equal(w.document.getElementById('reset-credit-use'),null);
-});
-
-test('reset credit retry reuses key, while account change drops stale response',async()=>{
- let rejectConsume, consumeCalls=0, attempts=[], reads=0;
- const {w,snapshot}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') return {rateLimits:{},rateLimitResetCredits:{availableCount:2,credits:++reads===1?[resetCredit('first',2000000000),resetCredit('second',2100000000)]:[resetCredit('first',2200000000),resetCredit('second',2100000000)]}};
-   if(m.args.method==='account/rateLimitResetCredit/consume') { consumeCalls++; attempts.push(m.args.params); return new Promise((resolve,reject)=>{rejectConsume=reject;}); }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- const use=w.document.getElementById('reset-credit-use'); use.click(); await tick();
- const first=w.document.querySelector('#reset-credit-use'); assert.equal(first.disabled,true); rejectConsume(new Error('offline')); for(let i=0;i<3;i++) await tick();
- assert.match(w.document.getElementById('reset-credits').textContent,/다시 시도/);
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); await tick(); assert.equal(consumeCalls,2); assert.equal(attempts[1].idempotencyKey,attempts[0].idempotencyKey); assert.equal(attempts[1].creditId,'first');
- const calls=w.document.querySelector('#reset-credits'); w.mobileCodexEvent('state',{...snapshot,account:{type:'chatgpt',email:'other@example.test'}}); await tick();
- assert.match(calls.textContent,/정보를 사용할 수 없습니다/); assert.doesNotMatch(calls.textContent,/사용 중/);
-});
-
-test('reset credit selection waits for complete expiry details and treats no expiry as last',async()=>{
- let snapshot={availableCount:2,credits:[resetCredit('never',null),resetCredit('soon',2000000000)]};
- const attempts=[];
- const {w}=setup({'rpc':m=>{
-   if(m.args.method==='account/rateLimits/read') return {rateLimits:{},rateLimitResetCredits:snapshot};
-   if(m.args.method==='account/rateLimitResetCredit/consume') { attempts.push(m.args.params); return {outcome:'reset'}; }
-   return {data:[]};
- }}); await tick(); w.document.querySelector('[data-settings-tab="account"]').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,false);
- assert.match(w.document.getElementById('reset-credits').textContent,/가장 먼저 만료/);
- snapshot={availableCount:2,credits:[resetCredit('soon',2000000000)]};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,true);
- assert.match(w.document.getElementById('reset-credits').textContent,/만료일 전체를 확인할 수 없어/);
- w.document.getElementById('reset-credit-use').click(); await tick(); assert.equal(attempts.length,0);
- snapshot={availableCount:2,credits:null};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- assert.equal(w.document.getElementById('reset-credit-use').disabled,true);
- snapshot={availableCount:2,credits:[resetCredit('never',null),resetCredit('soon',2000000000)]};
- w.document.getElementById('usage-refresh').click(); await tick(); await tick();
- w.document.getElementById('reset-credit-use').click(); for(let i=0;i<5;i++) await tick();
- assert.equal(attempts[0].creditId,'soon');
-});
-
-test('usage never turns missing limits into zero and drops a response from a previous account',async()=>{
- let finish, delayed=false;
- const {w,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?(delayed?new Promise(r=>finish=r):{rateLimits:{primary:{usedPercent:null}}}):{data:[]}});await tick();
- w.document.getElementById('usage-refresh').click();await tick();await tick();
- assert.equal(w.document.getElementById('usage-limits').textContent,'');
- assert.match(w.document.getElementById('usage-status').textContent,/제공/);
- delayed=true;w.document.getElementById('usage-refresh').click();await tick();
- w.mobileCodexEvent('state',{...snapshot,account:{}});
- finish({rateLimits:{primary:{usedPercent:42}}});await tick();await tick();
- assert.equal(w.document.getElementById('usage-limits').textContent,'');
- assert.match(w.document.getElementById('usage-status').textContent,/계정이 바뀌/);
-});
-
-test('sidebar quota shows remaining percent and opens graphed account details',async()=>{
- const limits={rateLimits:{primary:{usedPercent:37,windowDurationMins:300,resetsAt:2000000000}}};
- const {w,snapshot}=setup({'rpc':message=>message.args.method==='account/rateLimits/read'?limits:{data:[]}});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits,accounts:[{key:'one',email:'me@example.test',planType:'pro',active:true}]});
- const d=w.document, ring=d.getElementById('quota-ring');
- assert.equal(d.getElementById('quota-percent').textContent,'63%');assert.equal(ring.style.getPropertyValue('--remaining'),'63');assert.match(ring.getAttribute('aria-label'),/63%/);
- d.getElementById('account-button').click();await tick();await tick();
- assert.equal(d.querySelector('[data-settings-panel="account"]').hidden,false);assert.match(d.getElementById('usage-limits').textContent,/남은 63%/);assert.equal(d.querySelectorAll('.usage-gauge .quota-ring').length,1);
-});
-
-test('quota captions use the API reset time while settings keep human window labels',async()=>{
- const now=new Date(), resetDate=new Date(now.getFullYear(),9,2,15,20,0), resetsAt=Math.floor(resetDate.getTime()/1000);
- const expected=resetDate.toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
- const limits={rateLimitsByLimitId:{codex:{limitName:'Codex',primary:{usedPercent:37,windowDurationMins:10080,resetsAt},secondary:{usedPercent:20,windowDurationMins:300,resetsAt}},other:{limitName:'Other',primary:{usedPercent:10,windowDurationMins:60,resetsAt}}}};
- const {w,calls,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?limits:{data:[]}});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits});const d=w.document;
- assert.equal(d.getElementById('quota-percent').textContent,'63%');
- assert.equal(d.getElementById('quota-caption').textContent,expected+' 초기화');
- assert.doesNotMatch(d.getElementById('quota-caption').textContent,/168시간|5시간/);
- assert.equal(calls.filter(call=>call.action==='rpc').length,0,'rendering quota never makes another request');
- d.getElementById('account-button').click();await tick();await tick();
- const text=d.getElementById('usage-limits').textContent;
- assert.match(text,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.match(text,/주간 한도/);assert.match(text,/5시간 한도/);assert.match(text,/사용 한도/);assert.doesNotMatch(text,/168시간|1시간/);
- assert.equal(calls.filter(call=>call.action==='rpc'&&call.args.method==='account/rateLimits/read').length,1);
-});
-
-test('quota never infers a reset time from a duration when resetsAt is invalid',async()=>{
- let current={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt:0}}};
- const {w,calls,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?current:{data:[]}});await tick();const d=w.document;
- for(const resetsAt of [0,null,NaN,8640000000001]) {
-   current={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt}}};
-   w.mobileCodexEvent('state',{...snapshot,rateLimits:current});
-   assert.equal(d.getElementById('quota-percent').textContent,'63%');
-   assert.equal(d.getElementById('quota-caption').textContent,'초기화 시각 확인 불가');
- }
- assert.equal(calls.filter(call=>call.action==='rpc').length,0);
- d.getElementById('account-button').click();await tick();await tick();
- assert.match(d.getElementById('usage-limits').textContent,/초기화 시각 확인 불가/);
- assert.doesNotMatch(d.getElementById('usage-limits').textContent,/168시간/);
- assert.equal(calls.filter(call=>call.action==='rpc'&&call.args.method==='account\/rateLimits\/read').length,1);
-});
-
-test('quota reset captions localize English without changing the percentage',async()=>{
- const resetDate=new Date(new Date().getFullYear(),9,2,15,20,0), resetsAt=Math.floor(resetDate.getTime()/1000);
- const limits={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt}}};
- const {w,snapshot}=setup({'rpc':m=>m.args.method==='account/rateLimits/read'?limits:{data:[]}}, {language:'en'});await tick();
- w.mobileCodexEvent('state',{...snapshot,rateLimits:limits});const d=w.document;
- assert.equal(d.getElementById('quota-percent').textContent,'63%');assert.match(d.getElementById('quota-caption').textContent,/^Resets /);
- d.getElementById('account-button').click();await tick();await tick();
- assert.match(d.getElementById('usage-limits').textContent,/Resets [\s\S]*Weekly limit/);
-});
-
-test('account profiles can add, switch and remove without exposing credentials',async()=>{
- const {w,calls,snapshot}=setup({
-   'auth.add':()=>({loginId:'new',verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD'}),
-   'auth.switch':()=>({}),'auth.remove':()=>({})
- });await tick();
- w.mobileCodexEvent('state',{...snapshot,accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false}],rateLimits:{}});
- const d=w.document;d.getElementById('account-button').click();await tick();
- assert.doesNotMatch(d.getElementById('accounts-list').textContent,/access_token|refresh_token/);
- [...d.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='전환').click();await tick();
- assert.deepEqual(calls.filter(call=>call.action==='auth.switch').at(-1).args,{key:'other'});
- [...d.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='삭제').click();await tick();
- assert.deepEqual(calls.filter(call=>call.action==='auth.remove').at(-1).args,{key:'other'});
- d.getElementById('account-add').click();await tick();assert.ok(calls.some(call=>call.action==='auth.add'));assert.equal(d.getElementById('device-code').textContent,'ABCD');
-});
-
-test('account switch failures remain visible inside the settings dialog',async()=>{
- const initial={ready:true,busy:false,permissions:'workspace-write',models:[],messages:[],sessions:[],account:{type:'chatgpt',email:'one@example.test'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨',accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false,needsLogin:false}],rateLimits:{}};
- const latest={...initial,accounts:[{key:'current',email:'one@example.test',active:true},{key:'other',email:'two@example.test',active:false,needsLogin:true}]};
- const {w,calls}=setup({'auth.switch':()=>{throw new Error('target unavailable');},state:()=>latest});await tick();
- w.mobileCodexEvent('state',initial);w.document.getElementById('account-button').click();await tick();
- [...w.document.querySelectorAll('.account-profile-actions button')].find(button=>button.textContent==='전환').click();await tick();await tick();
- assert.equal(calls.filter(call=>call.action==='auth.switch').length,1);
- assert.equal(w.document.getElementById('accounts-status').getAttribute('role'),'status');
- assert.match(w.document.getElementById('accounts-status').textContent,/계정 전환에 실패했습니다.*target unavailable/);
- assert.match(w.document.getElementById('accounts-list').textContent,/다시 로그인이 필요합니다/);
- assert.equal(w.document.getElementById('toast').hidden,true);
-});
-
 test('a different project cannot inherit the previous project tool cache after a failure',async()=>{
  let offline=false;
  const {w,snapshot}=setup({'rpc':m=>{if(offline)throw new Error('offline');return m.args.method==='skills/list'?{data:[{skills:[{name:'project-only-skill',description:'local',path:'/first/SKILL.md'}]}]}:{data:[],marketplaces:[]};}});await tick();
@@ -616,19 +452,21 @@ test('MCP forms collect typed answers without asking users to write JSON',async(
  w.mobileCodexEvent('server.request',{key:'mcp',method:'mcpServer/elicitation/request',params:{serverName:'demo',mode:'form',message:'환경 선택',requestedSchema:{type:'object',required:['environment'],properties:{environment:{type:'string',enum:['dev','prod']},retries:{type:'integer',minimum:0},enabled:{type:'boolean',default:true}}}}});
  assert.equal(w.document.querySelectorAll('#request-fields textarea').length,0);
  w.document.querySelector('#request-fields select').value='0';w.document.querySelector('#request-fields input[type=number]').value='3';
- [...w.document.querySelectorAll('#request-actions button')].find(b=>b.textContent==='전송').click();await tick();
+ [...w.document.querySelectorAll('#request-actions button')].find(b=>b.textContent==='提交').click();await tick();
  assert.deepEqual(responses[0].result,{action:'accept',content:{environment:'dev',retries:3,enabled:true}});
 });
 
 test('composer survives keyboard resize, grows with content and preserves input focus',async()=>{
- const {w}=setup();await tick();const d=w.document,prompt=d.getElementById('prompt');
+ const {w,frames}=setup({}, {manualFrames:true});await tick();
+ const flushFrame=()=>frames.splice(0).forEach(callback=>callback());flushFrame();
+ const d=w.document,prompt=d.getElementById('prompt');
  Object.defineProperty(prompt,'scrollHeight',{configurable:true,get:()=>300});
  prompt.value='긴 요청\n두 번째 줄';prompt.focus();prompt.dispatchEvent(new w.Event('input'));
- assert.equal(prompt.style.height,'160px');
- Object.defineProperty(w,'innerHeight',{value:320,configurable:true});w.dispatchEvent(new w.Event('resize'));await tick();
+ flushFrame();assert.equal(prompt.style.height,'100px');
+ Object.defineProperty(w,'innerHeight',{value:320,configurable:true});w.dispatchEvent(new w.Event('resize'));flushFrame();
  assert.equal(d.documentElement.style.getPropertyValue('--app-height'),'320px');
- assert.equal(prompt.style.height,'76.8px');assert.equal(d.activeElement,prompt);assert.equal(prompt.value,'긴 요청\n두 번째 줄');
- Object.defineProperty(w,'innerHeight',{value:800});w.dispatchEvent(new w.Event('resize'));
+ assert.equal(prompt.style.height,'86.4px');assert.equal(d.activeElement,prompt);assert.equal(prompt.value,'긴 요청\n두 번째 줄');
+ Object.defineProperty(w,'innerHeight',{value:800});w.dispatchEvent(new w.Event('resize'));flushFrame();
  assert.equal(d.documentElement.style.getPropertyValue('--app-height'),'800px');
 });
 test('drafts restore separately for each thread and remain after sending fails',async()=>{
@@ -662,9 +500,14 @@ test('reading older messages stops streaming auto-scroll until latest is request
  Object.defineProperties(area,{scrollHeight:{value:1800},clientHeight:{value:500}});
  w.mobileCodexEvent('state',{...snapshot,messages:[{id:'a',role:'assistant',text:'이전 답변'}]});
  area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));
+ const jump=w.document.getElementById('jump-latest');
+ assert.equal(jump.hidden,true);
+ w.mobileCodexEvent('message.delta',{id:'a',delta:'  '});assert.equal(jump.hidden,true);
+ w.mobileCodexEvent('message.delta',{id:'a',threadId:'other',delta:'다른 대화'});assert.equal(jump.hidden,true);
  w.mobileCodexEvent('message.delta',{id:'a',delta:' 새 내용'});assert.equal(area.scrollTop,100);
- assert.equal(w.document.getElementById('jump-latest').hidden,false);
- w.document.getElementById('jump-latest').click();await tick();assert.equal(area.scrollTop,1800);
+ assert.equal(jump.hidden,false);
+ jump.click();await tick();assert.equal(area.scrollTop,1800);assert.equal(jump.hidden,true);
+ area.scrollTop=100;area.dispatchEvent(new w.Event('scroll'));assert.equal(jump.hidden,true);
 });
 test('mobile settings expose full model, reasoning and permission controls',async()=>{
  const {w,snapshot,calls}=setup({}, {mobile:true});await tick();const d=w.document;
@@ -712,12 +555,16 @@ test('model picker sends actual catalog values and reselecting the active model 
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
  assert.equal(d.getElementById('model').value,'catalog-b');
  assert.equal(d.getElementById('effort').value,'ultra');
- assert.equal(d.getElementById('effort-heading').textContent,'Ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
+ assert.equal(d.querySelector('#effort-levels .selected').textContent,'ultra');
+ assert.equal(d.getElementById('model-heading').textContent,'Catalog B');
  assert.equal(d.getElementById('reasoning-panel').inert,false);
- const slider=d.getElementById('effort-slider');assert.equal(slider.max,'1');
- slider.value='0';slider.dispatchEvent(new w.Event('input'));slider.dispatchEvent(new w.Event('change'));await tick();
- assert.equal(d.getElementById('effort').value,'medium');
- assert.equal(d.getElementById('effort-heading').textContent,'Medium');
+ const slider=d.getElementById('effort-slider');
+ assert.equal(slider.hidden,false);assert.equal(slider.disabled,false);
+ assert.deepEqual([...d.querySelectorAll('#effort-levels span')].map(span=>span.textContent),['medium','ultra']);
+ slider.value='1';slider.dispatchEvent(new w.Event('input'));slider.dispatchEvent(new w.Event('change'));await tick();
+ assert.equal(d.getElementById('effort').value,'ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
  assert.equal(d.getElementById('effort-summary').textContent,d.getElementById('effort-heading').textContent);
  d.getElementById('model-picker-model').click();await tick();
  d.querySelector('#model-list input[value="catalog-b"]').click();await tick();
@@ -725,7 +572,38 @@ test('model picker sends actual catalog values and reselecting the active model 
  d.getElementById('prompt').value='Check the selected settings';
  d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
  const request=calls.find(c=>c.action==='chat.send');
- assert.equal(request.args.model,'catalog-b');assert.equal(request.args.effort,'medium');
+ assert.equal(request.args.model,'catalog-b');assert.equal(request.args.effort,'ultra');
+});
+
+test('reasoning slider follows runtime metadata, saves English values and removes model prose',async()=>{
+ const {w,snapshot,calls}=setup({}, {mobile:true});await tick();const d=w.document;
+ const model={id:'slider-model',displayName:'Slider model',description:'Do not show this description',defaultReasoningEffort:'high',supported_reasoning_efforts:['low','medium','high','xhigh','max','ultra']};
+ w.mobileCodexEvent('state',{...snapshot,models:[model]});await tick();
+ const slider=d.getElementById('effort-slider');
+ assert.deepEqual([...d.getElementById('effort').options].map(option=>option.value),['low','medium','high','xhigh','max','ultra']);
+ assert.equal(slider.max,'5');assert.equal(slider.disabled,false);
+ const control=d.getElementById('reasoning-control');
+ assert.equal(control.dataset.effort,'high');
+ slider.value='0';slider.dispatchEvent(new w.Event('input'));await tick();
+ assert.equal(control.dataset.effort,'low');
+ slider.value='5';slider.dispatchEvent(new w.Event('input'));await tick();
+ assert.equal(control.dataset.effort,'ultra');
+ assert.equal(slider.getAttribute('aria-valuetext'),'ultra');
+ assert.equal(d.querySelector('#effort-levels .selected').textContent,'ultra');
+ assert.equal(d.getElementById('effort-heading').textContent,'ultra');
+ slider.dispatchEvent(new w.Event('change'));await tick();
+ assert.equal(d.getElementById('effort').value,'ultra');
+ assert.equal(d.getElementById('effort-summary').textContent,'ultra');
+ assert.equal(d.querySelector('#model-list small'),null);
+ assert.doesNotMatch(d.getElementById('model-picker').textContent,/Do not show this description|试验|实验|全部 7|自动/);
+ assert.equal(d.getElementById('effort-experimental'),null);
+ assert.ok([...Array(w.localStorage.length)].map((_,i)=>w.localStorage.getItem(w.localStorage.key(i))).some(value=>value.includes('\"effort\":\"ultra\"')));
+ w.mobileCodexEvent('state',{...snapshot,models:[{id:'custom'}]});await tick();
+ d.getElementById('model').value='custom';d.getElementById('model').dispatchEvent(new w.Event('change'));await tick();
+ assert.equal(slider.disabled,false);assert.equal(slider.max,'2');
+ assert.deepEqual([...d.getElementById('effort').options].map(option=>option.value),['low','medium','high']);
+ assert.equal(d.getElementById('effort').value,'medium');
+ assert.equal(control.dataset.effort,'medium');
 });
 
 test('model refresh failure keeps the previous choices and explains their age',async()=>{
@@ -734,7 +612,7 @@ test('model refresh failure keeps the previous choices and explains their age',a
  const d=w.document;w.mobileCodexEvent('state',{...snapshot,models:oldModels});
  d.getElementById('composer-options').click();await tick();
  assert.match(d.getElementById('model-list').textContent,/GPT-5.6-Sol/);
- assert.match(d.getElementById('model-refresh-status').textContent,/이전 목록/);
+ assert.match(d.getElementById('model-refresh-status').textContent,/上次的列表/);
  assert.equal(d.getElementById('model-refresh-status').hidden,false);
 });
 test('back closes the actual top dialog, then the mobile drawer, then yields to Android',async()=>{
@@ -748,10 +626,14 @@ test('back closes the actual top dialog, then the mobile drawer, then yields to 
 test('file management uses labelled actions and protects unsaved editor changes',async()=>{
  const {w,calls}=setup({'files.list':()=>({entries:[{name:'test.md',path:'test.md',size:3}]}),'files.read':()=>({path:'test.md',content:'old',sha256:'hash'})});await tick();const d=w.document;
  d.getElementById('files-toggle').click();await tick();d.querySelector('.file-entry .icon-button').click();await tick();
- assert.deepEqual([...d.querySelectorAll('#file-actions button')].map(b=>b.textContent),['이름 변경','이동','삭제']);
+ assert.deepEqual([...d.querySelectorAll('#file-actions button')].map(b=>b.textContent),['重命名','移动','移除','选择其他应用打开']);
  d.querySelector('#file-actions button').click();await tick();d.getElementById('input-value').value='new.md';d.getElementById('input-confirm').click();await tick();await tick();
  assert.deepEqual(calls.find(c=>c.action==='files.mutate').args,{operation:'mobile_rename',arguments:{path:'test.md',name:'new.md'},workspaceKey:''});
- d.querySelector('.file-row').click();await tick();d.getElementById('editor').value='unsaved';w.confirm=()=>false;w.mobileCodexBack();assert.equal(d.getElementById('editor-dialog').open,true);
+ d.querySelector('.file-row').click();await tick();const editor=d.getElementById('editor');editor.value='unsaved';
+ assert.equal(w.mobileCodexBack(),true);await answerConfirmation(d,false);
+ assert.equal(d.getElementById('editor-dialog').open,true);assert.equal(editor.value,'unsaved');
+ assert.equal(w.mobileCodexBack(),true);await answerConfirmation(d,true);
+ assert.equal(d.getElementById('editor-dialog').open,false);assert.equal(editor.value,'old');
 });
 test('generated images appear, open full-screen, export and survive a snapshot refresh',async()=>{
  const {w,snapshot,calls}=setup();await tick();const d=w.document,id='a'.repeat(64),image={id,url:'/images/'+id,name:'robot.png',width:1024,height:1024};
@@ -792,7 +674,7 @@ test('a gallery keeps partial successes, later images and failures without group
  const {w,snapshot}=setup();await tick();const d=w.document;
  const first={id:'a',role:'assistant',kind:'image',imageGroup:'one',images:[image],imageStatus:'completed'};
  const pending={id:'b',role:'assistant',kind:'image',imageGroup:'one',imageStatus:'generating'};
- w.mobileCodexEvent('state',{...snapshot,messages:[first,pending]});assert.match(d.querySelector('.image-placeholder').textContent,/생성 중/);
+ w.mobileCodexEvent('state',{...snapshot,messages:[first,pending]});assert.match(d.querySelector('.image-placeholder').textContent,/正在生成图片/);
  d.querySelector('.image-open').click();await tick();
  const second={...pending,images:[{id:'b'.repeat(64),url:'/images/'+'b'.repeat(64),name:'b.png'}],imageStatus:'completed'};
  w.mobileCodexEvent('state',{...snapshot,messages:[first,second,{id:'c',role:'assistant',kind:'image',imageGroup:'two',images:[image],imageStatus:'completed'}]});
@@ -810,10 +692,10 @@ test('a horizontal swipe changes images but zoomed panning does not',async()=>{
 
 test('project tree groups workspace history while general history stays separate',async()=>{
  const {w,calls,snapshot}=setup();await tick();
- w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'p1',name:'Alpha'},projects:[{key:'p1',name:'Alpha',selected:true,available:true}],sessions:[{id:'a',title:'프로젝트 대화',workspaceKey:'p1'},{id:'g',title:'일반 대화'}]});
- const tree=w.document.querySelector('.project-tree');assert.match(tree.textContent,/프로젝트 대화/);assert.doesNotMatch(w.document.getElementById('sessions').textContent,/프로젝트 대화/);assert.match(w.document.getElementById('sessions').textContent,/일반 대화/);
+ w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'p1',name:'Alpha'},projects:[{key:'p1',name:'Alpha',selected:true,available:true}],sessions:[{id:'a',title:'프로젝트 대화',workspaceKey:'p1'},{id:'g',title:'普通聊天'}]});
+ const tree=w.document.querySelector('.project-tree');assert.match(tree.textContent,/프로젝트 대화/);assert.doesNotMatch(w.document.getElementById('sessions').textContent,/프로젝트 대화/);assert.match(w.document.getElementById('sessions').textContent,/普通聊天/);
  tree.querySelector('.tree-toggle').click();await tick();assert.equal(tree.classList.contains('collapsed'),true);
- w.document.getElementById('new-chat').click();await tick();assert.deepEqual(calls.find(c=>c.action==='chat.new').args,{workspaceKey:''});
+ w.document.getElementById('new-chat').click();await tick();assert.deepEqual(calls.find(c=>c.action==='chat.new').args,{workspaceKey:'',eventOnly:true});
 });
 
 test('general and workspace drafts keep attachments separately and picker receipts survive duplicate delivery',async()=>{
@@ -836,14 +718,14 @@ test('a removed project keeps its same-thread draft when the conversation become
  w.mobileCodexEvent('attachments.picked',{receiptId:'gone-attachment',draftKey:C.draftKey('gone','moved'),attachments:[{id:'keep',name:'keep.txt'}],errors:[]});await tick();
  p.value='@';p.setSelectionRange(1,1);p.click();await tick();d.querySelector('.autocomplete-item').click();await tick();
  p.value='$re';p.setSelectionRange(p.value.length,p.value.length);p.click();await tick();d.querySelector('.autocomplete-item').click();await tick();
- p.value='keep this draft';p.dispatchEvent(new w.Event('input'));d.getElementById('fast-mode').click();await tick();
+ p.value='keep this draft';p.dispatchEvent(new w.Event('input'));d.getElementById('effort').value='high';d.getElementById('effort').dispatchEvent(new w.Event('change'));await tick();
  const source='draft:'+C.draftKey('gone','moved'), target='draft:'+C.draftKey('','moved');
  w.mobileCodexEvent('state',{...project,workspace:{selected:false,key:'',projectId:'',name:'Codex',hasLocalFolder:true,available:true,defaultWorkspace:true},projects:[],sessions:[{id:'moved',title:'Moved chat'}]});await tick();
  assert.equal(p.value,'keep this draft');assert.equal(w.localStorage.getItem(source),'keep this draft');assert.equal(w.localStorage.getItem(target),'keep this draft');
  const oldContext=JSON.parse(w.localStorage.getItem(source+':context')), movedContext=JSON.parse(w.localStorage.getItem(target+':context'));
  assert.deepEqual(movedContext.attachments,[{id:'keep',name:'keep.txt'}]);assert.deepEqual(movedContext.skills,[{name:'review',path:'/skills/review'}]);assert.deepEqual(movedContext.mentions,[]);
- assert.deepEqual(oldContext.mentions,[{name:'old.md',path:'old.md'}]);assert.equal(JSON.parse(w.localStorage.getItem(target+':options')).fastMode,true);
- assert.match(d.getElementById('toast').textContent,/원래 초안/);
+ assert.deepEqual(oldContext.mentions,[{name:'old.md',path:'old.md'}]);assert.equal(JSON.parse(w.localStorage.getItem(target+':options')).model, 'fast-model');
+ assert.match(d.getElementById('toast').textContent,/原草稿/);
 });
 
 test('picker cancellation and partial errors preserve the draft while accepted attachments are sent',async()=>{
@@ -925,7 +807,8 @@ test('permission radio values remain synchronized with the native permission com
 test('adding a project never rebinds the selected project while reconnect targets its stable key',async()=>{
  const {w,calls,snapshot}=setup();await tick();w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'a',name:'A'},projects:[{key:'a',name:'A',selected:true,available:true},{key:'b',name:'B',available:false}]});const d=w.document;
  d.getElementById('add-project').click();await tick();
- [...d.querySelectorAll('#project-link-choices button')].find(b=>b.textContent==='로컬 폴더 연결').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='files.pick').at(-1).args,{});
+ const pick=d.querySelector('[data-project-folder-action="pick"]');assert.equal(pick.textContent,'Android 选择其他文件夹');
+ pick.click();await tick();assert.deepEqual(calls.filter(c=>c.action==='files.pick').at(-1).args,{});
  [...d.querySelectorAll('.project-tree')].at(-1).querySelector('.new-thread').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='files.pick').at(-1).args,{projectKey:'b'});
 });
 
@@ -933,8 +816,60 @@ test('missing folder permission does not hide saved project conversations',async
  const {w,calls,snapshot}=setup();await tick();
  w.mobileCodexEvent('state',{...snapshot,ready:false,account:{},workspace:{selected:true,key:'lost',name:'Lost',available:false},projects:[{key:'lost',name:'Lost',available:false}],sessions:[{id:'saved',title:'권한 없어도 읽는 기록',workspaceKey:'lost'}]});
  const row=w.document.querySelector('.project-tree .session');assert.ok(row);row.click();await tick();
- assert.deepEqual(calls.find(c=>c.action==='chat.resume').args,{id:'saved'});
+ assert.deepEqual(calls.find(c=>c.action==='chat.resume').args,{id:'saved',eventOnly:true});
  assert.equal(calls.some(c=>c.action==='runtime.start'||c.action==='auth.login'),false);
+});
+
+test('chat switching gives immediate feedback and reveals only the latest session and approval',async()=>{
+ const requests=new Map();
+ const {w,calls,snapshot}=setup({'chat.resume':call=>new Promise(resolve=>requests.set(call.args.id,resolve))},{mobile:true});await tick();
+ const d=w.document,prompt=d.getElementById('prompt'),status=d.getElementById('chat-switch-status'),conversation=d.getElementById('conversation');
+ const sessions=[{id:'t',title:'Current'},{id:'first',title:'First'},{id:'last',title:'Last'}];
+ const chat=(id,text)=>({...snapshot,sessions,threadId:id,messages:[{id,role:'user',text}]});
+ const row=id=>d.querySelector(`[data-session-id="${id}"] .session`);
+ const sidebar=d.querySelector('.topbar .sidebar-toggle');
+ const request=id=>w.mobileCodexEvent('server.request',{key:id,method:'item/commandExecution/requestApproval',params:{threadId:id,command:`For ${id}`}});
+ w.mobileCodexEvent('state',chat('t','Current answer'));
+ w.localStorage.setItem('draft:'+C.draftKey('/test/project','last'),'last draft');
+ prompt.value='current draft';
+ sidebar.click();row('t').click();
+ assert.equal(d.body.classList.contains('sidebar-open'),false);
+ assert.equal(calls.some(call=>call.action==='chat.resume'),false);
+ sidebar.click();row('first').click();
+ assert.equal(d.body.classList.contains('sidebar-open'),false);assert.equal(status.hidden,false);assert.equal(conversation.inert,true);
+ d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
+ assert.equal(calls.some(call=>call.action==='chat.send'),false);
+ w.mobileCodexEvent('notification.open',{threadId:'last'});
+ await tick();
+ w.mobileCodexEvent('state',chat('first','Intermediate answer'));request('first');requests.get('first')({ok:true});await tick();
+ assert.equal(status.hidden,false);assert.equal(conversation.inert,true);assert.equal(d.getElementById('request-dialog').open,false);
+ request('last');w.mobileCodexEvent('state',chat('last','Final answer'));requests.get('last')({ok:true});await tick();
+ assert.equal(status.hidden,true);assert.equal(conversation.inert,false);
+ assert.doesNotMatch(d.getElementById('messages').textContent,/Intermediate answer/);
+ assert.match(d.getElementById('messages').textContent,/Final answer/);
+ assert.equal(prompt.value,'last draft');assert.equal(w.localStorage.getItem('draft:'+C.draftKey('/test/project','t')),'current draft');
+ assert.match(d.getElementById('request-detail').textContent,/For last/);
+});
+
+test('a failed switch keeps the confirmed chat usable and can retry without a late error',async()=>{
+ const requests=[];
+ const {w,calls,snapshot}=setup({'chat.resume':call=>new Promise((resolve,reject)=>requests.push({id:call.args.id,resolve,reject}))});await tick();
+ const d=w.document,status=d.getElementById('chat-switch-status'),prompt=d.getElementById('prompt');
+ const sessions=[{id:'old',title:'Old selection'},{id:'new',title:'New selection'}];
+ w.mobileCodexEvent('state',{...snapshot,sessions,messages:[{id:'keep',role:'user',text:'Keep current'}]});
+ prompt.value='keep typing';
+ const select=id=>d.querySelector(`[data-session-id="${id}"] .session`).click();
+ select('old');select('new');select('new');await tick();
+ assert.deepEqual(requests.map(request=>request.id),['old','new']);
+ requests[0].reject(new Error('outdated error'));await tick();
+ assert.equal(d.getElementById('toast').hidden,true);assert.equal(status.hidden,false);
+ requests[1].reject(new Error('temporarily unavailable'));await tick();
+ assert.equal(status.hidden,true);assert.equal(prompt.value,'keep typing');assert.equal(d.getElementById('send').disabled,false);
+ assert.match(d.getElementById('messages').textContent,/Keep current/);
+ assert.match(d.getElementById('toast').textContent,/temporarily unavailable/);
+ select('new');await tick();assert.equal(calls.filter(call=>call.action==='chat.resume').length,3);
+ w.mobileCodexEvent('state',{...snapshot,sessions,threadId:'new'});requests[2].resolve({ok:true});await tick();
+ assert.equal(status.hidden,true);assert.equal(d.getElementById('header-title').textContent,'New selection');
 });
 
 test('attachments picked during send survive acknowledgement even when text is unchanged',async()=>{
@@ -961,15 +896,15 @@ test('accepted first send transfers model options into its new conversation scop
 test('bare @ lists local files immediately while app discovery is pending and can browse folders',async()=>{
  const {w,calls}=setup({'files.list':m=>({entries:m.args.path==='src'?[{name:'Main.java',path:'src/Main.java'}]:[{name:'src',path:'src',directory:true},{name:'README.md',path:'README.md'}]}),'files.search':()=>{throw new Error('blank search must never run');},'rpc':()=>new Promise(()=>{})});await tick();
  const d=w.document,p=d.getElementById('prompt');p.value='@';p.dispatchEvent(new w.Event('input'));await tick();
- assert.equal(d.getElementById('autocomplete').hidden,false);assert.match(d.getElementById('autocomplete').textContent,/README.md/);assert.match(d.getElementById('autocomplete').textContent,/앱을 불러오는 중/);assert.equal(calls.some(c=>c.action==='files.search'),false);
+ assert.equal(d.getElementById('autocomplete').hidden,false);assert.match(d.getElementById('autocomplete').textContent,/README.md/);assert.match(d.getElementById('autocomplete').textContent,/正在加载应用/);assert.equal(calls.some(c=>c.action==='files.search'),false);
  [...d.querySelectorAll('.autocomplete-item')].find(b=>b.textContent.includes('src/')).click();await tick();assert.match(d.getElementById('autocomplete').textContent,/Main.java/);assert.equal(calls.filter(c=>c.action==='files.list').at(-1).args.path,'src');
 });
 test('bare $ lists every enabled skill with descriptions and exposes empty or failed loading',async()=>{
  let response={data:[{skills:Array.from({length:16},(_,i)=>({name:'skill'+i,path:'/skills/'+i,description:'작업 '+i}))}]};
  const {w}=setup({'rpc':()=>{if(response instanceof Error)throw response;return response;}});await tick();const d=w.document,p=d.getElementById('prompt');
  const type=()=>{p.value='$';p.dispatchEvent(new w.Event('input'));};type();await tick();assert.match(d.getElementById('autocomplete').textContent,/skill15/);assert.match(d.getElementById('autocomplete').textContent,/작업 15/);
- response={data:[]};type();await tick();assert.equal(d.getElementById('autocomplete').hidden,false);assert.match(d.getElementById('autocomplete').textContent,/사용 가능한 스킬이 없습니다/);assert.match(d.getElementById('autocomplete').textContent,/스킬 가져오기/);
- response=new Error('offline');type();await tick();assert.match(d.getElementById('autocomplete').textContent,/offline/);assert.match(d.getElementById('autocomplete').textContent,/다시 불러오기/);
+ response={data:[]};type();await tick();assert.equal(d.getElementById('autocomplete').hidden,false);assert.match(d.getElementById('autocomplete').textContent,/暂无可用技能/);assert.match(d.getElementById('autocomplete').textContent,/导入技能/);
+ response=new Error('offline');type();await tick();assert.match(d.getElementById('autocomplete').textContent,/offline/);assert.match(d.getElementById('autocomplete').textContent,/重新加载/);
 });
 test('erasing trigger invalidates a late result and composition Enter does not choose a skill',async()=>{
  let finish;const {w}=setup({'rpc':()=>new Promise(resolve=>finish=resolve)});await tick();const d=w.document,p=d.getElementById('prompt');
@@ -980,12 +915,15 @@ test('personal instructions load offline, retain failed saves and can be cleared
  let failed=true;const {w,calls}=setup({'instructions.read':()=>({content:'한국어로 답변',activePath:'/private/.codex/AGENTS.md'}),'instructions.save':()=>{if(failed)throw new Error('disk full');return {ok:true};}});await tick();const d=w.document;
  d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.equal(d.getElementById('instructions-editor').value,'한국어로 답변');assert.match(d.getElementById('instructions-path').textContent,/\.codex\/AGENTS.md/);assert.equal(calls.some(c=>c.action==='runtime.start'),false);
  d.getElementById('instructions-editor').value='새 지침';d.getElementById('instructions-save').click();await tick();assert.equal(d.getElementById('instructions-editor').value,'새 지침');assert.match(d.getElementById('instructions-status').textContent,/disk full/);
- failed=false;d.getElementById('instructions-editor').value='';d.getElementById('instructions-save').click();await tick();assert.equal(calls.filter(c=>c.action==='instructions.save').at(-1).args.content,'');assert.match(d.getElementById('instructions-status').textContent,/저장했습니다/);
+ failed=false;d.getElementById('instructions-editor').value='';d.getElementById('instructions-save').click();await tick();assert.equal(calls.filter(c=>c.action==='instructions.save').at(-1).args.content,'');assert.match(d.getElementById('instructions-status').textContent,/已保存/);
 });
 test('personal instructions preserve unsaved edits on cancel and explain an active override',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'override',activePath:'/private/.codex/AGENTS.override.md',notice:'AGENTS.override.md가 우선 적용됩니다.'})});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.match(d.getElementById('instructions-status').textContent,/우선 적용/);
- d.getElementById('instructions-editor').value='작성 중';w.confirm=()=>false;d.querySelector('[data-close="settings-dialog"]').click();assert.equal(d.getElementById('settings-dialog').open,true);assert.equal(d.getElementById('instructions-editor').value,'작성 중');
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.match(d.getElementById('instructions-status').textContent,/우선 적용/);
+ const editor=d.getElementById('instructions-editor');editor.value='작성 중';
+ d.querySelector('.dialog-head [data-close="settings-dialog"]').click();await answerConfirmation(d,false);
+ assert.equal(d.getElementById('settings-dialog').open,true);assert.equal(editor.value,'작성 중');
 });
 
 test('clearing an override shows the newly effective base instructions without lying about disabling both',async()=>{
@@ -995,62 +933,114 @@ test('clearing an override shows the newly effective base instructions without l
 });
 
 
-test('character switch hides stickers immediately, retains generated images, and persists across reload',async()=>{
- const {w,snapshot}=setup();await tick();const d=w.document, toggle=d.getElementById('chat-icons-toggle');
- const state={...snapshot,messages:[{id:'u',role:'user',text:'만들어줘'},{id:'a',role:'assistant',text:'[[icon:완료]]\n완료했어요.',images:[{id:'a'.repeat(64),url:'/images/'+'a'.repeat(64),name:'result.png'}]}]};w.mobileCodexEvent('state',state);
- assert.equal(toggle.checked,true);assert.equal(d.querySelectorAll('.message.user .chat-character').length,0);assert.match(d.querySelector('.message.assistant .chat-character').src,/06-done.png$/);
- toggle.checked=false;toggle.dispatchEvent(new w.Event('change'));await tick();assert.equal(d.querySelectorAll('.chat-character').length,0);assert.equal(d.querySelectorAll('.image-gallery img').length,1);assert.match(d.getElementById('messages').textContent,/완료했어요/);assert.doesNotMatch(d.getElementById('messages').textContent,/\[\[icon:/);
- const next=setup({}, {drafts:{'chat-icons':w.localStorage.getItem('chat-icons')}});await tick();next.w.mobileCodexEvent('state',state);assert.equal(next.w.document.querySelectorAll('.chat-character').length,0);assert.equal(next.w.document.getElementById('chat-icons-toggle').checked,false);
- toggle.checked=true;toggle.dispatchEvent(new w.Event('change'));await tick();assert.equal(d.querySelectorAll('.message.assistant .chat-character').length,1);
+test('chat removes built-in illustrations and preserves generated images',async()=>{
+ const {w,snapshot}=setup();await tick();const d=w.document;
+ const state={...snapshot,messages:[{id:'u',role:'user',text:'生成图片'},{id:'a',role:'assistant',text:'[[icon:완료]]\n已生成',images:[{id:'a'.repeat(64),url:'/images/'+'a'.repeat(64),name:'result.png'}]}]};
+ w.mobileCodexEvent('state',state);
+ assert.equal(d.getElementById('chat-icons-toggle'),null);
+ assert.equal(d.querySelectorAll('.chat-character').length,0);
+ assert.equal(d.querySelectorAll('.image-gallery img').length,1);
+ assert.doesNotMatch(d.getElementById('messages').textContent,/\[\[icon:/);
 });
-test('character packs hydrate from initial RPC, select, and refresh the same id when icon URLs change',async()=>{
- let revision=0; const packState=()=>({folderName:'Packs',folderConfigured:true,selectedPackId:'custom',packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}},{id:'custom',name:'English pack',valid:true,icons:{done:`/packs/done-${revision}.png`}}]});
- const {w,snapshot,calls}=setup({'characters.list':()=>packState(),'characters.select':()=>({...packState(),selectedPackId:'builtin'}),'characters.refresh':()=>{revision=1;return packState();}});await tick();
- assert.ok(calls.some(call=>call.action==='characters.list')); w.mobileCodexEvent('state',{...snapshot,messages:[{id:'a',role:'assistant',text:'[[icon:완료]]\n완료했어요.'}]}); await tick(); w.document.getElementById('settings').click(); await tick();
- assert.equal(w.document.querySelectorAll('.character-pack-option').length,2); assert.ok(w.document.querySelector('.character-pack-option[aria-pressed="true"]')); assert.match(w.document.querySelector('.message .chat-character').src,/\/packs\/done-0\.png$/);
- w.document.querySelectorAll('.character-pack-option')[0].click(); await tick(); assert.equal(calls.filter(call=>call.action==='characters.select').at(-1).args.id,'builtin'); assert.match(w.document.querySelector('.message .chat-character').src,/\/chat-icons\/06-done\.png$/);
- await w.document.getElementById('character-pack-refresh').click(); await tick(); assert.equal(calls.filter(call=>call.action==='characters.refresh').length,1); assert.match(w.document.querySelector('.message .chat-character').src,/\/packs\/done-1\.png$/);
+test('legacy character pack state does not restore settings or trigger any pack requests',async()=>{
+ const {w,snapshot,calls}=setup();await tick();
+ const characters={folderConfigured:true,selectedPackId:'custom',packs:[{id:'custom',name:'Custom',valid:true,icons:{done:'/packs/done.png'}}]};
+ w.mobileCodexEvent('state',{...snapshot,characters,messages:[{id:'a',role:'assistant',text:'[[icon:완료]]\n완료했어요.'}]});
+ w.document.getElementById('settings').click();await tick();
+ assert.equal(w.document.querySelector('[id^="character-pack"], .chat-character'),null);
+ assert.doesNotMatch(w.document.getElementById('messages').textContent,/\[\[icon:/);
+ assert.equal(calls.some(call=>call.action.startsWith('characters.')),false);
 });
-test('character pack requests expose busy state and preserve selection on cancellation',async()=>{
- let finish; const delayed=new Promise(resolve=>{finish=resolve;}); const {w,snapshot,calls}=setup({'characters.select':()=>delayed}); await tick(); const chars={folderName:'Packs',folderConfigured:true,selectedPackId:'custom',packs:[{id:'builtin',name:'Builtin',valid:true,icons:{}},{id:'custom',name:'Custom',valid:true,icons:{done:'/packs/done.png'}}]}; w.mobileCodexEvent('state',{...snapshot,characters:chars,messages:[{id:'a',role:'assistant',text:'완료했어요.'}]}); w.document.getElementById('settings').click(); await tick(); w.document.querySelector('[data-pack-id="builtin"]').click(); await tick(); assert.equal(w.document.querySelector('[data-pack-id="builtin"]').disabled,true); assert.equal(w.document.getElementById('character-pack-folder-button').disabled,true); assert.equal(w.document.querySelector('.character-pack-option[aria-pressed="true"]').dataset.packId,'custom'); finish({cancelled:true}); await tick(); assert.equal(w.document.querySelector('.character-pack-option[aria-pressed="true"]').dataset.packId,'custom'); assert.equal(w.document.querySelector('[data-pack-id="builtin"]').disabled,false); assert.equal(calls.filter(call=>call.action==='characters.select').length,1);
-});
-test('live status uses local thinking and working icons without adding transcript messages',async()=>{
+test('live activity shows one line during a turn and keeps command details in the work log',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,busy:true,messages:[{id:'a',role:'assistant',text:'[[icon:설명]]\n설명할게요.'}]});
- assert.match(d.querySelector('#activity-character img').src,/03-thinking.png$/);const first=d.querySelector('.message .chat-character');
- w.mobileCodexEvent('message.delta',{id:'a',delta:' 이어서'});assert.equal(d.querySelector('.message .chat-character'),first);
- w.mobileCodexEvent('tool',{name:'mobile_write',path:'test.txt'});assert.match(d.querySelector('#activity-character img').src,/04-working.png$/);assert.equal(d.querySelectorAll('.message').length,1);
- w.mobileCodexEvent('state',{...snapshot,busy:false,messages:[{id:'a',role:'assistant',text:'[[icon:수정완료]]\n수정을 완료했어요.'}]});assert.equal(d.getElementById('activity').hidden,true);assert.match(d.querySelector('.message .chat-character').src,/27-fixed.png$/);
+ assert.equal(d.getElementById('activity').hidden,false);
+ assert.equal(d.querySelector('#activity-character img, #welcome-character img, .message .chat-character'),null);
+ w.mobileCodexEvent('tool',{name:'mobile_read',path:'README.md'});
+ assert.equal(d.getElementById('activity-text').textContent,'读取文件');
+ const command='/bin/sh -lc '+ '/long/path/AGENTS.md '.repeat(12);
+ const event={threadId:'t',method:'item/completed',params:{item:{id:'cmd',type:'commandExecution',command,aggregatedOutput:'<script>literal</script>',exitCode:1}}};
+ w.mobileCodexEvent('agent.event',event);
+ assert.match(d.getElementById('activity-text').textContent,/运行命令.*任务失败/);
+ assert.doesNotMatch(d.getElementById('activity').textContent,/AGENTS/);
+ assert.equal(d.querySelector('#chat-scroll details:not([hidden])'),null);
+ d.getElementById('activity-details').click();await tick();
+ assert.equal(d.getElementById('activity-dialog').open,true);
+ const card=d.querySelector('#event-log details:last-child');
+ assert.equal(card.querySelector('pre').textContent,command+'\n\n<script>literal</script>');
+ assert.equal(card.querySelector('script'),null);
+ const before=d.getElementById('activity-text').textContent;
+ w.mobileCodexEvent('agent.event',{threadId:'other',method:'item/started',params:{item:{id:'private',type:'commandExecution',command:'other thread'}}});
+ assert.equal(d.getElementById('activity-text').textContent,before);
+ w.mobileCodexEvent('agent.event',{method:'item/reasoning/textDelta',params:{delta:'PRIVATE REASONING'}});
+ assert.equal(d.getElementById('activity-text').textContent,'思考中');
+ assert.doesNotMatch(d.getElementById('activity').textContent+d.getElementById('event-log').textContent,/PRIVATE REASONING/);
+ w.mobileCodexEvent('message.delta',{id:'a',delta:' 이어서'});
+ assert.equal(d.getElementById('activity-text').textContent,'正在回复');
+ assert.equal(d.querySelectorAll('.message').length,1);
+ w.mobileCodexEvent('state',{...snapshot,busy:false,messages:[{id:'a',role:'assistant',text:'[[icon:수정완료]]\n수정을 완료했어요.'}]});
+ assert.equal(d.getElementById('activity').hidden,true);
+ w.mobileCodexEvent('agent.event',event);
+ assert.equal(d.getElementById('activity').hidden,true);
+ assert.equal(d.getElementById('activity-text').textContent,'Codex 正在工作');
+ assert.equal(d.querySelector('.message .chat-character'),null);
 });
-test('all character URLs resolve to bundled source bytes and cannot be arbitrary file paths',()=>{
- const dir=root+'chat-icons/',manifest=JSON.parse(fs.readFileSync(dir+'manifest.json','utf8')),hashes=JSON.parse(fs.readFileSync('tests/chat-icons-derived.sha256.json','utf8')),originals=JSON.parse(fs.readFileSync('tests/chat-icons.sha256.json','utf8'));
- const entries=Object.entries(manifest.icons);assert.equal(entries.length,32);assert.equal(fs.readdirSync(dir).filter(f=>f.endsWith('.png')).length,0);
- for(const [file,entry] of entries){const name=file.replace(/^\d+-/,'').replace(/\.png$/,'');assert.equal(C.chatIconUrl(name),'/chat-icons/'+file);assert.equal(entry.asset,file.replace(/\.png$/,'.webp'));assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync(dir+entry.asset)).digest('hex'),hashes[file]);assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync('icon-pack/gptchan/'+file)).digest('hex'),originals[file]);}
- for(const bad of ['../auth.json','https://example.test/icon.png','toString',''])assert.equal(C.chatIconUrl(bad),null);
+test('fresh activities batch live output into one scoped row without moving the reader',async()=>{
+ const {w,snapshot,frames}=setup({}, {manualFrames:true,language:'zh-CN'});await tick();
+ const d=w.document, area=d.getElementById('chat-scroll'), list=d.getElementById('task-activities');
+ const flush=()=>{for(const callback of frames.splice(0))callback();};
+ const live={...snapshot,liveTaskActivity:true,busy:true,turnId:'a',messages:historyMessages(1,12)};
+ w.mobileCodexEvent('state',live);flush();
+ Object.defineProperties(area,{scrollHeight:{value:4000},clientHeight:{value:500}});
+ area.scrollTop=200;area.dispatchEvent(new w.Event('scroll'));
+ const emit=(method,params,threadId='t',turnId='a')=>w.mobileCodexEvent('agent.event',{threadId,method,params:{threadId:'remote',turnId,...params}});
+ const command={id:'c',type:'commandExecution',command:'cat README.md',commandActions:[{type:'read',path:'README.md'}]};
+ emit('item/started',{item:command});
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'hello '});
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'world'});
+ assert.equal(frames.length,1);assert.equal(list.children.length,0);
+ flush();const row=list.firstElementChild;
+ assert.equal(list.children.length,1);assert.match(row.querySelector('summary').textContent,/读取文件.*hello world/);
+ assert.equal(row.querySelector('pre').textContent,'cat README.md\n\nhello world');
+ assert.equal(area.scrollTop,200);
+ d.getElementById('activity-details').click();await tick();assert.equal(row.open,true);
+ w.mobileCodexEvent('server.request',{key:'req',method:'item/commandExecution/requestApproval',params:{threadId:'t',turnId:'a',itemId:'c',reason:'File access'}});
+ flush();assert.equal(list.children.length,1);assert.match(row.querySelector('summary').textContent,/等待审批/);
+ assert.match(row.querySelector('pre').textContent,/File access/);
+ w.mobileCodexEvent('server.resolved',{key:'req'});flush();
+ assert.match(row.querySelector('summary').textContent,/读取文件/);
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'x'.repeat(15000)+'END'});
+ flush();assert.ok(row.querySelector('pre').textContent.length<=12030);assert.match(row.querySelector('pre').textContent,/…\nx+END$/);
+ emit('item/completed',{item:{...command,aggregatedOutput:'<script>final</script>',status:'failed',exitCode:1}});
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'late delta'});
+ emit('item/reasoning/textDelta',{itemId:'c',delta:'private reasoning'});
+ flush();assert.equal(list.firstElementChild,row);assert.equal(row.open,true);
+ assert.match(row.querySelector('summary').textContent,/任务失败/);assert.equal(row.querySelector('script'),null);
+ assert.equal(row.querySelector('pre').textContent,'cat README.md\n\n<script>final</script>');
+ emit('item/fileChange/outputDelta',{itemId:'file',delta:'pending old frame'});
+ w.mobileCodexEvent('state',{...live,threadId:'other',turnId:'b'});
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'wrong thread'});
+ emit('item/commandExecution/outputDelta',{itemId:'c',delta:'wrong turn'},'other','a');
+ emit('item/fileChange/outputDelta',{itemId:'c',delta:'new turn only'},'other','b');
+ flush();assert.equal(list.children.length,1);assert.match(list.textContent,/修改文件.*new turn only/);
+ assert.doesNotMatch(list.textContent,/wrong|pending old|private reasoning|final/);
+ w.mobileCodexEvent('state',{...live,threadId:'other',turnId:'',busy:false});flush();
+ assert.equal(list.children.length,0);assert.equal(d.getElementById('activity').hidden,true);
 });
 
-test('assistant icon tags resolve exact names and semantic categories, never arbitrary paths',()=>{
- const examples={'작업중':'working','완료':'done','해냈다':'done','당황':'blocked','수정완료':'fixed',
-  '질문':'question','근거':'source','조금 애매함':'uncertain','그건안돼':'not-allowed','ㄹㅇㅋㅋ':'lol'};
- for(const [tag,name] of Object.entries(examples))assert.equal(C.chatIconForTag(tag),name,tag);
- for(const bad of ['../auth.json','unknown','toString',''])assert.equal(C.chatIconForTag(bad),null);
-});
 
-test('icons are selected by assistant tags, not guessed from ordinary reply text',async()=>{
+test('legacy assistant icon tags disappear without adding illustrations',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,messages:[{id:'plain',role:'assistant',text:'현재 8장이 생성됐고 7장이 저장됐습니다.'},
   {id:'marked',role:'assistant',text:'[[icon:작업중]]\n진행하고 있어요.\n\n[[icon:완료]]'}]});
  assert.equal(d.querySelector('[data-id="plain"] .chat-character'),null);
  const marked=d.querySelector('[data-id="marked"]');
- assert.deepEqual([...marked.querySelectorAll('.chat-character')].map(image=>image.getAttribute('src')),
-  ['/chat-icons/04-working.png','/chat-icons/06-done.png']);
+ assert.equal(marked.querySelectorAll('.chat-character').length,0);
  assert.doesNotMatch(marked.textContent,/\[\[icon:/);
 });
 
-test('hides streamed, unknown and previous assistant tags when icons are off without altering user or code text',async()=>{
- const {w,snapshot,calls}=setup();await tick();const d=w.document,toggle=d.getElementById('chat-icons-toggle');
- toggle.checked=false;toggle.dispatchEvent(new w.Event('change'));await tick();
- assert.equal(calls.filter(call=>call.action==='chat.icons.set').at(-1).args.enabled,false);
+test('hides streamed, unknown and previous assistant tags without altering user or code text',async()=>{
+ const {w,snapshot}=setup();await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,busy:true,messages:[{id:'u',role:'user',text:'[[icon:완료]]'},
   {id:'a',role:'assistant',text:'[[icon:없는태그]]\n\n`[[icon:완료]]`\n\n[[icon:'}]});
  let answer=d.querySelector('[data-id="a"]');assert.equal(answer.querySelectorAll('.chat-character').length,0);
@@ -1062,17 +1052,8 @@ test('hides streamed, unknown and previous assistant tags when icons are off wit
  w.mobileCodexEvent('message.delta',{id:'a',delta:']'});answer=d.querySelector('[data-id="a"]');
  assert.equal(answer.querySelectorAll('.chat-character').length,0);
  assert.doesNotMatch(answer.textContent.replace(answer.querySelector('code').textContent,''),/\[\[icon:/);
- toggle.checked=true;toggle.dispatchEvent(new w.Event('change'));await tick();
- assert.match(answer.querySelector('.chat-character').src,/04-working\.png$/);
- assert.equal(calls.filter(call=>call.action==='chat.icons.set').at(-1).args.enabled,true);
 });
 
-test('the current icon preference is sent to the engine with each new turn',async()=>{
- const {w,calls}=setup();await tick();const d=w.document,toggle=d.getElementById('chat-icons-toggle');
- toggle.checked=false;toggle.dispatchEvent(new w.Event('change'));await tick();
- d.getElementById('prompt').value='안녕';d.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(calls.filter(call=>call.action==='chat.send').at(-1).args.chatIconsEnabled,false);
-});
 
 test('a partial tag stays hidden when another participant becomes the last message',async()=>{
  const {w,snapshot}=setup({}, {drafts:{'chat-icons':'off'}});await tick();const d=w.document;
@@ -1081,18 +1062,19 @@ test('a partial tag stays hidden when another participant becomes the last messa
  assert.doesNotMatch(d.querySelector('[data-id="a"]').textContent,/\[\[icon:/);
 });
 
-test('code blocks render with language label and clipboard copy button',async()=>{
+test('copy buttons target each code block or a user message, never the whole assistant reply',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,messages:[{id:'m1',role:'assistant',text:'```python\nprint("hello")\n```'}]});
+ w.mobileCodexEvent('state',{...snapshot,messages:[{id:'u1',role:'user',text:'Question'},{id:'m1',role:'assistant',text:'```python\nprint("hello")\n```'}]});
  const card=d.querySelector('.code-card');assert.ok(card);
  const lang=card.querySelector('.code-lang');assert.equal(lang.textContent,'python');
  const pre=card.querySelector('pre code');assert.match(pre.textContent,/print\("hello"\)/);
- const copyBtn=card.querySelector('.code-copy-btn');assert.ok(copyBtn);
- copyBtn.click();await tick();
- assert.match(copyBtn.textContent,/복사됨/);
+ assert.equal(d.querySelector('.assistant .msg-copy-btn'),null);
+ assert.equal(card.querySelector('.code-copy-btn')?.textContent,'复制');
  const msgCopy=d.querySelector('.msg-copy-btn');assert.ok(msgCopy);
+ assert.equal(msgCopy.previousElementSibling,d.querySelector('.user-bubble'));
+ assert.equal(msgCopy.previousElementSibling.textContent,'Question');
  msgCopy.click();await tick();
- assert.match(msgCopy.textContent,/복사됨/);
+ assert.match(msgCopy.textContent,/已复制/);
 });
 
 test('markdown tables render as scrollable table elements',async()=>{
@@ -1107,30 +1089,64 @@ test('markdown tables render as scrollable table elements',async()=>{
  assert.deepEqual(cells,['1열','값1','2열','값2']);
 });
 
-test('session actions allow renaming and deleting sessions via protocol calls',async()=>{
+test('mobile session cards keep history open for renaming, cancelling and consecutive deletions by ID',async()=>{
+ const sessions=[{id:'one',title:'Same'},{id:'two',title:'Same'},{id:'three',title:'Other'}];
+ const projects=[{key:'other',name:'Other project'}];
  const {w,calls,snapshot}=setup({
-  'chat.rename':({args})=>({...snapshot,sessions:[{id:'s1',title:args.title}]}),
-  'chat.delete':()=>({...snapshot,sessions:[]})
- });
- await tick();const d=w.document;
- w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'s1',title:'처음 제목'}]});
- const row=d.querySelector('.session-row');assert.ok(row);
- const more=row.querySelector('.session-more');assert.ok(more);
- more.click();await tick();
- assert.ok(d.getElementById('session-actions-dialog').open);
- const renameBtn=[...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='이름 변경');
- assert.ok(renameBtn);
- renameBtn.click();await tick();
- assert.ok(d.getElementById('input-dialog').open);
- d.getElementById('input-value').value='새로운 대화 제목';
- d.getElementById('input-confirm').click();await tick();
- assert.deepEqual(calls.find(c=>c.action==='chat.rename').args,{id:'s1',title:'새로운 대화 제목'});
+  'chat.rename':({args})=>{sessions.find(s=>s.id===args.id).title=args.title;update();return {};},
+  'chat.delete':({args})=>{sessions.splice(sessions.findIndex(s=>s.id===args.id),1);update();return {};}
+ },{mobile:true});
+ const update=()=>w.mobileCodexEvent('state',{...snapshot,sessions:[...sessions],projects});
+ await tick();update();const d=w.document;
+ const more=id=>d.querySelector(`[data-session-id="${id}"] .session-more`);
+ const card=()=>d.querySelector('.session-card');
+ const action=async(label)=>{[...card().querySelectorAll('button')].find(b=>b.textContent===label).click();await tick();};
+ d.querySelector('main .sidebar-toggle').click();
+ d.querySelector('.tree-toggle').click();await tick();
+ const scroller=d.querySelector('.sidebar-scroll');scroller.scrollTop=120;
+ more('two').click();await tick();
+ assert.equal(card().parentElement.dataset.sessionId,'two');
+ await action('删除对话');assert.equal(calls.some(c=>c.action==='chat.delete'),false);
+ assert.equal(w.mobileCodexBack(),true);assert.equal(card(),null);
+ assert.equal(d.body.classList.contains('sidebar-open'),true);assert.equal(d.activeElement,more('two'));
+ more('one').click();await tick();await action('重命名');
+ const field=card().querySelector('input');field.value='Changed';
+ sessions[2].busy=true;update();assert.equal(card().querySelector('input'),field);assert.equal(field.value,'Changed');
+ await action('保存');assert.deepEqual(calls.find(c=>c.action==='chat.rename').args,{id:'one',title:'Changed'});
+ for(const id of ['two','one']) {
+  more(id).click();await tick();await action('删除对话');await action('删除对话');
+  assert.equal(d.body.classList.contains('sidebar-open'),true);assert.equal(scroller.scrollTop,120);
+  assert.equal(d.querySelector('.tree-toggle').getAttribute('aria-expanded'),'false');assert.equal(card(),null);
+ }
+ assert.deepEqual(calls.filter(c=>c.action==='chat.delete').map(c=>c.args.id),['two','one']);
+ assert.equal(calls.some(c=>c.action==='chat.resume'),false);
+});
 
- more.click();await tick();
- const deleteBtn=[...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제');
- assert.ok(deleteBtn);
- deleteBtn.click();await tick();
- assert.deepEqual(calls.find(c=>c.action==='chat.delete').args,{id:'s1'});
+test('cancelling a refreshed delete card returns to the last intentional scroll position',async()=>{
+ const {w,snapshot}=setup({}, {mobile:true});await tick();
+ const d=w.document, scroller=d.querySelector('.sidebar-scroll');
+ const update=title=>w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'target',title}]});
+ update('Target');d.querySelector('main .sidebar-toggle').click();
+ w.HTMLElement.prototype.scrollIntoView=function(){if(this.matches('.session-card'))scroller.scrollTop+=45;};
+ scroller.scrollTop=100;d.querySelector('.session-more').click();await tick();
+ assert.equal(scroller.scrollTop,145);
+ scroller.scrollTop=170;update('Renamed');assert.equal(scroller.scrollTop,170);
+ d.querySelector('[data-session-delete]').click();await tick();assert.equal(scroller.scrollTop,215);
+ assert.equal(w.mobileCodexBack(),true);assert.equal(scroller.scrollTop,170);
+});
+
+test('delete card follows busy changes, keeps failed deletion retryable, and guards duplicate submissions',async()=>{
+ let rejectDelete;const {w,snapshot,calls}=setup({'chat.delete':()=>new Promise((resolve,reject)=>{rejectDelete=reject;})},{mobile:true});
+ await tick();const d=w.document;
+ const update=busy=>w.mobileCodexEvent('state',{...snapshot,threadId:'target',busy,sessions:[{id:'target',title:'Target'}]});
+ update(false);d.querySelector('main .sidebar-toggle').click();d.querySelector('.session-more').click();await tick();
+ const remove=()=>d.querySelector('[data-session-delete]');update(true);assert.equal(remove().disabled,true);
+ update(false);remove().click();await tick();update(true);assert.equal(remove().disabled,true);
+ update(false);remove().click();remove().click();await tick();assert.equal(remove().disabled,true);
+ rejectDelete(Error('Deletion failed'));await tick();assert.equal(remove().disabled,false);
+ assert.equal(d.querySelector('#toast').textContent,'Deletion failed');assert.ok(d.body.classList.contains('sidebar-open'));
+ assert.equal(calls.filter(c=>c.action==='chat.delete').length,1);
+ d.querySelector('.session-card button').click();await tick();assert.equal(remove(),null);
 });
 
 test('table escaped pipes preserve header and body cells including inline code',async()=>{
@@ -1151,14 +1167,42 @@ test('clipboard denial falls back to native and only confirms successful copying
  let fail=false;
  const {w,calls,snapshot}=setup({'ui.copyCode':()=>{if(fail)throw new Error('Clipboard unavailable');return {ok:true};}});await tick();
  Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async()=>{throw new w.DOMException('Denied','NotAllowedError');}}});
- w.mobileCodexEvent('state',{...snapshot,messages:[{id:'copy',role:'assistant',text:'```js\nconst x = 1;\n```'}]});
+ w.mobileCodexEvent('state',{...snapshot,messages:[{id:'copy',role:'user',text:'const x = 1;\n'},{id:'again',role:'user',text:'next'}]});
  const d=w.document;
- d.querySelector('.code-copy-btn').click();await tick();
+ d.querySelector('.msg-copy-btn').click();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='ui.copyCode').at(-1).args,{code:'const x = 1;\n'});
- assert.match(d.querySelector('.code-copy-btn').textContent,/복사됨/);
- fail=true;d.querySelector('.msg-copy-btn').click();await tick();
- assert.doesNotMatch(d.querySelector('.msg-copy-btn').textContent,/복사됨/);
- assert.match(d.getElementById('toast').textContent,/복사하지 못했습니다/);
+ assert.match(d.querySelector('.msg-copy-btn').textContent,/已复制/);
+ const second=d.querySelector('[data-id="again"] .msg-copy-btn');fail=true;second.click();await tick();
+ assert.doesNotMatch(second.textContent,/已复制/);
+ assert.match(d.getElementById('toast').textContent,/无法复制/);
+});
+
+test('file panel and tools settings keep normal storage controls without Root file access',async()=>{
+ const {w}=setup();await tick();
+ const d=w.document;
+ assert.ok(d.querySelector('#file-panel .file-search'));
+ assert.ok(d.querySelector('[data-settings-panel="tools"] #storage-access'));
+ assert.equal(d.querySelector('#root-files-settings'),null);
+ assert.equal(d.querySelector('#root-files-panel'),null);
+});
+
+test('switching chats in one workspace reuses sidebar rows and moves the selected state',async()=>{
+ const {w,snapshot}=setup();await tick();
+ const d=w.document,sessions=[{id:'t',title:'First',workspaceKey:'project'},{id:'next',title:'Second',workspaceKey:'project',approvalPending:true}];
+ const projects=[{key:'project',name:'Project',selected:true,available:true}];
+ const before={...snapshot,sessions,projects,workspace:{selected:true,key:'project',name:'Project'}};
+ w.mobileCodexEvent('state',before);
+ const first=d.querySelector('[data-session-id="t"]'),second=d.querySelector('[data-session-id="next"]');
+ assert.equal(first.querySelector('.session').getAttribute('aria-current'),'true');
+ w.mobileCodexEvent('state',{...before,threadId:'next',messages:[{id:'reply',role:'assistant',text:'Second chat'}]});
+ assert.equal(d.querySelector('[data-session-id="t"]'),first);
+ assert.equal(d.querySelector('[data-session-id="next"]'),second);
+ assert.equal(first.classList.contains('active'),false);
+ assert.equal(first.querySelector('.session').hasAttribute('aria-current'),false);
+ assert.equal(second.classList.contains('active'),true);
+ assert.equal(second.querySelector('.session').getAttribute('aria-current'),'true');
+ assert.ok(second.querySelector('.session-approval-indicator'));
+ assert.match(d.getElementById('messages').textContent,/Second chat/);
 });
 
 test('message HTTP and HTTPS links use the dedicated browser route, unsafe schemes stay text',async()=>{
@@ -1174,12 +1218,13 @@ test('offline deletion is reported as pending instead of claiming the original i
  const {w,snapshot}=setup({'chat.delete':()=>({deletionPending:true})});await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,sessions:[{id:'s',title:'Offline'}]});
  d.querySelector('.session-more').click();await tick();
- [...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제').click();await tick();
- assert.match(d.getElementById('toast').textContent,/삭제 요청을 저장/);
- assert.match(d.getElementById('toast').textContent,/연결되면 원본 기록도 삭제/);
+ d.querySelector('[data-session-delete]').click();await tick();
+ d.querySelector('[data-session-delete]').click();await tick();
+ assert.match(d.getElementById('toast').textContent,/删除请求已保存/);
+ assert.match(d.getElementById('toast').textContent,/连接后将删除原始记录/);
  w.mobileCodexEvent('state',{...snapshot,sessions:[],pendingDeletionCount:1});
  assert.equal(d.getElementById('pending-deletions').hidden,false);
- assert.match(d.getElementById('pending-deletions').textContent,/원본 삭제 대기 1건/);
+ assert.match(d.getElementById('pending-deletions').textContent,/1 条原始聊天等待删除/);
  w.mobileCodexEvent('state',{...snapshot,sessions:[],pendingDeletionCount:0});
  assert.equal(d.getElementById('pending-deletions').hidden,true);
 });
@@ -1187,9 +1232,9 @@ test('offline deletion is reported as pending instead of claiming the original i
 test('development tools use an honest old-backend fallback and retain the project terminal cwd',async()=>{
  const {w}=setup();await tick();const d=w.document;
  d.querySelector('[data-settings-tab="tools"]').click();await tick();
- assert.match(d.getElementById('devtools-status').textContent,/정보를 제공하지 않는/);
+ assert.match(d.getElementById('devtools-status').textContent,/未提供开发工具信息/);
  assert.match(d.getElementById('terminal-cwd').textContent,/\/test\/project/);
- assert.match(d.getElementById('terminal-tools-note').textContent,/상태는 설정/);
+ assert.match(d.getElementById('terminal-tools-note').textContent,/设置 > 工具/);
 });
 
 test('development tool check shows checked versions and HTML-looking command output as text',async()=>{
@@ -1198,61 +1243,153 @@ test('development tool check shows checked versions and HTML-looking command out
  d.querySelector('[data-settings-tab="tools"]').click();await tick();assert.match(d.getElementById('devtools-versions').textContent,/Node.js 22.0.0/);
  assert.match(d.getElementById('terminal-tools-note').textContent,/Python · Node.js · Git · npm · pip/);
  d.getElementById('devtools-check').click();await tick();
- assert.equal(calls.filter(c=>c.action==='devtools.check').length,1);assert.match(d.getElementById('devtools-status').textContent,/완료/);
+ assert.equal(calls.filter(c=>c.action==='devtools.check').length,1);assert.match(d.getElementById('devtools-status').textContent,/完成/);
  assert.match(d.getElementById('devtools-output').textContent,/<img src=x/);assert.equal(d.getElementById('devtools-output').querySelector('img'),null);
 });
 
 test('development tool partial failures and rejected checks keep output and allow retry',async()=>{
  let attempt=0;const devtools={bundled:true,prepared:false,tools:[{name:'Python',version:'확인 전'}]};
  const {w,snapshot}=setup({'state':()=>({...snapshot,devtools}),'devtools.check':()=>{attempt++;if(attempt===1)return {ok:false,checks:[{name:'Python',ok:true,output:'Python 3.13'},{name:'Git',ok:false,output:'not found'}]};if(attempt===2)throw new Error('runtime unavailable');return {ok:true,checks:[{name:'Git',ok:true,output:'git version'}]};}});await tick();const d=w.document;
- d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/일부 도구/);assert.match(d.getElementById('devtools-output').textContent,/✕ Git/);
- d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/실패했습니다/);assert.match(d.getElementById('devtools-output').textContent,/runtime unavailable/);assert.equal(d.getElementById('devtools-check').disabled,false);
- d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/완료/);assert.match(d.getElementById('devtools-output').textContent,/✓ Git/);
+ d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/部分工具/);assert.match(d.getElementById('devtools-output').textContent,/✕ Git/);
+ d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/失败/);assert.match(d.getElementById('devtools-output').textContent,/runtime unavailable/);assert.equal(d.getElementById('devtools-check').disabled,false);
+ d.getElementById('devtools-check').click();await tick();assert.match(d.getElementById('devtools-status').textContent,/完成/);assert.match(d.getElementById('devtools-output').textContent,/✓ Git/);
 });
 
 test('general Codex workspace uses its default folder and orphan conversations fall back to general chat',async()=>{
  const {w,calls,snapshot}=setup({'projects.remove':()=>({...snapshot,workspace:{selected:false},projects:[]})});await tick();const d=w.document;
  const project={key:'kept',name:'Keep this project',selected:false,available:false,hasLocalFolder:true};
  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:false,key:'',projectId:'',name:'Codex',hasLocalFolder:true,available:true,defaultWorkspace:true},projects:[project],sessions:[{id:'old',title:'보존 대화',workspaceKey:'gone'}]});
- assert.equal(d.getElementById('context-folder').textContent,'Codex');assert.equal(d.getElementById('header-project').textContent,'일반 대화');
+ assert.equal(d.getElementById('project-label').textContent,'Codex');assert.equal(d.getElementById('header-project').textContent,'普通聊天');
  assert.equal(d.querySelectorAll('.detached-projects').length,0);assert.equal(d.querySelectorAll('#projects .session').length,0);assert.equal(d.querySelectorAll('#sessions .session').length,1);
- assert.equal(d.querySelector('#projects .new-thread').textContent,'폴더 다시 연결');
+ assert.equal(d.querySelector('#projects .new-thread').textContent,'重新关联文件夹');
  d.getElementById('files-toggle').click();await tick();assert.equal(calls.some(c=>c.action==='files.list'),true);
   const menu=d.querySelector('.project-more');assert.ok(menu);menu.click();await tick();
- const confirmation=[];w.confirm=message=>{confirmation.push(message);return true;};
- [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();
- assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:'kept'});assert.match(confirmation[0],/^프로젝트를 제거할까요\? 대화는 일반 대화로 이동해요\./);assert.match(confirmation[0],/파일은 그대로 유지됩니다/);
- d.querySelector('#sessions .session').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.resume').at(-1).args,{id:'old'});
+ [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();
+ const confirmation=d.querySelector('#project-remove-card p').textContent;assert.match(confirmation,/对话将移至普通对话/);assert.match(confirmation,/文件保持不变/);
+ d.querySelector('#project-remove-card .danger').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:'kept'});
+ d.querySelector('#sessions .session').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.resume').at(-1).args,{id:'old',eventOnly:true});
  });
-test('project menus remain available while global import controls wait for running work',async()=>{
- const {w,calls,snapshot}=setup();await tick();const d=w.document;
+test('project import and rebinding stay disabled through a busy refresh and an import picker response',async()=>{
+ let finishImport;
+ const {w,calls,snapshot}=setup({'ui.projects.importFile':()=>new Promise(resolve=>{finishImport=resolve;})});await tick();const d=w.document;
  const project={key:'a',projectId:'pa',name:'A',available:false,hasLocalFolder:false,bindings:[{key:'a',name:'A'}]};
- w.mobileCodexEvent('state',{...snapshot,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:false}]});
- d.getElementById('add-project').click();await tick();assert.equal(d.querySelectorAll('#project-link-choices button').length,3);
- w.mobileCodexEvent('state',{...snapshot,proBusy:true,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:false}]});
- assert.equal(d.getElementById('add-project').disabled,true);assert.ok([...d.querySelectorAll('#project-link-choices button')].every(button=>button.disabled));assert.equal(d.querySelector('.project-more').disabled,false);assert.equal(d.querySelector('.project-new').disabled,true);assert.equal(d.querySelector('#projects .new-thread').disabled,true);
- d.getElementById('add-project').click();await tick();assert.equal(calls.some(c=>/^projects\.(create|import|merge|prefer|rename|remove)$/.test(c.action)||c.action==='files.pick'),false);
- w.mobileCodexEvent('state',{...snapshot,projects:[project],sessions:[{id:'other',title:'Other',workspaceKey:'',busy:true}]});
- assert.equal(d.getElementById('add-project').disabled,true);assert.equal(d.querySelector('.project-more').disabled,false);assert.equal(d.querySelector('#projects .new-thread').disabled,true);
+ const other={id:'other',title:'Other',workspaceKey:'',busy:false}, idle={...snapshot,projects:[project],sessions:[other]};
+ w.mobileCodexEvent('state',idle);
+ const add=d.getElementById('add-project');add.click();await tick();
+ const choices=[...d.querySelectorAll('#project-link-choices button')], importButton=d.querySelector('[data-project-folder-action="import"]');
+ assert.equal(choices.length,4);assert.ok(choices.every(button=>!button.disabled));
+ importButton.click();await tick();assert.ok(choices.every(button=>button.disabled));
+ w.mobileCodexEvent('state',{...idle,busy:true});
+ finishImport({content:'picked while idle'});await tick();
+ assert.ok(importButton.disabled);assert.ok(choices.filter(button=>button!==importButton).every(button=>!button.disabled));
+ assert.equal(add.disabled,false);assert.equal(d.querySelector('.project-more').disabled,false);assert.equal(d.querySelector('.project-new').disabled,true);
+ importButton.click();d.querySelector('#projects .new-thread').click();await tick();
+ assert.deepEqual(calls.filter(call=>/^ui\.projects\.import|^projects\.import|^files\.pick/.test(call.action)).map(call=>call.action),['ui.projects.importFile']);
+ w.mobileCodexEvent('state',{...idle,sessions:[{...other,busy:true}]});
+ assert.ok(importButton.disabled);assert.equal(d.querySelector('#projects .new-thread').disabled,true);
+ w.mobileCodexEvent('state',idle);
+ assert.equal(importButton.disabled,false);assert.equal(d.querySelector('#projects .new-thread').disabled,false);
+});
+test('project add browses the workspace and only adds projects while the current conversation is running',async()=>{
+ let working;
+ const active={key:'active',selected:true,available:true,name:'Active project'};
+ const added=name=>{
+  const workspace={key:name,name,available:true};
+  working={...working,projects:[...working.projects,workspace]};w.mobileCodexEvent('state',working);
+  return {workspace};
+ };
+ const {w,calls,snapshot}=setup({
+  'projects.workspaceFolders':({args:{path}})=>({
+   ...workspaceRoot,path,parent:path==='Work/Nested'?'Work':path?'':null,
+   entries:path==='Work/Nested'?[]:path?[{name:'<Nested>',path:'Work/Nested'}]:[{name:'Work',path:'Work'}]
+  }),
+  'projects.bindWorkspaceFolder':()=>added('Nested'),
+  'projects.createWorkspaceFolder':({args})=>added(args.name),
+  'projects.create':({args})=>added(args.name),
+  'files.pick':()=>added('External')
+ });await tick();
+ working={...snapshot,workspace:active,projects:[active],sessions:[{id:snapshot.threadId,title:'Running chat',workspaceKey:'active',busy:true}],busy:true,turnId:'working',messages:[{id:'answer',role:'assistant',text:'Streaming answer'}]};
+ w.mobileCodexEvent('state',working);
+ const d=w.document,dialog=d.getElementById('project-link-dialog'),prompt=d.getElementById('prompt');
+ prompt.value='Unsent draft';prompt.dispatchEvent(new w.Event('input'));
+ const action=name=>dialog.querySelector(`[data-project-folder-action="${name}"]`);
+ const open=async()=>{d.getElementById('add-project').click();await tick();};
+ const enter=async path=>{dialog.querySelector(`[data-workspace-folder="${path}"]`).click();await tick();};
+ const submit=async name=>{d.getElementById('input-value').value=name;d.getElementById('input-confirm').click();await tick();};
+ await open();assert.equal(d.getElementById('project-link-description').textContent,'大肥龙');assert.equal(action('bind'),null);
+ assert.ok(action('import').disabled);
+ await enter('Work');assert.equal(dialog.querySelector('[data-workspace-folder="Work/Nested"]').textContent,'<Nested>');assert.equal(dialog.querySelector('nested'),null);
+ await enter('Work/Nested');assert.equal(d.getElementById('project-link-description').textContent,'大肥龙 / Work / Nested');
+ action('up').click();await tick();action('up').click();await tick();assert.equal(action('bind'),null);
+ await enter('Work');await enter('Work/Nested');action('bind').click();await tick();assert.equal(dialog.open,false);
+ await open();await enter('Work');action('create').click();await tick();
+ d.getElementById('input-dialog').close();await tick();assert.equal(dialog.open,true);assert.equal(d.activeElement,action('create'));
+ action('create').click();await tick();await submit(' New folder ');assert.equal(dialog.open,false);
+ await open();action('metadata').click();await tick();await submit('Metadata');assert.equal(dialog.open,false);
+ await open();action('pick').click();await tick();assert.equal(dialog.open,false);
+ assert.deepEqual(calls.filter(call=>['projects.bindWorkspaceFolder','projects.createWorkspaceFolder','projects.create','files.pick'].includes(call.action)).map(call=>[call.action,call.args]),[
+  ['projects.bindWorkspaceFolder',{path:'Work/Nested'}],['projects.createWorkspaceFolder',{path:'Work',name:'New folder'}],['projects.create',{name:'Metadata'}],['files.pick',{}]
+ ]);
+ assert.match(d.getElementById('projects').textContent,/Nested.*New folder.*Metadata.*External/);
+ assert.equal(d.getElementById('header-title').textContent,'Running chat');assert.equal(d.getElementById('header-project-label').textContent,'Active project');
+ assert.equal(d.getElementById('activity').hidden,false);assert.equal(prompt.value,'Unsent draft');
+ assert.equal(calls.some(call=>call.action==='projects.select'||call.action.startsWith('chat.')),false);
+});
+test('dismissing a pending workspace listing does not affect a reopened project picker',async()=>{
+ let finishFirst, attempt=0;
+ const {w}=setup({'projects.workspaceFolders':()=>++attempt===1?new Promise(resolve=>{finishFirst=resolve;}):{...workspaceRoot,entries:[{name:'Current',path:'Current'}]}});
+ await tick();const d=w.document,dialog=d.getElementById('project-link-dialog'),add=d.getElementById('add-project');
+ add.click();await tick();dialog.close();add.click();await tick();
+ finishFirst({...workspaceRoot,entries:[{name:'Stale',path:'Stale'}]});await tick();
+ assert.ok(dialog.open);assert.ok(dialog.querySelector('[data-workspace-folder="Current"]'));assert.equal(dialog.querySelector('[data-workspace-folder="Stale"]'),null);
+});
+test('adding an external folder without switching conversations keeps the file directory and filter',async()=>{
+ let finishPick;
+ const {w,calls,snapshot}=setup({
+  'files.list':({args:{path}})=>({entries:path?[]:[{name:'src',path:'src',directory:true}]}),
+  'files.search':()=>({entries:[{name:'Report.md',path:'src/Report.md'}]}),
+  'files.pick':()=>new Promise(resolve=>{finishPick=resolve;})
+ });await tick();const d=w.document,query=d.getElementById('file-query');
+ const current={...snapshot,workspace:{...snapshot.workspace,key:'current'}};
+ const busy={...current,busy:true,turnId:'active'};
+ w.mobileCodexEvent('state',current);
+ d.getElementById('files-toggle').click();await tick();d.querySelector('#file-list .file-row').click();await tick();
+ assert.equal(d.getElementById('breadcrumbs').textContent,'Project / src');
+ query.value='report';query.dispatchEvent(new w.Event('input'));await new Promise(resolve=>setTimeout(resolve,340));
+ assert.match(d.getElementById('file-list').textContent,/Report\.md/);
+ const listCount=calls.filter(call=>call.action==='files.list').length;
+ for(const startedBusy of [false,true]) {
+  if(startedBusy)w.mobileCodexEvent('state',busy);
+  d.getElementById('add-project').click();await tick();d.querySelector('[data-project-folder-action="pick"]').click();await tick();
+  if(!startedBusy)w.mobileCodexEvent('state',busy);
+  w.mobileCodexEvent('state',current);
+  finishPick(startedBusy?{}:{key:'added'});await tick();
+  assert.equal(d.getElementById('project-link-dialog').open,false);
+  assert.equal(query.value,'report');assert.match(d.getElementById('file-list').textContent,/Report\.md/);
+  assert.equal(calls.filter(call=>call.action==='files.list').length,listCount);
+ }
+ query.value='';query.dispatchEvent(new w.Event('input'));await new Promise(resolve=>setTimeout(resolve,340));
+ assert.deepEqual(calls.filter(call=>call.action==='files.list').at(-1).args,{path:'src',workspaceKey:'current'});
 });
 test('mobile project menu supports new chat, persisted display rename and cancellable removal',async()=>{
-  let confirmResult=true;
   const {w,calls,snapshot}=setup({
     'chat.new':()=>({...snapshot}),
     'projects.rename':m=>({key:m.args.key,name:m.args.name}),
     'projects.remove':()=>({...snapshot,workspace:{selected:false},projects:[]})
-  },{mobile:true,confirm:()=>confirmResult});
+  },{mobile:true});
   await tick();const d=w.document;
   const project={key:'project-menu',name:'Folder name',selected:true,available:true};
   w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:project.key,name:project.name},projects:[project]});await tick();
   const open=()=>{d.querySelector('.project-more').click();};
-  open();await tick();assert.equal(d.getElementById('project-actions-dialog').open,true);assert.match(d.getElementById('project-actions').textContent,/새 대화/);
-  d.querySelector('#project-actions button').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:project.key});
-  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='이름 변경').click();await tick();
+  d.querySelector('.sidebar-toggle').click();open();await tick();assert.ok(d.querySelector('#projects #project-actions'));assert.match(d.getElementById('project-actions').textContent,/新建对话/);
+ d.querySelector('#project-actions button').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:project.key,eventOnly:true});
+  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='重命名').click();await tick();
   d.getElementById('input-value').value='표시 이름';d.getElementById('input-confirm').click();await tick();await tick();
   assert.deepEqual(calls.filter(c=>c.action==='projects.rename').at(-1).args,{key:project.key,name:'표시 이름'});assert.equal(d.querySelector('.project-tree .project-button span').textContent,'표시 이름');
-  open();await tick();confirmResult=false;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);
-  open();await tick();confirmResult=true;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:project.key});
+  if(!d.body.classList.contains('sidebar-open'))d.querySelector('.sidebar-toggle').click();
+  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);assert.ok(d.body.classList.contains('sidebar-open'));
+  d.querySelector('#project-remove-card button').click();await tick();assert.equal(d.querySelector('#project-remove-card'),null);assert.equal(calls.some(c=>c.action==='projects.remove'),false);
+  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();d.querySelector('#project-remove-card button:last-child').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:project.key});assert.ok(d.body.classList.contains('sidebar-open'));
  });
 
 test('shared projects group conversations without changing their original workspace keys',async()=>{
@@ -1261,21 +1398,23 @@ test('shared projects group conversations without changing their original worksp
  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'a',name:'Shared'},projects:[project],sessions:[{id:'one',workspaceKey:'a',title:'From A'},{id:'two',workspaceKey:'b',title:'From B'}]});
  assert.equal(d.querySelectorAll('.project-tree').length,1);assert.equal(d.querySelectorAll('.detached-projects').length,0);
  assert.equal(d.querySelectorAll('#projects .session').length,2);
- d.querySelectorAll('#projects .session')[0].click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.resume').at(-1).args,{id:'one'});
- d.querySelector('.project-new').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:'b'});
+ d.querySelectorAll('#projects .session')[0].click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.resume').at(-1).args,{id:'one',eventOnly:true});
+ d.querySelector('.project-new').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:'b',eventOnly:true});
 });
 test('project merge requires confirmation, handles failure, and suppresses duplicate writes',async()=>{
- let confirmResult=false, resolveMerge, fail=true;
- const {w,calls,snapshot}=setup({'projects.merge':()=>fail?Promise.reject(new Error('storage full')):new Promise(resolve=>{resolveMerge=resolve;})},{confirm:()=>confirmResult});
+ let resolveMerge, fail=true;
+ const {w,calls,snapshot}=setup({'projects.merge':()=>fail?Promise.reject(new Error('storage full')):new Promise(resolve=>{resolveMerge=resolve;})});
  await tick();const d=w.document;
  const projects=[{key:'a',projectId:'pa',name:'Same',available:true,bindings:[{key:'a',uri:'content://one'}]},{key:'b',projectId:'pb',name:'Same',available:true,bindings:[{key:'b',uri:'content://two'}]}];
  w.mobileCodexEvent('state',{...snapshot,projects});d.querySelector('.project-more').click();await tick();
- [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 병합').click();await tick();
- let choice=d.querySelector('#project-link-choices button');assert.match(choice.textContent,/content:\/\/two/);
- choice.click();await tick();assert.equal(calls.some(c=>c.action==='projects.merge'),false);
- confirmResult=true;choice.click();await tick();assert.equal(d.getElementById('project-link-dialog').open,true);assert.match(d.getElementById('toast').textContent,/storage full/);
+ [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='合并项目').click();await tick();
+ const choice=d.querySelector('#project-link-choices button');assert.match(choice.textContent,/content:\/\/two/);
+ choice.click();await answerConfirmation(d,false,/Same/);assert.equal(calls.some(c=>c.action==='projects.merge'),false);
+ choice.click();await answerConfirmation(d,true,/Same/);assert.equal(d.getElementById('project-link-dialog').open,true);assert.match(d.getElementById('toast').textContent,/storage full/);
  assert.equal(d.querySelectorAll('.project-tree').length,2);
- fail=false;choice.click();choice.click();await tick();assert.equal(calls.filter(c=>c.action==='projects.merge').length,2);
+ fail=false;choice.click();choice.click();await answerConfirmation(d,true,/Same/);
+ choice.click();assert.equal(d.getElementById('confirm-dialog').open,false);
+ assert.equal(calls.filter(c=>c.action==='projects.merge').length,2);
  assert.deepEqual(calls.filter(c=>c.action==='projects.merge').at(-1).args,{sourceKey:'a',targetKey:'b'});
  resolveMerge({projects:[{...projects[1],workspaceKeys:['a','b']}]});await tick();await tick();
  assert.equal(d.getElementById('project-link-dialog').open,false);assert.equal(d.querySelectorAll('.project-tree').length,1);
@@ -1285,7 +1424,7 @@ test('default local binding is persisted without switching an existing conversat
  const {w,calls,snapshot}=setup({'projects.prefer':()=>({})});await tick();const d=w.document;
  const project={key:'a',projectId:'p',name:'Shared',available:true,workspaceKeys:['a','b'],bindings:[{key:'a',name:'A',uri:'content://a'},{key:'b',name:'B',uri:'content://b'}]};
  w.mobileCodexEvent('state',{...snapshot,projects:[project]});d.querySelector('.project-more').click();await tick();
- [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='기본 로컬 폴더').click();await tick();
+ [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='默认本地文件夹').click();await tick();
  d.querySelectorAll('#project-link-choices button')[1].click();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='projects.prefer').at(-1).args,{key:'b'});
  assert.equal(calls.some(c=>c.action==='projects.select'||c.action==='chat.new'),false);
@@ -1293,7 +1432,7 @@ test('default local binding is persisted without switching an existing conversat
 test('unbound projects keep history readable but block send including keyboard submit',async()=>{
  const {w,calls,snapshot}=setup();await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,workspace:{key:'none',selected:true,available:false},projects:[{key:'none',projectId:'p',name:'Remote',hasLocalFolder:false,available:false}],sessions:[{id:'saved',workspaceKey:'none',title:'Saved'}]});
- assert.match(d.getElementById('projects').textContent,/로컬 폴더 연결/);assert.equal(d.querySelector('#projects .sidebar-empty'),null);
+ assert.match(d.getElementById('projects').textContent,/关联本地文件夹/);assert.equal(d.querySelector('#projects .sidebar-empty'),null);
  assert.equal(d.querySelector('.project-new').disabled,true);assert.equal(d.querySelector('#projects .session').disabled,false);
  d.getElementById('prompt').value='Run';d.getElementById('prompt').dispatchEvent(new w.Event('input'));
  assert.equal(d.getElementById('send').disabled,true);
@@ -1303,7 +1442,7 @@ test('unbound projects keep history readable but block send including keyboard s
 });
 test('project creation without a folder persists only after entering a name',async()=>{
  const {w,calls}=setup();await tick();const d=w.document;
- d.getElementById('add-project').click();await tick();[...d.querySelectorAll('#project-link-choices button')].find(b=>b.textContent==='폴더 없이 프로젝트 만들기').click();await tick();
+ d.getElementById('add-project').click();await tick();[...d.querySelectorAll('#project-link-choices button')].find(b=>b.textContent==='创建不含文件夹的项目').click();await tick();
  d.getElementById('input-value').value='Metadata only';d.getElementById('input-confirm').click();await tick();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='projects.create').at(-1).args,{name:'Metadata only'});
  assert.equal(calls.some(c=>c.action==='files.pick'||c.action==='runtime.start'),false);
@@ -1324,9 +1463,9 @@ test('project import previews safely, cancels without applying, and uses the exa
   'projects.import.preview':()=>({token:'exact-preview',result:{addedEvents:2,summary:{projects:[project],linkCount:1}}}),
   'projects.import.apply':()=>{applied++;if(fail)throw new Error('stale preview');return{projects:[project]};}
  }); await tick();const d=w.document;
- const pick=async()=>{d.getElementById('add-project').click();await tick();[...d.querySelectorAll('#project-link-choices button')].find(b=>b.textContent==='프로젝트 가져오기').click();await tick();await tick();};
+ const pick=async()=>{d.getElementById('add-project').click();await tick();[...d.querySelectorAll('#project-link-choices button')].find(b=>b.textContent==='导入项目').click();await tick();await tick();};
  cancelled=true;await pick();assert.equal(calls.some(c=>c.action==='projects.import.preview'),false);d.getElementById('project-link-dialog').close();
- cancelled=false;await pick();assert.equal(applied,0);assert.match(d.getElementById('project-link-description').textContent,/이름 충돌/);assert.equal(d.querySelector('#project-link-dialog img'),null);
+ cancelled=false;await pick();assert.equal(applied,0);assert.match(d.getElementById('project-link-description').textContent,/名称冲突/);assert.equal(d.querySelector('#project-link-dialog img'),null);
  d.getElementById('project-link-dialog').close();assert.equal(applied,0);
  await pick();fail=true;d.querySelector('#project-link-choices button').click();await tick();assert.equal(d.getElementById('project-link-dialog').open,true);assert.match(d.getElementById('toast').textContent,/stale preview/);
  fail=false;d.querySelector('#project-link-choices button').click();await tick();
@@ -1334,14 +1473,15 @@ test('project import previews safely, cancels without applying, and uses the exa
  assert.equal(d.getElementById('project-link-dialog').open,false);assert.equal(d.querySelector('.project-new').disabled,true);
 });
 test('project export asks before opening a destination and conflict resolution can select current display name',async()=>{
- let approved=false;
  const bundle={format:'mobile-codex-projects',schemaVersion:1,events:[]};
- const {w,calls,snapshot}=setup({'projects.export':()=>bundle},{confirm:()=>approved}); await tick();const d=w.document;
+ const {w,calls,snapshot}=setup({'projects.export':()=>bundle}); await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,projects:[{key:'a',projectId:'proj_a',name:'Desktop',nameConflicts:['Desktop','Phone'],available:true}]});
- const exportIt=async()=>{d.querySelector('.project-more').click();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 내보내기').click();await tick();};
+ const exportIt=async()=>{d.querySelector('.project-more').click();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='导出项目').click();await tick();};
  await exportIt();assert.equal(calls.some(c=>c.action==='ui.projects.exportFile'),false);
- approved=true;await exportIt();assert.equal(calls.filter(c=>c.action==='ui.projects.exportFile').at(-1).args.content,JSON.stringify(bundle));
- [...d.querySelectorAll('#projects button')].find(b=>b.textContent==='이름 충돌 해결').click();await tick();d.querySelector('#project-link-choices button').click();await tick();
+ await answerConfirmation(d,false,/Desktop/);assert.equal(calls.some(c=>c.action==='ui.projects.exportFile'),false);
+ await exportIt();await answerConfirmation(d,true,/Desktop/);
+ assert.equal(calls.filter(c=>c.action==='ui.projects.exportFile').at(-1).args.content,JSON.stringify(bundle));
+ [...d.querySelectorAll('#projects button')].find(b=>b.textContent==='解决名称冲突').click();await tick();d.querySelector('#project-link-choices button').click();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='projects.rename').at(-1).args,{key:'a',name:'Desktop'});
 });
 test('phone control requires native consent and does not enable on service connection',async()=>{
@@ -1368,18 +1508,26 @@ test('phone emergency stop remains visible and stops without ending a chat or lo
  assert.equal(w.document.getElementById('prompt').value,'keep my draft');
 });
 
-test('busy composer steers the exact active turn and retains rejected instructions',async()=>{
+test('busy composer offers Send while keyboard steering retains rejected instructions',async()=>{
  const {w,calls,snapshot}=setup({'chat.steer':async()=>{throw new Error('turn already completed');}});await tick();
+ const d=w.document,prompt=d.getElementById('prompt'),send=d.getElementById('send'),stop=d.getElementById('stop');
  w.mobileCodexEvent('state',{...snapshot,busy:true,turnId:'active-turn'});
- const prompt=w.document.getElementById('prompt');prompt.value='색만 바꿔';prompt.dispatchEvent(new w.Event('input'));assert.equal(w.document.getElementById('send').disabled,false);assert.equal(w.document.getElementById('send').hidden,false);
- w.document.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
+ prompt.value='색만 바꿔';prompt.dispatchEvent(new w.Event('input'));
+ assert.equal(send.disabled,false);assert.equal(send.hidden,false);assert.equal(stop.hidden,true);
+ prompt.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,cancelable:true}));await tick();
  const call=calls.find(x=>x.action==='chat.steer');assert.equal(call.args.expectedTurnId,'active-turn');assert.equal(call.args.expectedThreadId,'t');assert.equal(prompt.value,'색만 바꿔');assert.equal(calls.some(x=>x.action==='chat.send'),false);
+ assert.equal(send.hidden,false);assert.equal(stop.hidden,true);
+ w.mobileCodexEvent('state',{...snapshot,busy:false,turnId:''});
+ assert.equal(stop.hidden,true);assert.equal(send.hidden,false);assert.equal(send.disabled,false);assert.equal(prompt.value,'색만 바꿔');
 });
 test('change preview renders file text safely and restore uses its exact token and project',async()=>{
  const {w,calls,snapshot}=setup({'changes.list':()=>({entries:[{path:'a.txt',status:' M'}]}),'changes.preview':()=>({path:'a.txt',token:'review-1',before:'old',after:'<img src=x onerror=alert(1)>',canRestore:true,actionLabel:'복원'})});await tick();
  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'project-a'}});w.document.getElementById('show-changes').click();await tick();
  w.document.querySelector('#changes-list button').click();await tick();assert.equal(w.document.querySelectorAll('#change-diff img').length,0);assert.match(w.document.getElementById('change-diff').textContent,/<img/);
- w.document.getElementById('change-restore').click();await tick();const r=calls.find(x=>x.action==='changes.restore');assert.equal(r.args.token,'review-1');assert.equal(r.args.workspaceKey,'project-a');
+ const restore=w.document.getElementById('change-restore');restore.click();await answerConfirmation(w.document,false,/a[.]txt/);
+ assert.equal(calls.some(call=>call.action==='changes.restore'),false);
+ restore.click();await answerConfirmation(w.document,true,/a[.]txt/);
+ assert.deepEqual(calls.find(call=>call.action==='changes.restore').args,{token:'review-1',workspaceKey:'project-a'});
 });
 test('late change previews cannot restore into a switched project',async()=>{
  let resolve;const {w,calls,snapshot}=setup({'changes.list':()=>({entries:[{path:'a.txt'}]}),'changes.preview':()=>new Promise(r=>resolve=r)});await tick();
@@ -1466,18 +1614,215 @@ test('language switch preserves drafts, model content and editor values',async()
  d.getElementById('editor').value='사용자 파일';d.getElementById('instructions-editor').value='기존 지침';
  d.getElementById('language').value='en';d.getElementById('language').dispatchEvent(new w.Event('change'));await tick();await tick();
  assert.equal(d.documentElement.lang,'en');assert.match(d.getElementById('settings').textContent,/Settings/);
+ assert.equal(d.getElementById('appearance-title').textContent,'Interface style');
+ assert.equal(d.querySelector('label:has(#appearance-glass) span').textContent,'Liquid Glass');
  assert.equal(d.getElementById('prompt').value,'기존 초안');assert.equal(d.getElementById('editor').value,'사용자 파일');assert.equal(d.getElementById('instructions-editor').value,'기존 지침');
  w.mobileCodexEvent('state',{...snapshot,messages:[{id:'a',role:'assistant',text:raw}]});
- assert.match(d.getElementById('messages').textContent,/설정 파일 보내기/);assert.match(d.getElementById('messages').textContent,/Copy/);
+ assert.match(d.getElementById('messages').textContent,/설정 파일 보내기/);assert.equal(d.querySelector('[data-id="a"] .msg-copy-btn'),null);
  assert.match(d.querySelector('[data-prompt]').dataset.prompt,/Look through/);
  assert.equal(calls.filter(x=>['runtime.stop','runtime.start'].includes(x.action)).length,0);
- d.getElementById('language').value='ko';d.getElementById('language').dispatchEvent(new w.Event('change'));await tick();await tick();
- assert.equal(d.getElementById('prompt').value,'기존 초안');assert.match(d.getElementById('settings').textContent,/설정/);
+ d.getElementById('language').value='zh-CN';d.getElementById('language').dispatchEvent(new w.Event('change'));await tick();await tick();
+ assert.equal(d.getElementById('prompt').value,'기존 초안');assert.match(d.getElementById('settings').textContent,/设置/);
+ assert.equal(d.getElementById('appearance-title').textContent,'界面主题');
+ assert.equal(d.querySelector('label:has(#appearance-glass) span').textContent,'液态玻璃');
 });
-test('system locale defaults to English outside Korean and catalog copies match',async()=>{
+test('system locale uses Chinese fallback and catalog copies match',async()=>{
  const {w}=setup({}, {language:'system',systemLanguage:'ja-JP'});await tick();
- assert.equal(w.document.documentElement.lang,'en');assert.match(w.document.getElementById('prompt').placeholder,/Ask Codex/);
+ assert.equal(w.document.documentElement.lang,'zh-CN');assert.match(w.document.getElementById('prompt').placeholder,/Codex/);
  assert.deepEqual(JSON.parse(JSON.stringify(w.MobileCodexEnglish)), JSON.parse(fs.readFileSync('app/src/main/assets/translations-en.json','utf8')));
+});
+
+test('chat folders preserve same-title sessions by ID across reload and provider changes',async()=>{
+ const {w,snapshot}=setup();await tick();const doc=w.document;
+ const sessions=[{id:'one',title:'同名'},{id:'two',title:'同名'}];
+ const state={...snapshot,sessions};w.mobileCodexEvent('state',state);
+ async function move(id,choice){
+  doc.querySelector(`[data-session-id="${id}"] .session-more`).click();await tick();
+  const action=text=>[...doc.querySelectorAll('#session-card button')].find(button=>button.textContent===text);
+  assert.equal(doc.querySelector('#session-card button:last-child').dataset.sessionDelete,'');
+  action('移至项目或文件夹').click();await tick();assert.equal(doc.querySelector('#session-card input'),null);
+  if(choice==='new'){action('新建文件夹').click();await tick();doc.querySelector('#session-card input').value='工作';action('确定').click();}
+  else action(choice==='none'?'移出文件夹':'工作').click();await tick();
+ }
+ await move('one','new');await move('two','0');assert.equal(doc.querySelectorAll('.history-folder .session-row').length,2);
+ await move('one','none');assert.equal(doc.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+ const key='chat-folders:v1:'+state.apiActive;
+ const restored=setup({}, {drafts:{[key]:w.localStorage.getItem(key)}});await tick();restored.w.mobileCodexEvent('state',state);
+ assert.equal(restored.w.document.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+ w.mobileCodexEvent('state',{...state,apiActive:'another'});assert.equal(doc.querySelector('.history-folder'),null);
+ w.mobileCodexEvent('state',state);assert.equal(doc.querySelector('.history-folder .session-row').dataset.sessionId,'two');
+});
+
+test('recent messages sort general, project and folder chats without promoting a viewed thread',async()=>{
+ const {w,snapshot}=setup({}, {drafts:{'chat-folders:v1:fixture-api':JSON.stringify([{name:'F',ids:['f1','f2']}])}});await tick();
+ const state={...snapshot,projects:[{key:'p',name:'Project'}],sessions:['a','b','p1','p2','f1','f2'].map((id,index)=>({id,lastMessageAt:index+1,workspaceKey:id.startsWith('p')?'p':''}))};
+ const order=selector=>[...w.document.querySelectorAll(selector)].map(row=>row.dataset.sessionId);
+ w.mobileCodexEvent('state',state);assert.deepEqual(order('#sessions > .session-row'),['b','a']);assert.deepEqual(order('#projects .session-row'),['p2','p1']);assert.deepEqual(order('.history-folder .session-row'),['f2','f1']);
+ w.mobileCodexEvent('state',{...state,threadId:'a'});assert.deepEqual(order('#sessions > .session-row'),['b','a']);state.sessions.find(session=>session.id==='a').lastMessageAt=100;
+ w.mobileCodexEvent('state',state);assert.deepEqual(order('#sessions > .session-row'),['a','b']);
+});
+
+test('moving chat into an existing project does not create a project or switch the sidebar',async()=>{
+ const {w,snapshot,calls}=setup({'chat.move':request=>({...snapshot,sessions:[{id:'chat',title:'History',workspaceKey:request.args.key}]})},{mobile:true});await tick();
+ snapshot.projects=[{key:'existing',name:'Existing project'}];snapshot.sessions=[{id:'chat',title:'History'}];w.mobileCodexEvent('state',snapshot);
+ const doc=w.document;doc.querySelector('.sidebar-toggle').click();doc.querySelector('.session-more').click();await tick();
+ const action=label=>[...doc.querySelectorAll('#session-card button')].find(button=>button.textContent===label);
+ action('移至项目或文件夹').click();await tick();action('Existing project').click();await tick();
+ assert.deepEqual(calls.find(request=>request.action==='chat.move').args,{id:'chat',key:'existing'});assert.ok(doc.querySelector('#projects [data-session-id="chat"]'));assert.ok(doc.body.classList.contains('sidebar-open'));assert.ok(!calls.some(request=>request.action==='projects.create'));
+});
+
+test('provider picker guards pending sends and restores selection on failure',async()=>{
+ let finish,fail=true;const {w,snapshot,calls}=setup({'chat.provider':async request=>{
+  await new Promise(resolve=>{finish=resolve;});if(fail)throw Error('offline');
+  snapshot.apiActive=request.args.id;snapshot.models=[{id:'other-model',isDefault:true}];return snapshot;
+ }});await tick();const doc=w.document,select=doc.getElementById('picker-provider');
+ snapshot.threadId='';snapshot.apiProviders.push({id:'other',name:'Other API',hasKey:true},{id:'no-key',hasKey:false});
+ snapshot.sessions=[{id:'running-chat',busy:true}];w.mobileCodexEvent('state',snapshot);
+ assert.deepEqual([...select.options].map(option=>option.value),['','fixture-api','other']);
+ const choose=async()=>{select.value='other';select.dispatchEvent(new w.Event('change'));await tick();};
+ await choose();assert.ok(select.disabled);doc.getElementById('prompt').value='pending';
+ doc.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();assert.ok(!calls.some(request=>request.action==='chat.send'));
+ finish();await tick();assert.equal(select.value,'fixture-api');assert.ok(!select.disabled);
+ fail=false;await choose();finish();await tick();assert.equal(select.value,'other');assert.equal(doc.getElementById('model').value,'other-model');
+ assert.equal(doc.getElementById('header-api').textContent,'API · Other API');
+ w.mobileCodexEvent('state',{...snapshot,threadId:'bound-chat'});assert.ok(select.disabled);
+});
+
+test('saved command rows stay under commentary when returning to another API chat',async()=>{
+ const {w,snapshot}=setup({}, {language:'zh-CN'});await tick();const doc=w.document;
+ const first={...snapshot,persistedWorkActivity:true,apiProviders:[{id:'first',name:'API One',hasKey:true},{id:'second',name:'API Two',hasKey:true}],apiActive:'first',messages:[
+  {id:'preamble',role:'assistant',text:'Checking files',phase:'commentary',completedTurnId:'turn'},
+  {id:'work:turn:cmd',kind:'toolActivity',role:'tool',activityKind:'command',activityTurnId:'turn',detail:'pwd',output:'/workspace',completed:true},
+  {id:'reply',role:'assistant',text:'Done',phase:'final_answer',completedTurnId:'turn'}]};
+ w.mobileCodexEvent('state',{...first,busy:true,turnId:'turn',messages:first.messages.slice(0,1)});
+ w.mobileCodexEvent('state',{...first,threadId:'another',apiActive:'second',messages:[]});
+ assert.equal(doc.getElementById('header-api').textContent,'API · API Two');
+ assert.equal(doc.querySelector('.message-tool'),null);
+ w.mobileCodexEvent('state',first);
+ assert.equal(doc.getElementById('header-api').textContent,'API · API One');
+ const row=doc.querySelector('.message-tool');
+ const group=doc.querySelector('.tool-group');
+ const process=doc.querySelector('.work-toggle:not(.tool-group)');
+ assert.equal(group.hidden,true);
+ process.click();await tick();assert.equal(group.hidden,false);
+ assert.equal(group.previousElementSibling.dataset.id,'preamble');
+ assert.equal(group.nextElementSibling,row);
+ assert.equal(group.textContent,'运行了 1 条命令');
+ assert.equal(row.hidden,true);
+ group.click();await tick();
+ assert.equal(group.getAttribute('aria-expanded'),'true');
+ assert.equal(row.hidden,false);
+ assert.match(row.querySelector('summary').textContent,/pwd/);
+ row.querySelector('summary').click();
+ assert.equal(row.firstElementChild.open,true);
+ assert.match(row.querySelector('pre').textContent,/\/workspace/);
+ w.mobileCodexEvent('state',{...first,threadId:'another',apiActive:'second',messages:[]});
+ w.mobileCodexEvent('state',first);
+ assert.equal(doc.querySelector('.tool-group').getAttribute('aria-expanded'),'true');
+ assert.equal(doc.querySelector('.tool-group').hidden,true);
+ doc.querySelector('.work-toggle:not(.tool-group)').click();await tick();
+ doc.querySelector('.tool-group').click();await tick();
+ assert.equal(doc.querySelector('.message-tool').hidden,true);
+});
+
+test('completed mixed tools fold in order and streamed commentary separates groups',async()=>{
+ const {w,snapshot,frames}=setup({}, {language:'zh-CN',manualFrames:true});await tick();const doc=w.document;
+ const flush=()=>{for(const callback of frames.splice(0))callback();};
+ const work=(id,activityKind='command')=>({id,kind:'toolActivity',role:'tool',activityKind,activityTurnId:'turn',detail:id,completed:true});
+ const commentary={id:'commentary',role:'assistant',text:'Starting'};
+ const progress={id:'progress',role:'assistant',text:'',status:'streaming'};
+ const first=[commentary,work('pwd'),work('web','searching'),work('ls'),work('edit','editing'),progress];
+ const active={...snapshot,busy:true,turnId:'turn',persistedWorkActivity:true};
+ const visibleWork=()=>[...doc.querySelectorAll('.message-tool:not([hidden])')].map(row=>row.dataset.id);
+ const summaries=()=>[...doc.querySelectorAll('.tool-group')].map(group=>group.textContent);
+ const mixed='运行了 2 条命令 · 搜索了 1 次 · 1 项文件修改';
+ w.mobileCodexEvent('state',{...active,messages:first});flush();
+ assert.deepEqual(visibleWork(),[]);
+ assert.equal(doc.querySelector('.tool-group').previousElementSibling.dataset.id,'commentary');
+ assert.deepEqual(summaries(),[mixed]);
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'progress',delta:' '});flush();
+ assert.deepEqual(summaries(),[mixed]);
+ const reply={id:'reply',role:'assistant',text:'',status:'streaming'};
+ w.mobileCodexEvent('state',{...active,messages:[...first,work('npm test'),reply]});flush();
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'progress',delta:'A'});flush();
+ assert.deepEqual(summaries(),[mixed,'运行了 1 条命令']);
+ w.mobileCodexEvent('message.delta',{threadId:'t',id:'reply',delta:'D'});flush();
+ assert.deepEqual(summaries(),[mixed,'运行了 1 条命令']);
+ assert.deepEqual(visibleWork(),[]);
+ doc.querySelector('.tool-group').click();await tick();
+ assert.deepEqual(visibleWork(),['pwd','web','ls','edit']);
+ const trailing=[{...work('last check'),completed:false}];
+ w.mobileCodexEvent('state',{...active,messages:trailing});flush();
+ assert.deepEqual(visibleWork(),['last check']);
+ w.mobileCodexEvent('state',{...active,busy:false,turnId:'',messages:[{...trailing[0],completed:true,interrupted:true}]});flush();
+ assert.deepEqual(summaries(),['运行了 1 条命令']);
+ assert.deepEqual(visibleWork(),[]);
+});
+
+test('ultra commits on slider input and survives a provider model refresh before sending',async()=>{
+ const {w,snapshot,calls}=setup();await tick();const doc=w.document;
+ const model={id:'gpt-6.2-sol',isDefault:true};
+ w.mobileCodexEvent('state',{...snapshot,models:[model]});
+ const slider=doc.getElementById('effort-slider');
+ slider.value=slider.max;slider.dispatchEvent(new w.Event('input'));
+ w.mobileCodexEvent('state',{...snapshot,models:[{...model,displayName:'Updated display name'}]});
+ doc.getElementById('prompt').value='verify selected effort';
+ doc.getElementById('composer').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
+ assert.equal(calls.find(request=>request.action==='chat.send').args.effort,'ultra');
+});
+
+test('live work follows transcript messages and stays out of older turns after navigation',async()=>{
+ const {w,snapshot}=setup();await tick();const doc=w.document;
+ const messages=[{id:'old',role:'assistant',text:'old answer'},{id:'ask',role:'user',text:'question'},{id:'reply',role:'assistant',text:'answer',status:'streaming'}];
+ const active={...snapshot,busy:true,turnId:'turn',liveTaskActivity:true,persistedWorkActivity:true};
+ w.mobileCodexEvent('state',{...active,messages});
+ const search={id:'work:turn:search',role:'tool',kind:'toolActivity',activityKind:'searching',detail:'mobile_search · README'};
+ w.mobileCodexEvent('state',{...active,messages:[...messages,search]});
+ const command={id:'work:turn:cmd',role:'tool',kind:'toolActivity',activityKind:'command',detail:'pwd'};
+ w.mobileCodexEvent('state',{...active,messages:[...messages,search,command]});
+ w.mobileCodexEvent('agent.event',{threadId:'t',method:'item/commandExecution/outputDelta',params:{turnId:'turn',itemId:'cmd',delta:'/workspace'}});
+ await tick();
+ assert.deepEqual([...doc.getElementById('messages').children].map(child=>child.dataset.id),['old','ask','reply',search.id,command.id]);
+ assert.match(doc.querySelector('[data-id="work:turn:cmd"] pre').textContent,/\/workspace/);
+ assert.equal(doc.getElementById('task-activities').childElementCount,0);
+ assert.ok(doc.getElementById('messages').compareDocumentPosition(doc.getElementById('live-work')) & w.Node.DOCUMENT_POSITION_FOLLOWING);
+ w.mobileCodexEvent('state',{...snapshot,threadId:'new-thread',messages:[]});assert.ok(doc.getElementById('live-work'));assert.equal(doc.getElementById('messages').childElementCount,0);
+});
+test('welcome logo is visible before startup and fresh portraits retain their colors in dark mode',()=>{
+ const dom=new JSDOM(fs.readFileSync(root+'index.html','utf8'),{url:'https://appassets.androidplatform.net',runScripts:'outside-only'});
+ opened.push(dom);
+ const {window}=dom, doc=window.document;
+ for(const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+  const style=doc.createElement('style');style.textContent=fs.readFileSync(root+link.getAttribute('href'),'utf8');doc.head.append(style);
+ }
+ doc.documentElement.dataset.theme='dark';
+ assert.notEqual(window.getComputedStyle(doc.querySelector('.welcome-mark')).display,'none');
+ const images=[doc.querySelector('.welcome-mark img'), doc.querySelector('.brand img')];
+ for(const image of images)assert.equal(window.getComputedStyle(image).filter,'brightness(0) invert(1)');
+ window.Native={locale:()=>JSON.stringify({brandName:'大肥龙'})};
+ window.eval(fs.readFileSync(root+'locale.js','utf8'));
+ for(const image of images)assert.ok(['','none'].includes(window.getComputedStyle(image).filter));
+});
+test('fresh identity reaches Chinese and English UI without changing user text or runtime IDs',async()=>{
+ const {w,snapshot}=setup({}, {language:'zh-CN',brandName:'大肥龙'});await tick();
+ const d=w.document, prompt=d.getElementById('prompt'), draft='Ask Codex about gpt-codex and .codex/AGENTS.md';
+ assert.equal(d.title,'大肥龙');assert.equal(prompt.placeholder,'询问大肥龙');
+ for(const el of d.querySelectorAll('.brand img,.welcome-mark img'))assert.equal(el.alt,'大肥龙');
+ assert.equal(d.getElementById('sidebar-brand-name').textContent,'大肥龙');
+ assert.match(d.getElementById('subagents-title').textContent,/大肥龙/);
+ const message={id:'identity',role:'assistant',text:draft};
+ w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,name:'Codex'},messages:[message]});
+ prompt.value=draft;prompt.dispatchEvent(new w.Event('input'));
+ for(const language of ['en','zh-CN']) {
+  const select=d.getElementById('language');select.value=language;select.dispatchEvent(new w.Event('change'));await tick();await tick();
+  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,name:'Codex'},messages:[message]});
+  assert.match(prompt.placeholder,/大肥龙/);assert.match(prompt.getAttribute('aria-label'),/大肥龙/);
+  assert.equal(d.querySelector('.welcome-mark img').alt,'大肥龙');
+  assert.ok(d.getElementById('welcome-title').textContent.trim());
+  assert.equal(d.getElementById('project-label').textContent,'Codex');assert.equal(prompt.value,draft);
+  assert.equal(d.querySelector('[data-id="identity"] p').textContent,draft);
+  assert.equal(d.getElementById('update-repository').value,'caizhiyuan72/mobile-codex-zh');
+ }
 });
 test('inline dictation displays partial text, supports done and cancel, and cannot auto-send',async()=>{
  const {w,calls}=setup({}, {language:'en'});await tick();const d=w.document;
@@ -1520,25 +1865,31 @@ test('outside taps dismiss sheets and centered dialogs, while inside taps stay o
 });
 test('outside taps respect unsaved changes and do not answer approval requests',async()=>{
  const {w,responses}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();
- d.getElementById('instructions-editor').value='Unsaved edit';w.confirm=()=>false;
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();
+ d.getElementById('instructions-editor').value='Unsaved edit';
  const settings=d.getElementById('settings-dialog');backdropPointer(w,settings,100,100);
+ await answerConfirmation(d,false);
  assert.equal(settings.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');
- w.confirm=()=>true;backdropPointer(w,settings,100,100);assert.equal(settings.open,false);
+ backdropPointer(w,settings,100,100);await answerConfirmation(d,true);assert.equal(settings.open,false);
  w.mobileCodexEvent('server.request',{key:'approval',method:'item/commandExecution/requestApproval',params:{threadId:'t',command:'true'}});
  const request=d.getElementById('request-dialog');assert.equal(request.open,true);
  backdropPointer(w,request,100,100);assert.equal(request.open,false);assert.equal(responses.length,0);
  w.mobileCodexEvent('state',{ready:true,busy:false,permissions:'workspace-write',models:[],messages:[],sessions:[],account:{type:'chatgpt'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'});
  assert.equal(request.open,true);
+ const requestGrip=request.querySelector('.sheet-grip');
+ sheetPointer(w,requestGrip,'pointerdown',100,20);sheetPointer(w,requestGrip,'pointermove',100,170);sheetPointer(w,requestGrip,'pointerup',100,170);
+ assert.equal(request.open,false);assert.equal(responses.length,0);
 });
 test('mobile sheet drag closes through the existing unsaved-instructions guard',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();
- d.getElementById('instructions-editor').value='Unsaved edit';w.confirm=()=>false;
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();
+ d.getElementById('instructions-editor').value='Unsaved edit';
  const sheet=d.getElementById('settings-dialog'),grip=sheet.querySelector('.sheet-grip');
  const drag=()=>{sheetPointer(w,grip,'pointerdown',100,20);sheetPointer(w,grip,'pointermove',105,170);sheetPointer(w,grip,'pointerup',105,170);};
- drag();assert.equal(sheet.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');assert.equal(sheet.style.getPropertyValue('--sheet-offset'),'');
- w.confirm=()=>true;drag();assert.equal(sheet.open,false);
+ drag();await answerConfirmation(d,false);assert.equal(sheet.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');assert.equal(sheet.style.getPropertyValue('--sheet-offset'),'');
+ drag();await answerConfirmation(d,true);assert.equal(sheet.open,false);
 });
 test('short or cancelled sheet drags stay open and do not turn into close clicks',async()=>{
  const {w}=setup({}, {mobile:true});await tick();const d=w.document;d.getElementById('composer-options').click();await tick();
@@ -1551,19 +1902,19 @@ test('short or cancelled sheet drags stay open and do not turn into close clicks
  // Keyboard activation remains available even immediately after a cancelled pointer gesture.
  grip.click();assert.equal(sheet.open,false);
 });
-test('dragging content or a desktop dialog never dismisses it and approvals have no grip',async()=>{
+test('dragging content or a desktop dialog never dismisses it',async()=>{
  for(const mobile of [true,false]){
   const {w}=setup({}, {mobile});await tick();const d=w.document;d.getElementById('composer-options').click();await tick();
   d.getElementById('model-picker-permissions').click();await tick();
   const sheet=d.getElementById('options-dialog'),target=mobile?sheet.querySelector('.dialog-head'):sheet.querySelector('.sheet-grip');
   sheetPointer(w,target,'pointerdown',100,20);sheetPointer(w,target,'pointermove',100,200);sheetPointer(w,target,'pointerup',100,200);
-  assert.equal(sheet.open,true);assert.equal(d.querySelector('#request-dialog .sheet-grip'),null);
+  assert.equal(sheet.open,true);
  }
 });
-test('composer stays compact until focus and expands without losing the draft',async()=>{
+test('composer keeps a stable toolbar through focus changes without losing the draft',async()=>{
  const {w}=setup();await tick();const d=w.document,composer=d.getElementById('composer'),prompt=d.getElementById('prompt');
- assert.equal(composer.classList.contains('composer-expanded'),false);prompt.value='보존할 초안';prompt.focus();assert.equal(composer.classList.contains('composer-expanded'),true);
- prompt.blur();await tick();assert.equal(prompt.value,'보존할 초안');assert.equal(composer.classList.contains('composer-expanded'),false);
+ assert.equal(composer.classList.contains('composer-expanded'),true);prompt.value='보존할 초안';prompt.focus();assert.equal(composer.classList.contains('composer-expanded'),true);
+ prompt.blur();await tick();assert.equal(prompt.value,'보존할 초안');assert.equal(composer.classList.contains('composer-expanded'),true);
 });
 test('project tree has one project plus and no duplicate general-chat row',async()=>{
  const {w,snapshot}=setup();await tick();w.mobileCodexEvent('state',{...snapshot,projects:[{key:'p',name:'Project',selected:true,available:true}],sessions:[{id:'s',title:'Existing',workspaceKey:'p'}]});
@@ -1604,7 +1955,7 @@ test('session title grows before the fixed activity indicator at the row end',as
 test('notification permission guidance follows the Android permission state',async()=>{
  let permission=false;const {w,calls}=setup({'notifications.state':()=>({enabled:true,vibration:true,permission}),'notifications.openSettings':()=>({ok:true})});await tick();
  w.document.getElementById('settings').click();await tick();await tick();const row=w.document.querySelector('.notification-permission-row');
- assert.equal(row.hidden,false);assert.equal(w.document.getElementById('notification-settings-button').textContent,'Android 알림 설정');w.document.getElementById('notification-settings-button').click();await tick();
+ assert.equal(row.hidden,false);assert.equal(w.document.getElementById('notification-settings-button').textContent,'Android 通知设置');w.document.getElementById('notification-settings-button').click();await tick();
  assert.ok(calls.some(call=>call.action==='notifications.openSettings'));permission=true;w.mobileCodexEvent('notifications.changed',{});await tick();await tick();assert.equal(row.hidden,true);
 });
 
@@ -1639,10 +1990,10 @@ test('tool errors are compact and failed buttons show feedback inside the open m
   throw Error(payload);
  }});await tick();const d=w.document;d.getElementById('show-tools').click();await tick();d.getElementById('show-tools-panel').click();await tick();await tick();
  assert.doesNotMatch(d.getElementById('tools-list').textContent,/private-response|diagnostic line/);
- const login=[...d.querySelectorAll('#tools-list button')].find(b=>b.textContent==='로그인');assert.ok(login);
+ const login=[...d.querySelectorAll('#tools-list button')].find(b=>b.textContent==='登录');assert.ok(login);
  login.click();await tick();const feedback=d.getElementById('toast');
  assert.equal(feedback.parentElement,d.getElementById('tools-dialog'));
- assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/요청을 처리하지 못했습니다/);
+ assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/无法完成请求/);
  assert.equal(login.disabled,false);
 });
 
@@ -1670,7 +2021,7 @@ test('terminal sends code and blank Enter to the running session without logging
  d.getElementById('show-terminal').click();await tick();
  const entry=d.getElementById('terminal-command'),form=d.getElementById('terminal-form');
  entry.value='claude auth login';form.dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
- assert.equal(d.getElementById('terminal-submit').textContent,'입력 전송');
+ assert.equal(d.getElementById('terminal-submit').textContent,'发送输入');
  entry.value='fixture-private-code';form.dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
  assert.deepEqual(calls.filter(c=>c.action==='terminal.input').at(-1).args,{id:'login-1',text:'fixture-private-code'});
  assert.equal(entry.value,'');assert.equal(entry.type,'password');
@@ -1679,7 +2030,7 @@ test('terminal sends code and blank Enter to the running session without logging
  assert.equal(calls.filter(c=>c.action==='terminal.input').at(-1).args.text,'');
  assert.equal(calls.filter(c=>c.action==='terminal.run').length,1);
  d.querySelector('[data-close="terminal-dialog"]').click();d.getElementById('show-terminal').click();await tick();
- assert.equal(d.getElementById('terminal-submit').textContent,'입력 전송');
+ assert.equal(d.getElementById('terminal-submit').textContent,'发送输入');
  w.close();
 });
 
@@ -1690,11 +2041,11 @@ test('terminal exit clears unsent code and stale input is never executed as a co
  }});await tick();const d=w.document;d.getElementById('show-terminal').click();await tick();
  const entry=d.getElementById('terminal-command');entry.value='expired-code';
  d.getElementById('terminal-form').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();await tick();
- assert.equal(entry.value,'');assert.equal(d.getElementById('terminal-submit').textContent,'실행');
+ assert.equal(entry.value,'');assert.equal(d.getElementById('terminal-submit').textContent,'运行');
  assert.match(d.getElementById('terminal-status').textContent,/Terminal ended/);
  assert.equal(calls.filter(c=>c.action==='terminal.run').length,0);
  w.mobileCodexEvent('terminal.state',{id:'login-1',revision:1,running:true,output:'old'});
- assert.equal(d.getElementById('terminal-submit').textContent,'실행');w.close();
+ assert.equal(d.getElementById('terminal-submit').textContent,'运行');w.close();
 });
 
 test('terminal queue rejection keeps unsent input and leaves stop available',async()=>{
@@ -1702,7 +2053,7 @@ test('terminal queue rejection keeps unsent input and leaves stop available',asy
  const {w,calls}=setup({'terminal.state':()=>terminal,'terminal.input':()=>({ok:false,reason:'input_queue_full'}),'terminal.stop':()=>({...terminal,stopping:true})});await tick();
  const d=w.document;d.getElementById('show-terminal').click();await tick();
  d.getElementById('terminal-command').value='keep this';d.getElementById('terminal-form').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();await tick();
- assert.equal(d.getElementById('terminal-command').value,'keep this');assert.match(d.getElementById('terminal-status').textContent,/가득/);
+ assert.equal(d.getElementById('terminal-command').value,'keep this');assert.match(d.getElementById('terminal-status').textContent,/已满/);
  assert.equal(d.getElementById('terminal-stop').disabled,false);d.getElementById('terminal-stop').click();await tick();
  assert.equal(calls.filter(c=>c.action==='terminal.stop').length,1);w.close();
 });
@@ -1713,7 +2064,7 @@ test('terminal input failure disables only input, survives reopening and still d
  const d=w.document,entry=d.getElementById('terminal-command'),form=d.getElementById('terminal-form');
  d.getElementById('show-terminal').click();await tick();entry.value='keep-private-code';
  w.mobileCodexEvent('terminal.inputError',{id:'failed',revision:2,reason:'input_closed'});
- assert.match(d.getElementById('terminal-status').textContent,/입력을 보내지 못했습니다/);
+ assert.match(d.getElementById('terminal-status').textContent,/无法将输入发送到终端/);
  assert.equal(entry.disabled,true);assert.equal(d.getElementById('terminal-submit').disabled,true);
  assert.equal(d.getElementById('terminal-stop').disabled,false);
  form.dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
@@ -1724,10 +2075,10 @@ test('terminal input failure disables only input, survives reopening and still d
  terminal={...terminal,revision:3,output:'WaitingStill running',inputError:'input_closed'};
  d.querySelector('[data-close="terminal-dialog"]').click();d.getElementById('show-terminal').click();await tick();
  assert.equal(entry.value,'keep-private-code');assert.equal(entry.disabled,true);
- assert.match(d.getElementById('terminal-status').textContent,/입력을 보내지 못했습니다/);
+ assert.match(d.getElementById('terminal-status').textContent,/无法将输入发送到终端/);
  d.getElementById('terminal-stop').click();await tick();
  assert.equal(calls.filter(c=>c.action==='terminal.stop').length,1);
- assert.match(d.getElementById('terminal-status').textContent,/중지하는 중/);w.close();
+ assert.match(d.getElementById('terminal-status').textContent,/正在停止/);w.close();
 });
 
 test('terminal closed-input rejection is persistent and distinct from queue backpressure',async()=>{
@@ -1738,7 +2089,7 @@ test('terminal closed-input rejection is persistent and distinct from queue back
  }});await tick();const d=w.document;d.getElementById('show-terminal').click();await tick();
  const entry=d.getElementById('terminal-command'),form=d.getElementById('terminal-form');entry.value='private-code';
  form.dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();await tick();
- assert.match(d.getElementById('terminal-status').textContent,/입력을 보내지 못했습니다/);
+ assert.match(d.getElementById('terminal-status').textContent,/无法将输入发送到终端/);
  assert.doesNotMatch(d.getElementById('terminal-status').textContent,/가득|전송했습니다/);
  assert.equal(entry.value,'private-code');assert.equal(entry.disabled,true);
  form.dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
@@ -1754,7 +2105,7 @@ test('terminal queued acknowledgement cannot overwrite an asynchronous input fai
  d.getElementById('terminal-form').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
  w.mobileCodexEvent('terminal.inputError',{id:'failed',revision:2,reason:'input_closed'});
  finish({ok:true,queued:true,id:'failed'});await tick();
- assert.match(d.getElementById('terminal-status').textContent,/입력을 보내지 못했습니다/);
+ assert.match(d.getElementById('terminal-status').textContent,/无法将输入发送到终端/);
  assert.equal(entry.value,'private-code');assert.equal(entry.disabled,true);w.close();
 });
 
@@ -1775,7 +2126,7 @@ test('terminal ignores stale input errors and late replies after a replacement',
   assert.equal(entry.value,'new-draft',reply);assert.equal(entry.disabled,false,reply);
   assert.equal(d.getElementById('terminal-submit').disabled,false,reply);
   assert.equal(d.getElementById('terminal-output').textContent,'New',reply);
-  assert.equal(d.getElementById('terminal-status').textContent,'실행 중인 프로그램에 입력을 보냅니다.',reply);w.close();
+  assert.equal(d.getElementById('terminal-status').textContent,'输入将发送到正在运行的程序。',reply);w.close();
  }
 });
 
@@ -1794,22 +2145,23 @@ test('terminal ignores failure events after stopping and restores failed state o
  assert.equal(d.getElementById('terminal-submit').textContent,'Run');w.close();
 });
 
-test('deleting unrelated projects and conversations remains available during Codex or Pro work',async()=>{
- for (const mode of ['busy','proBusy','background']) {
+test('deleting unrelated projects and conversations remains available during Codex work',async()=>{
+ for (const mode of ['busy','background']) {
   const {w,calls,snapshot}=setup();await tick();const d=w.document;
   const projects=[{key:'a',name:'A',available:true},{key:'b',name:'B',available:true}];
   const sessions=[{id:'a-chat',title:'A chat',workspaceKey:'a',busy:true},{id:'b-chat',title:'B chat',workspaceKey:'b',busy:false}];
   const current={...snapshot,threadId:mode==='background'?'b-chat':'a-chat',workspace:{key:mode==='background'?'b':'a',selected:true},projects,sessions,[mode==='background'?'busy':mode]:mode!=='background'};
   w.mobileCodexEvent('state',current);
   d.querySelector('[data-project-menu-key="b"]').click();await tick();
-  const removal=()=>[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='프로젝트 목록에서 제거');
+  const removal=()=>[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除');
   assert.equal(removal().disabled,false);
   w.mobileCodexEvent('state',current);assert.equal(removal().disabled,false,'live updates preserve target-scoped availability');
-  removal().click();await tick();assert.deepEqual(calls.find(c=>c.action==='projects.remove').args,{key:'b'});
+  removal().click();await tick();d.querySelector('#project-remove-card .danger').click();await tick();assert.deepEqual(calls.find(c=>c.action==='projects.remove').args,{key:'b'});
   d.querySelector('[data-project-menu-key="a"]').click();await tick();assert.equal(removal().disabled,true);
-  d.getElementById('project-actions-dialog').close();
-  [...d.querySelectorAll('.session-more')].find(b=>b.getAttribute('aria-label')==='B chat 관리').click();await tick();
-  [...d.querySelectorAll('#session-actions button')].find(b=>b.textContent==='삭제').click();await tick();
+  w.mobileCodexBack();
+  [...d.querySelectorAll('.session-more')].find(b=>b.getAttribute('aria-label')==='B chat 操作').click();await tick();
+  d.querySelector('[data-session-delete]').click();await tick();
+ d.querySelector('[data-session-delete]').click();await tick();
   assert.deepEqual(calls.find(c=>c.action==='chat.delete').args,{id:'b-chat'});
  }
 });

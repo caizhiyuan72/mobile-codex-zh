@@ -16,9 +16,9 @@ final class VoiceInput {
     private static SharedPreferences receipts(Context context) { return context.getSharedPreferences("voice-results", 0); }
     static JSONObject begin(Context context, String origin, JSONObject draft) throws Exception {
         if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Main thread required");
-        if (active()) throw new IOException(t("이미 음성 입력 중입니다. 인식을 마치거나 취소해 주세요."));
-        if ((!origin.equals("main") && !origin.equals("floating")) || draft.optString("scope").isEmpty()) throw new IOException(t("입력할 대화를 먼저 열어 주세요."));
-        if (draft.optString("original").length() > 100000) throw new IOException(t("초안이 너무 깁니다. 내용을 나눠서 입력해 주세요."));
+        if (active()) throw new IOException(t("语音输入正在进行，请先完成或取消识别。"));
+        if ((!origin.equals("main") && !origin.equals("floating")) || draft.optString("scope").isEmpty()) throw new IOException(t("请先打开对话。"));
+        if (draft.optString("original").length() > 100000) throw new IOException(t("草稿过长，请拆分成较短内容。"));
         JSONObject request = parse(draft.toString());
         request.put("origin", origin); request.put("receiptId", UUID.randomUUID().toString());
         activate(context, request.getString("receiptId"));
@@ -43,7 +43,7 @@ final class VoiceInput {
     static void complete(Context context, JSONObject request, String text, String error) throws Exception {
         JSONObject result = parse(request.toString()); result.put("text", text); result.put("error", error);
         result.put("cancelled", text.isEmpty() && error.isEmpty()); result.put("timestamp", System.currentTimeMillis());
-        if (!receipts(context).edit().putString(request.getString("receiptId"), result.toString()).commit()) throw new IOException(t("음성 입력 결과를 저장하지 못했습니다."));
+        if (!receipts(context).edit().putString(request.getString("receiptId"), result.toString()).commit()) throw new IOException(t("无法保存语音输入结果。"));
         release(context, request.getString("receiptId")); changed(context);
     }
     static JSONArray pending(Context context, String origin) {
@@ -55,7 +55,7 @@ final class VoiceInput {
     @android.annotation.SuppressLint("ApplySharedPref") // Acknowledge only after the consumer has durably saved the draft.
     static void acknowledge(Context context, String origin, String id) throws IOException {
         String saved = receipts(context).getString(id, "");
-        if (!saved.isEmpty() && origin.equals(parse(saved).optString("origin")) && !receipts(context).edit().remove(id).commit()) throw new IOException(t("음성 입력 확인 기록을 저장하지 못했습니다."));
+        if (!saved.isEmpty() && origin.equals(parse(saved).optString("origin")) && !receipts(context).edit().remove(id).commit()) throw new IOException(t("无法保存语音输入确认信息。"));
     }
     static String merge(String current, JSONObject result) {
         String text = result.optString("text"), original = result.optString("original");

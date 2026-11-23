@@ -7,11 +7,12 @@ android {
     compileSdk 35
     buildFeatures { buildConfig true }
     defaultConfig {
-        applicationId 'dev.mobilecodex.app'
+        applicationId 'dev.mobilecodex.app.zhcnv3'
         minSdk 29
         targetSdk 35
-        versionCode 74
-        versionName '0.3.9'
+        versionCode 97
+        versionName '0.3.9-cn.26'
+        resourceConfigurations += ['en', 'zh', 'zh-rCN']
         buildConfigField 'String', 'SOURCE_SHA', '"' + ((System.getenv('GITHUB_SHA') ?: 'local').take(12)) + '"'
         buildConfigField 'String', 'REPORT_RELAY_URL', '"https://mobile-codex-diagnostic-relay.vercel.app"'
         ndk { abiFilters 'arm64-v8a' }
@@ -45,6 +46,17 @@ android {
             minifyEnabled false
             if (suppliedSigningStore) signingConfig signingConfigs.provided
         }
+        // Existing Codex CN API installation. Keep this package and its signing identity.
+        parallel {
+            initWith release
+            applicationIdSuffix '.next'
+            matchingFallbacks = ['release']
+        }
+        fresh {
+            initWith release
+            applicationIdSuffix '.fresh'
+            matchingFallbacks = ['release']
+        }
     }
     testOptions { unitTests { returnDefaultValues = true; includeAndroidResources = true } }
     lint { abortOnError true }
@@ -52,7 +64,6 @@ android {
 
 dependencies {
     implementation 'androidx.core:core:1.15.0'
-    implementation 'io.github.webrtc-sdk:android:150.7871.01'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'

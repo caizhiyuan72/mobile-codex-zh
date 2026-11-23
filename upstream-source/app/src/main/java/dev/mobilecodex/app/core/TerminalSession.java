@@ -31,7 +31,7 @@ public final class TerminalSession {
             "inputError", inputError, "output", output.toString(), "exitCode", exitCode == null ? JSONObject.NULL : exitCode);
     }
     public synchronized JSONObject start(ProcessBuilder builder) throws IOException {
-        if (busy()) throw new IOException(t("터미널 명령이 실행 중입니다."));
+        if (busy()) throw new IOException(t("已有终端命令正在运行。"));
         Process launched = builder.redirectErrorStream(true).start();
         process = launched; id = UUID.randomUUID().toString(); stopping = false; exitCode = null;
         input.clear(); pendingBytes = 0; inputError = "";
@@ -45,11 +45,11 @@ public final class TerminalSession {
     }
     public synchronized JSONObject input(String expectedId, String text) throws IOException {
         if (process == null || !process.isAlive() || stopping || !id.equals(expectedId))
-            throw new IOException(t("입력을 받을 터미널이 종료되거나 변경되었습니다."));
+            throw new IOException(t("接收输入的终端已结束或发生变化。"));
         if (!inputError.isEmpty()) return obj("ok", false, "reason", inputError, "id", id, "revision", revision);
         byte[] bytes = (text.replaceAll("[\\r\\n]+$", "") + "\n").getBytes(StandardCharsets.UTF_8);
         if (text.length() > 16384 || text.getBytes(StandardCharsets.UTF_8).length > 16384 || text.indexOf('\0') >= 0)
-            throw new IOException(t("터미널 입력이 너무 길거나 올바르지 않습니다."));
+            throw new IOException(t("终端输入过长或无效。"));
         // Includes the in-flight write. Acceptance means queued, not consumed by the CLI.
         if (pendingBytes + bytes.length > MAX_PENDING_BYTES)
             return obj("ok", false, "reason", "input_queue_full", "id", id);
@@ -86,7 +86,7 @@ public final class TerminalSession {
         synchronized (this) {
             if (process == null) return;
             if (expectedId != null && !id.equals(expectedId))
-                throw new IOException(t("입력을 받을 터미널이 종료되거나 변경되었습니다."));
+                throw new IOException(t("接收输入的终端已结束或发生变化。"));
             if (stopping) return;
             target = process; stopping = true; revision++;
             input.clear(); notifyAll();
@@ -115,7 +115,7 @@ public final class TerminalSession {
             }
             code = target.waitFor();
         } catch (IOException failure) {
-            synchronized (this) { if (process == target) output.append('\n').append(t("터미널 연결이 종료되었습니다.")); }
+            synchronized (this) { if (process == target) output.append('\n').append(t("终端已断开连接。")); }
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         finally {
             if (target.isAlive()) target.destroyForcibly();

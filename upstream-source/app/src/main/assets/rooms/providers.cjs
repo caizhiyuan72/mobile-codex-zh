@@ -11,16 +11,16 @@ const probeLimit=120000; // Above PROBE_SECONDS in provider-runtime.py, which bo
 const probeFresh=300000; // Every probe starts several CLIs that share one credential file.
 function lines(stream, receive, failure) {
   let pending='';stream.setEncoding('utf8');
-  stream.on('data',chunk=>{pending+=chunk;if(Buffer.byteLength(pending)>limit){failure(new Error('CLI 출력 제한을 초과했습니다.'));return;}
-    let at;while((at=pending.indexOf('\n'))>=0){const line=pending.slice(0,at);pending=pending.slice(at+1);if(line.trim())try{receive(JSON.parse(line));}catch(error){failure(new Error('CLI 구조화 응답을 읽지 못했습니다.'));}}});
+  stream.on('data',chunk=>{pending+=chunk;if(Buffer.byteLength(pending)>limit){failure(new Error('CLI 输出超出大小限制。'));return;}
+    let at;while((at=pending.indexOf('\n'))>=0){const line=pending.slice(0,at);pending=pending.slice(at+1);if(line.trim())try{receive(JSON.parse(line));}catch(error){failure(new Error('无法读取 CLI 的结构化响应。'));}}});
 }
 function choice(member,cap) {
-  if(!cap.models?.length)throw new Error('모델 목록을 불러오지 못했습니다. 계정에서 다시 조회해 주세요.');
-  if(!member.model)throw new Error('참가자 설정에서 사용할 모델을 선택해 주세요.');
-  if(member.model && !cap.models.some(m=>m.id===member.model))throw new Error('공급자 목록에 없는 모델입니다. 준비 상태를 새로 확인해 주세요.');
+  if(!cap.models?.length)throw new Error('无法加载模型列表。请在账号设置中重新查询。');
+  if(!member.model)throw new Error('请在成员设置中选择模型。');
+  if(member.model && !cap.models.some(m=>m.id===member.model))throw new Error('该模型不在服务商的模型列表中。请重新检查准备状态。');
   const m=cap.models.find(m=>m.id===member.model);
-  if(m?.efforts?.length&&!member.effort)throw new Error('참가자 설정에서 추론 강도를 선택해 주세요.');
-  if(member.effort && !(m?.efforts||[]).includes(member.effort))throw new Error('이 모델이 제공하지 않는 추론 설정입니다.');
+  if(m?.efforts?.length&&!member.effort)throw new Error('请在成员设置中选择推理强度。');
+  if(member.effort && !(m?.efforts||[]).includes(member.effort))throw new Error('该模型不支持此推理强度。');
 }
 // CLIs run as Node → PRoot → sh → provider-runtime.py → CLI. PRoot ignores SIGTERM and its
 // tracees can outlive it while holding our pipes, so a stop must never wait on the pipes:
@@ -58,12 +58,12 @@ function settleOnExit(child) {
 class CliProvider {
   constructor(id,{root,host,emit}) {this.id=id;this.root=root;this.host=host;this.emit=emit;this.sessions=new Map();this.setup=null;this.checkedAt=0;this.cap={id,name:id==='agy'?'Antigravity':'Claude Code',state:'unchecked',auth:'unknown',models:[],resume:true,streaming:true,approval:'mobile-mcp',nativeApproval:false};}
   async launch(action,config={},key='setup') {
-    if(this.disposed)throw new Error('공급자 연결이 종료되었습니다.');
+    if(this.disposed)throw new Error('与服务商的连接已关闭。');
     const dir=path.join(this.root,'work',this.id,key);fs.mkdirSync(dir,{recursive:true,mode:0o700});
     for(const name of ['provider-runtime.py','terminal_io.py','mobile-mcp.py'])fs.copyFileSync(path.join(__dirname,name),path.join(dir,name));
     fs.writeFileSync(path.join(dir,'run.json'),JSON.stringify(config),{mode:0o600});
     const launch=await this.host('launch',{provider:this.id,action,directory:dir});
-    if(this.disposed)throw new Error('공급자 연결이 종료되었습니다.');
+    if(this.disposed)throw new Error('与服务商的连接已关闭。');
     // Own process group, so a stop reaches PRoot's children too.
     return settleOnExit(spawn(launch.argv[0],launch.argv.slice(1),{cwd:dir,env:process.env,stdio:['pipe','pipe','pipe'],windowsHide:true,detached:groups}));
   }
@@ -78,11 +78,11 @@ class CliProvider {
     let child,timer;
     try {
       child=await this.launch('probe');this.probeChild=child;
-      if(this.preparing)throw new Error('설치 또는 로그인으로 확인을 중단했습니다.');
+      if(this.preparing)throw new Error('正在安装或登录，已停止检查。');
       const data=await new Promise((resolve,reject)=>{
-        let result;timer=setTimeout(()=>reject(new Error('준비 상태 확인 시간이 초과됐습니다.')),probeLimit);
+        let result;timer=setTimeout(()=>reject(new Error('检查准备状态超时。')),probeLimit);
         lines(child.stdout,e=>{if(e.kind==='probe')result=e;},reject);child.stderr.resume();
-        child.once('error',reject);child.once('close',code=>{clearTimeout(timer);result?resolve(result):reject(new Error('CLI 확인에 실패했습니다 ('+code+'). Linux 도구를 설치·활성화해 주세요.'));});child.stdin.end();
+        child.once('error',reject);child.once('close',code=>{clearTimeout(timer);result?resolve(result):reject(new Error('CLI 检查失败（'+code+'）。请安装并启用 Linux 工具。'));});child.stdin.end();
       });
       this.settle(data);
     }catch(e){
@@ -95,7 +95,7 @@ class CliProvider {
   }
   settle({kind,steps,...data}) {
     if(data.state==='unverified'&&this.cap.state==='ready') {
-      this.cap={...this.cap,reason:'상태를 다시 확인하지 못해 마지막 연결 상태를 표시합니다. '+data.reason};return;
+      this.cap={...this.cap,reason:'无法重新检查连接，当前显示上一次的状态。 '+data.reason};return;
     }
     this.checkedAt=data.state==='ready'?Date.now():0;
     // Retained quota rows keep their original observation time after a failed probe.
@@ -106,26 +106,26 @@ class CliProvider {
       models:keep&&!data.models?.length?this.cap.models:data.models||[],usage:keep&&!data.usage?.length?this.cap.usage:data.usage||[],usageUpdatedAt:keep?usageUpdatedAt:0};
   }
   async validate(member) {
-    if(this.setup||this.preparing||this.disposed)throw new Error('공급자의 설치·로그인 또는 종료를 먼저 마쳐 주세요.');
+    if(this.setup||this.preparing||this.disposed)throw new Error('请先完成服务商的安装、登录或关闭操作。');
     if(this.cap.state!=='ready')await this.check();
-    if(this.cap.state!=='ready')throw new Error(this.cap.reason||'공급자 설치와 로그인을 확인해 주세요.');
+    if(this.cap.state!=='ready')throw new Error(this.cap.reason||'请确认已安装 CLI 并登录服务商账号。');
     choice(member,this.cap);
     const approval=member.approvalMode||'ask';
-    if(!['ask','allow-all','auto-review'].includes(approval))throw new Error('지원하지 않는 승인 방식입니다.');
+    if(!['ask','allow-all','auto-review'].includes(approval))throw new Error('不支持此审批方式。');
     if(approval==='auto-review'&&(this.id!=='claude'||!this.cap.nativeAutoReview||this.cap.autoReviewUnavailableModels?.includes(member.model)))
-      throw new Error('이 CLI 또는 모델에서 자동 검토를 사용할 수 없습니다. 참가자 승인 방식을 다시 선택해 주세요.');
+      throw new Error('此 CLI 或模型不支持自动审查。请在成员设置中重新选择审批方式。');
   }
   async setupStart(action) {
-    if(!['install','login'].includes(action))throw new Error('지원하지 않는 준비 작업입니다.');
-    if(this.setup||this.preparing)throw new Error('진행 중인 설치 또는 로그인을 먼저 마쳐 주세요.');
-    if([...this.sessions.values()].some(s=>s.turn))throw new Error('공급자의 발언을 먼저 중지해 주세요.');
+    if(!['install','login'].includes(action))throw new Error('不支持此设置操作。');
+    if(this.setup||this.preparing)throw new Error('请先完成当前的安装或登录。');
+    if([...this.sessions.values()].some(s=>s.turn))throw new Error('请先停止此服务商正在生成的回复。');
     this.preparing=true;
     let child;
     try{if(this.checking){terminate(this.probeChild);await this.checking;}await this.close();child=await this.launch(action);this.setup=child;}
     finally{this.preparing=false;}
     this.cap.state=action==='install'?'installing':'login';
-    this.emit('agents.setup',{provider:this.id,kind:'started',action,text:action==='install'?'Linux 도구 갱신과 CLI 설치를 시작합니다.\n':'CLI 로그인을 시작합니다.\n'});
-    lines(child.stdout,e=>this.emit('agents.setup',{provider:this.id,...e,...(e.kind==='runtime-error'?{kind:'error',text:e.message}:{})}),()=>this.emit('agents.setup',{provider:this.id,kind:'output',text:'CLI 출력을 읽지 못했습니다.'}));
+    this.emit('agents.setup',{provider:this.id,kind:'started',action,text:action==='install'?'开始更新 Linux 工具并安装 CLI。\n':'开始登录 CLI。\n'});
+    lines(child.stdout,e=>this.emit('agents.setup',{provider:this.id,...e,...(e.kind==='runtime-error'?{kind:'error',text:e.message}:{})}),()=>this.emit('agents.setup',{provider:this.id,kind:'output',text:'无法读取 CLI 输出。'}));
     child.stderr.setEncoding('utf8');child.stderr.on('data',text=>this.emit('agents.setup',{provider:this.id,kind:'output',text:text.slice(0,4000)}));
     child.stdin.on('error',()=>{});
     child.once('error',e=>this.emit('agents.setup',{provider:this.id,kind:'error',text:e.message}));
@@ -134,9 +134,9 @@ class CliProvider {
   }
   setupInput(text) {
     const child=this.setup;
-    if(!child||child.exitCode!==null||child.signalCode||child.stdin.destroyed||!child.stdin.writable)throw new Error('진행 중인 설치 또는 로그인이 없습니다.');
-    if(String(text).length>16000)throw new Error('입력이 너무 깁니다.');
-    return new Promise((resolve,reject)=>child.stdin.write(JSON.stringify({text:String(text)})+'\n',error=>error?reject(new Error('입력을 전달하지 못했습니다. 설치 또는 로그인 상태를 확인해 주세요.')):resolve({ok:true})));
+    if(!child||child.exitCode!==null||child.signalCode||child.stdin.destroyed||!child.stdin.writable)throw new Error('当前没有正在进行的安装或登录。');
+    if(String(text).length>16000)throw new Error('输入过长。');
+    return new Promise((resolve,reject)=>child.stdin.write(JSON.stringify({text:String(text)})+'\n',error=>error?reject(new Error('无法发送输入。请检查安装或登录状态。')):resolve({ok:true})));
   }
   async setupStop() {const child=this.setup;this.setup=null;await terminate(child);return {ok:true};}
   async run(input) {
@@ -147,7 +147,7 @@ class CliProvider {
     // Stop and immediate resend can arrive before the previous process exits.
     // Never replace its turn callbacks or write the new prompt into a dying CLI.
     if(s?.ending || s?.turn?.signal.aborted){await this.end(s);s=null;}
-    if(s?.turn)throw new Error('이 참가자가 이미 답하고 있습니다. 먼저 중지해 주세요.');
+    if(s?.turn)throw new Error('此成员正在回复，请先停止当前回复。');
     if(s){clearTimeout(s.idleTimer);s.idleTimer=null;}
     if(s && (s.signature!==signature||s.child.exitCode!==null||s.child.signalCode)){await this.end(s);s=null;}
     if(!s) {
@@ -166,7 +166,7 @@ class CliProvider {
           if(turn.member.approvalMode==='auto-review'&&!s.nativeAutoReview) {
             this.cap.autoReviewUnavailableModels=[...new Set([...(this.cap.autoReviewUnavailableModels||[]),turn.member.model])];
             this.emit('agents.providers',{providers:[this.cap]});
-            turn.reject(new Error('Claude가 자동 검토 모드를 활성화하지 못했습니다. CLI·모델·계정 설정을 확인하거나 승인 방식을 다시 선택해 주세요.'));
+            turn.reject(new Error('Claude 未能启用自动审查。请检查 CLI、模型和账号设置，或重新选择审批方式。'));
             this.end(s);return;
           }
         }
@@ -179,18 +179,18 @@ class CliProvider {
       },error=>{s.turn?.reject(error);terminate(s.child);});
       s.child.stderr.resume(); // Credentials and raw diagnostics never enter history.
       s.child.stdin.on('error',e=>s.turn?.reject(e));
-      s.child.once('error',e=>s.turn?.reject(new Error('CLI를 실행하지 못했습니다: '+e.message)));
-      s.child.once('close',code=>{s.turn?.reject(new Error('CLI가 종료되었습니다 ('+code+'). 준비 상태를 확인해 주세요.'));s.server.close();if(this.sessions.get(key)===s)this.sessions.delete(key);});
+      s.child.once('error',e=>s.turn?.reject(new Error('无法启动 CLI：'+e.message)));
+      s.child.once('close',code=>{s.turn?.reject(new Error('CLI 已退出（'+code+'）。请检查准备状态。'));s.server.close();if(this.sessions.get(key)===s)this.sessions.delete(key);});
     }
-    if(signal.aborted){await this.end(s);throw new Error('발언이 중지되었습니다.');}
+    if(signal.aborted){await this.end(s);throw new Error('回复已停止。');}
     return new Promise((resolve,reject)=>{
       let settled=false;
       const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);s.turn=null;
         // A failed turn may be the first sign of a lost login: don't answer the next check from cache.
         if(error&&!signal.aborted)this.checkedAt=0;
         if(!error)s.idleTimer=setTimeout(()=>this.end(s),300000).unref();error?reject(error):resolve(value);};
-      const cancel=()=>this.end(s).then(()=>finish(new Error('발언이 중지되었습니다.')));
-      const timer=setTimeout(()=>this.end(s).then(()=>finish(new Error('응답 시간이 10분을 초과했습니다.'))),600000);
+      const cancel=()=>this.end(s).then(()=>finish(new Error('回复已停止。')));
+      const timer=setTimeout(()=>this.end(s).then(()=>finish(new Error('响应时间已超过 10 分钟。'))),600000);
       s.turn={...input,resolve:value=>finish(null,value),reject:error=>finish(error)};
       signal.addEventListener('abort',cancel,{once:true});
       const data=this.id==='claude'?{type:'user',message:{role:'user',content:input.prompt}}:{event:'user',message:{content:input.prompt}};
@@ -201,20 +201,20 @@ class CliProvider {
     let body='';req.on('data',d=>{body+=d;if(body.length>limit)req.destroy();});
     req.on('end',async()=>{
       try {
-        if(req.method!=='POST'||req.headers.authorization!=='Bearer '+s.token)throw new Error('접근할 수 없습니다.');
+        if(req.method!=='POST'||req.headers.authorization!=='Bearer '+s.token)throw new Error('无法访问。');
         const p=JSON.parse(body),turn=s.turn;
-        if(!turn||turn.signal.aborted)throw new Error('발언이 종료되었습니다.');
+        if(!turn||turn.signal.aborted)throw new Error('回复已结束。');
         const {room,member}=turn;let result;
         if(p.action==='list')result=await this.host('tools',{roomId:room.id,runId:room.runId,mode:room.mode});
         else {
-          if(room.mode==='chat')throw new Error('대화 전용 방에서는 도구를 사용할 수 없습니다.');
+          if(room.mode==='chat')throw new Error('仅聊天的房间不能使用工具。');
           const read=['mobile_read','mobile_list','mobile_search','mobile_phone_status','mobile_phone_apps','mobile_phone_screen'];
           const mutating=!read.includes(p.name);
-          if(mutating && room.mode!=='write')throw new Error('읽기 전용 방에서는 수정·실행할 수 없습니다.');
+          if(mutating && room.mode!=='write')throw new Error('只读房间不能修改文件或执行命令。');
           if(mutating && member.approvalMode==='auto-review' && (this.id!=='claude'||!s.nativeAutoReview))
-            throw new Error('공급자의 자동 검토가 활성화되지 않았습니다.');
-          if(mutating && !await turn.approve(p.name,JSON.stringify(p.arguments,null,2)))throw new Error('사용자가 작업을 거절했습니다.');
-          if(turn.signal.aborted||s.turn!==turn)throw new Error('작업이 중지되었습니다.');
+            throw new Error('服务商尚未启用自动审查。');
+          if(mutating && !await turn.approve(p.name,JSON.stringify(p.arguments,null,2)))throw new Error('用户拒绝了此操作。');
+          if(turn.signal.aborted||s.turn!==turn)throw new Error('操作已停止。');
           turn.event({kind:'status',status:'working'});
           result=await this.host('tool',{roomId:room.id,runId:room.runId,projectKey:room.projectKey,mode:room.mode,name:p.name,arguments:p.arguments||{}});
         }

@@ -1,17 +1,5 @@
 (function(root){
   'use strict';
-  const chatIcons = ['idle','acknowledged','thinking','working','question','done','blocked','smug','greeting','inspecting','explaining','discovery','caution','sorry','happy','skeptical','eohu','uhehe','insult','punch','uncertain','disagree','not-allowed','file-request','reviewed','source','fixed','lol','good-grief','wink','heart','sleep'];
-  const chatIconLabels = ['대기중','접수','생각중','작업중','주인님?','해냈다','왜안됨','계획대로','안녕','어디보자','잘보세요','찾았다','잠깐','미안해요','좋았어','진짜?','어흐~','우헤헤','븅신','펀치','조금애매함','아닌데?','그건안돼','파일줘봐','검토완료','출처있음','수정완료','ㄹㅇㅋㅋ','정말이지','윙크','하트','잘자'];
-  const chatIconCategories = {
-    질문:'question', 확인:'reviewed', 검색:'inspecting', 완료:'done', 긍정:'happy', 부정:'disagree',
-    웃기:'uhehe', 사랑:'heart', 화남:'punch', 당황:'blocked', 잠:'sleep', 미안:'sorry', 요청:'file-request',
-    작업중:'working', 자랑:'smug', 오류:'blocked', 응원:'heart', 인사:'greeting', 대기:'idle', 생각:'thinking',
-    설명:'explaining', 발견:'discovery', 주의:'caution', 의심:'skeptical', 애매:'uncertain', 근거:'source'
-  };
-  const normalizeIconTag = value => String(value || '').replace(/[\u200B-\u200D\uFEFF\s]/g, '').toLowerCase();
-  const chatIconTags = Object.create(null);
-  chatIconLabels.forEach((label, index) => { chatIconTags[normalizeIconTag(label)] = chatIcons[index]; });
-  Object.entries(chatIconCategories).forEach(([category, icon]) => { chatIconTags[normalizeIconTag(category)] = icon; });
   function fileDiff(before,after,options={}){
     // Bound both alignment work and rendered output: a large rewrite must never
     // allocate a quadratic LCS table or fill the preview with deletions alone.
@@ -158,11 +146,52 @@
     });
     return {hunks:selected,truncated,approximate,identical:String(before??'')===String(after??'')};
   }
+  // Only public activity metadata and tool output belong in the transcript UI.
+  // Reasoning text, summaries, encrypted content and arbitrary event payloads do not.
+  function toolActivityKind(tool) {
+    return /write|edit|patch|mutate|create|mkdir|rename|move|delete/.test(tool) ? 'editing' : /search|find/.test(tool) ? 'searching' : /read|list/.test(tool) ? 'reading' : /exec|command|terminal/.test(tool) ? 'command' : 'tool';
+  }
+  function taskActivity(name, data = {}) {
+    const params = data.params || {}, item = params.item || {};
+    const method = String(data.method || ''), type = String(item.type || '');
+    const key = String(item.id || params.itemId || '');
+    if (name === 'message.delta') return {kind:'responding', key:'', detail:'', output:''};
+    if (name === 'tool') {
+      const tool = String(data.name || '');
+      return {kind:toolActivityKind(tool), key:String(data.itemId || ''), detail:[tool.replace(/^mobile_/, ''), data.path].filter(Boolean).join(' · '), output:''};
+    }
+    if (name === 'server.request' && method.includes('requestApproval'))
+      return {kind:method.includes('commandExecution') ? 'command' : method.includes('fileChange') ? 'editing' : 'tool',
+        key:key || String(data.key || ''), detail:String(params.command || ''), output:'', approval:true, reason:String(params.reason || '')};
+    if (name !== 'agent.event') return null;
+    if (/reasoning/i.test(type) || /\/reasoning\//i.test(method))
+      return {kind:'thinking', key:'', detail:'', output:''};
+    if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta')
+      return {kind:method.includes('fileChange') ? 'editing' : 'command', key, detail:'', output:String(params.delta || ''), append:true};
+    if (method === 'turn/diff/updated') return {kind:'editing', key:'turn-diff', detail:'', output:String(params.diff || ''), completed:true};
+    if (method !== 'item/started' && method !== 'item/completed') return null;
+    const completed = method === 'item/completed';
+    if (type === 'agentMessage') return {kind:'responding', key:'', detail:'', output:''};
+    const interrupted = item.status === 'declined' || item.status === 'interrupted';
+    if (type === 'commandExecution') {
+      const actions = Array.isArray(item.commandActions) ? item.commandActions : [];
+      const kind = actions.length && actions.every(action => action.type === 'read' || action.type === 'listFiles') ? 'reading' :
+        actions.length && actions.every(action => action.type === 'search') ? 'searching' : 'command';
+      return {kind, key, detail:String(item.command || ''), output:String(item.aggregatedOutput || ''), completed, interrupted, failed:item.status === 'failed' || (item.exitCode != null && Number(item.exitCode) !== 0)};
+    }
+    if (type === 'fileChange') return {kind:'editing', key, detail:(item.changes || []).map(change => change.path).filter(Boolean).join(', '), output:(item.changes || []).map(change => [change.path, change.diff].filter(Boolean).join('\n')).join('\n\n'), completed, interrupted, failed:item.status === 'failed'};
+    if (type === 'mcpToolCall' || type === 'dynamicToolCall') {
+      const result = item.result || {}, tool = String(item.tool || item.name || '');
+      const content = type === 'dynamicToolCall' ? item.contentItems || [] : result.content || [];
+      const output = typeof result === 'string' ? result : content.filter(part => part.type === 'text' || part.type === 'inputText').map(part => part.text || '').join('\n');
+      return {kind:toolActivityKind(tool), key, detail:[item.server, tool].filter(Boolean).join(' · '), output, completed, interrupted, failed:item.status === 'failed' || item.success === false || !!item.error};
+    }
+    if (type === 'webSearch') return {kind:'searching', key, detail:String(item.query || ''), output:'', completed};
+    return null;
+  }
   const core={
+    taskActivity,
     fileDiff,
-    chatIconNames(){return chatIcons.slice();},
-    chatIconUrl(name){const i=chatIcons.indexOf(name);return i<0 ? null : '/chat-icons/'+String(i+1).padStart(2,'0')+'-'+name+'.png';},
-    chatIconForTag(tag){return chatIconTags[normalizeIconTag(tag)] || null;},
     parent(path){return path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';},
     basename(path){return path.slice(path.lastIndexOf('/')+1);},
     join(parent,name){return parent?parent+'/'+name:name;},

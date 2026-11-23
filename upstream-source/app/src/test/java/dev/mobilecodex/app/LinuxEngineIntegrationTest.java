@@ -46,7 +46,7 @@ public class LinuxEngineIntegrationTest {
         running.put("another-chat", "active-turn");
         try {
             try { call(engine, "linux.remove", obj()); fail("Running work must block removal"); }
-            catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("진행 중인 작업")); }
+            catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("先停止当前任务")); }
             assertEquals("active-turn", running.get("another-chat"));
         } finally { engine.io.shutdownNow(); }
     }

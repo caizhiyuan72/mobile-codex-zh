@@ -38,6 +38,38 @@ def patch_host_name(binary, expected_occurrences=2):
     return binary.replace(old, new)
 
 
+def ultra_catalog(binary):
+    # Cross-build hosts cannot execute the Android ELF. Read its pinned bundled
+    # models.json verbatim; never borrow tool settings or instructions from a sibling model.
+    marker = b'{\n  "models": [\n'
+    if binary.count(marker) != 1:
+        raise ValueError('Unrecognized bundled catalog; review the pinned runtime')
+    start = binary.index(marker)
+    catalog, _ = json.JSONDecoder().raw_decode(binary[start:start + 4 * 1024 * 1024].decode('utf-8', 'replace'))
+    # models-manager/prompt.md from the corresponding source (Apache-2.0).
+    offset = binary.index(b'You are a coding agent running in the Codex CLI, a terminal-based coding assistant.')
+    prompt = binary[offset:offset + 20903]
+    if hashlib.sha256(prompt).hexdigest() != 'ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807':
+        raise ValueError('Unrecognized fallback instructions; review the pinned runtime')
+    # The mobile client does not advertise the checklist tool. Codex removes
+    # these sections from its own fallback but not from a catalog override.
+    prompt = prompt[:prompt.index(b'## Planning\n')] + prompt[prompt.index(b'## Task execution\n'):]
+    prompt = prompt[:prompt.index(b'## `update_plan`\n')]
+    available = {model['slug'] for model in catalog['models']}
+    for slug in ('gpt-6.2-sol', 'gpt-6.2-astra'):
+        if slug not in available:
+            # Match model_info_from_slug in the pinned runtime.
+            catalog['models'].append(dict(slug=slug, display_name=slug,
+                shell_type='unified_exec', visibility='none', supported_in_api=True,
+                priority=99, supported_reasoning_levels=[dict(effort=level, description=level)
+                    for level in ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')], include_apps_usage_instructions=False,
+                base_instructions=prompt.decode('utf-8'),
+                default_reasoning_summary='auto', support_verbosity=False,
+                truncation_policy=dict(mode='bytes', limit=10000), context_window=272000,
+                max_context_window=272000, experimental_supported_tools=[], multi_agent_reasoning_effort='max'))
+    return catalog
+
+
 def prepare(archive, lock_path=None):
     lock = json.loads((lock_path or ROOT / 'tools/runtime-lock.json').read_text())
     if lock.get('testOnly') and archive is None:
@@ -76,7 +108,9 @@ def prepare(archive, lock_path=None):
             with tar.extractfile(member) as src, target.open('wb') as dst:
                 shutil.copyfileobj(src, dst)
             if target.name == 'libcodex.so':
-                target.write_bytes(patch_host_name(target.read_bytes(), lock.get('hostNameOccurrences', 2)))
+                binary = target.read_bytes()
+                (assets / 'mobile-models.json').write_text(json.dumps(ultra_catalog(binary), ensure_ascii=False, separators=(',', ':')))
+                target.write_bytes(patch_host_name(binary, lock.get('hostNameOccurrences', 2)))
             if target.suffix == '.so':
                 with target.open('rb') as f:
                     header = f.read(20)

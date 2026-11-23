@@ -13,6 +13,8 @@ The APK bundles a pinned Android port of Codex:
 
 AndroidX Core 1.15.0 (Apache-2.0) supplies window-inset compatibility across Android versions. Java desugaring libraries are provided by the Android Open Source Project. Test-only dependencies include JUnit, AndroidX Test, Robolectric, org.json, jsdom, and Playwright, as declared in the Gradle/npm manifests. Their upstream license terms apply.
 
+KaTeX 0.19.1 (MIT) renders chat mathematics. The browser bundle, stylesheet, and WOFF2 fonts come from `katex@0.19.1` and are packaged in `assets/web/katex/`. Its license is packaged in `assets/legal/KATEX-LICENSE`. Upstream source is available at https://github.com/KaTeX/KaTeX/tree/v0.19.1.
+
 Native Live audio uses `io.github.webrtc-sdk:android:150.7871.01`, distributed through Maven Central by https://github.com/webrtc-sdk/android/tree/v150.7871.01. WebRTC is BSD-3-Clause with additional bundled third-party licenses. The distributor's MIT license and complete WebRTC notices from that release are packaged in `assets/legal/WEBRTC-SDK-LICENSE` and `assets/legal/WEBRTC-LICENSES.md`.
 
 ## Original project code
@@ -24,6 +26,10 @@ Original Mobile Codex code and original artwork are GPL-3.0-only (see LICENSE), 
 Python, Node.js, Git, and their runtime libraries are pinned in `tools/devtools-lock.json`. These components have different upstream licenses, including permissive and copyleft terms. The preparation scripts preserve package license notices in the APK. `devtools-corresponding-source.zip` accompanies releases with upstream source archives, pinned Termux build recipes, patches, packaging scripts, and their notices. `SOURCES.json` maps each source archive to its original URL and SHA-256. Keep the corresponding sources and notices available when redistributing an APK.
 
 App license notices are also packaged under `assets/legal/`.
+
+## Word document preview
+
+`docx-preview` 0.4.0 (Apache-2.0, https://github.com/VolodymyrBaydalka/docxjs) and JSZip 3.10.1 (MIT option, https://github.com/Stuk/jszip) are bundled from the published npm distributions. Their notices are packaged in `assets/legal/DOCX-PREVIEW-LICENSE` and `assets/legal/JSZIP-LICENSE`. The viewer uses Android PdfRenderer for PDF.
 
 ## Optional Linux runtime
 

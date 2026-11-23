@@ -19,16 +19,16 @@ final class PersonalInstructions {
         File active = overridden ? override : base;
         return obj("content", active.isFile() ? readFile(active) : "", "path", active.getAbsolutePath(),
             "activePath", active.getAbsolutePath(), "basePath", base.getAbsolutePath(), "overridden", overridden,
-            "notice", overridden ? t("AGENTS.override.md가 활성화되어 이 파일을 편집합니다.") : home.migration().notice());
+            "notice", overridden ? t("AGENTS.override.md 已启用，你正在编辑该文件。") : home.migration().notice());
     }
     JSONObject save(String content) throws Exception {
-        if (content == null) throw new IOException(t("지침 내용을 읽을 수 없습니다."));
-        if (content.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) throw new IOException(t("개인 지침은 64 KiB까지 저장할 수 있습니다."));
+        if (content == null) throw new IOException(t("无法读取指令。"));
+        if (content.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) throw new IOException(t("个人指令最多可保存 64 KiB。"));
         JSONObject before = read(); File target = new File(before.getString("activePath"));
         writeAtomically(target, content);
         JSONObject after = read();
         if (target.getName().equals("AGENTS.override.md") && content.isBlank() && !after.optBoolean("overridden"))
-            after.put("notice", t("AGENTS.override.md를 비웠습니다. AGENTS.md가 다시 활성화됩니다."));
+            after.put("notice", t("AGENTS.override.md 已清空，已重新启用 AGENTS.md。"));
         return after;
     }
     private static String readFile(File file) throws IOException {
@@ -36,7 +36,7 @@ final class PersonalInstructions {
     }
     static void writeAtomically(File target, String content) throws IOException {
         File parent = target.getParentFile();
-        if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException(t("개인 지침 폴더를 만들 수 없습니다."));
+        if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException(t("无法创建个人指令文件夹。"));
         File pending = new File(parent, "." + target.getName() + ".pending-" + UUID.randomUUID());
         try {
             Files.write(pending.toPath(), content.getBytes(StandardCharsets.UTF_8));

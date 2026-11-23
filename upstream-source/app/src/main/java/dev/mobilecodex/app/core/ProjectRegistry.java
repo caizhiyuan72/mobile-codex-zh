@@ -39,7 +39,7 @@ public final class ProjectRegistry {
             JSONArray tombstones = root.optJSONArray("removed");
             if (tombstones != null) for (int i = 0; i < tombstones.length(); i++) {
                 JSONObject value = tombstones.optJSONObject(i); if (value == null) continue;
-                String key = value.optString("key"); if (!key.isBlank() && !result.projects.containsKey(key)) result.removed.put(key, value.optString("name", t("이전 프로젝트")));
+                String key = value.optString("key"); if (!key.isBlank() && !result.projects.containsKey(key)) result.removed.put(key, value.optString("name", t("之前的项目")));
             }
         } catch (Exception ignored) { }
         JSONObject root = Json.parse(raw);
@@ -64,6 +64,11 @@ public final class ProjectRegistry {
     public String selectedKey() { return selectedKey; }
     public Project selected() { return projects.get(selectedKey); }
     public Project get(String key) { return projects.get(key == null ? "" : key); }
+    public Project boundTo(String uri) {
+        if (uri == null || uri.isBlank()) return null;
+        for (Project project : projects.values()) if (uri.equals(project.uri)) return project;
+        return null;
+    }
     public String projectId(String key) { return identities.projectId(key); }
     public String displayName(String key) { return identities.name(key); }
     public JSONObject exportProject(String key) {
@@ -82,26 +87,26 @@ public final class ProjectRegistry {
 
     public Project createUnbound(String name) {
         String clean = name == null ? "" : name.trim();
-        if (clean.isEmpty() || clean.length() > 200) throw new IllegalArgumentException(t("프로젝트 이름은 1~200자로 입력해 주세요."));
+        if (clean.isEmpty() || clean.length() > 200) throw new IllegalArgumentException(t("请输入 1–200 个字符的项目名称。"));
         String key = "local_" + UUID.randomUUID();
         ensurePlaceholder(key, clean);
         selectedKey = key;
         return projects.get(key);
     }
     public String merge(String sourceKey, String targetKey) {
-        if (get(sourceKey) == null || get(targetKey) == null) throw new IllegalArgumentException(t("등록된 프로젝트를 찾을 수 없습니다."));
+        if (get(sourceKey) == null || get(targetKey) == null) throw new IllegalArgumentException(t("找不到已登记的项目。"));
         return identities.merge(sourceKey, targetKey);
     }
     public void prefer(String key) {
-        if (get(key) == null) throw new IllegalArgumentException(t("등록된 프로젝트를 찾을 수 없습니다."));
+        if (get(key) == null) throw new IllegalArgumentException(t("找不到已登记的项目。"));
         identities.prefer(key);
     }
 
     public Project put(String uri, String name, String keyHint) {
-        if (uri == null || uri.isBlank() || name == null || name.isBlank()) throw new IllegalArgumentException(t("프로젝트 정보가 올바르지 않습니다."));
+        if (uri == null || uri.isBlank() || name == null || name.isBlank()) throw new IllegalArgumentException(t("项目资料无效。"));
         String key = keyHint == null || keyHint.isBlank() ? WorkspacePath.hash(uri) : keyHint;
         for (Project existing : projects.values()) if (existing.uri.equals(uri) && !existing.key.equals(key))
-            throw new IllegalArgumentException(t("이미 연결된 폴더입니다. 프로젝트 병합을 사용해 주세요."));
+            throw new IllegalArgumentException(t("此文件夹已关联，请使用“合并项目”。"));
         Project value = new Project(key, name, uri);
         projects.put(key, value);
         identities.ensure(key, name);
@@ -111,13 +116,13 @@ public final class ProjectRegistry {
     }
     public void ensurePlaceholder(String key, String name) {
         if (key == null || key.isBlank() || projects.containsKey(key) || removed.containsKey(key)) return;
-        projects.put(key, new Project(key, name == null || name.isBlank() ? t("이전 프로젝트") : name, ""));
+        projects.put(key, new Project(key, name == null || name.isBlank() ? t("之前的项目") : name, ""));
         identities.ensure(key, projects.get(key).name);
     }
     public boolean removed(String key) { return removed.containsKey(key == null ? "" : key); }
     public Project remove(String key) {
         Project value = projects.remove(key == null ? "" : key);
-        if (value == null) throw new IllegalArgumentException(t("등록된 프로젝트를 찾을 수 없습니다."));
+        if (value == null) throw new IllegalArgumentException(t("找不到已登记的项目。"));
         removed.put(value.key, value.name);
         if (value.key.equals(selectedKey)) selectedKey = "";
         return value;
@@ -128,12 +133,12 @@ public final class ProjectRegistry {
         String normalizedKey = key == null ? "" : key;
         String normalizedName = name == null ? "" : name.trim();
         Project value = projects.get(normalizedKey);
-        if (value == null) throw new IllegalArgumentException(t("등록된 프로젝트를 찾을 수 없습니다."));
+        if (value == null) throw new IllegalArgumentException(t("找不到已登记的项目。"));
         // Imported valid names may exceed the local input limit. Selecting a conflict keeps its exact value.
         boolean conflictChoice = false;
         JSONArray conflicts = identities.conflicts(normalizedKey);
         for (int i = 0; i < conflicts.length(); i++) if (conflicts.optString(i).equals(name)) { conflictChoice = true; normalizedName = name; break; }
-        if (normalizedName.isBlank() || (!conflictChoice && normalizedName.length() > 200)) throw new IllegalArgumentException(t("프로젝트 이름은 1~200자로 입력해 주세요."));
+        if (normalizedName.isBlank() || (!conflictChoice && normalizedName.length() > 200)) throw new IllegalArgumentException(t("请输入 1–200 个字符的项目名称。"));
         Project renamed = new Project(value.key, normalizedName, value.uri);
         projects.put(normalizedKey, renamed);
         identities.rename(normalizedKey, normalizedName);
@@ -142,7 +147,7 @@ public final class ProjectRegistry {
 
     public void select(String key) {
         key = key == null ? "" : key;
-        if (!key.isEmpty() && !projects.containsKey(key)) throw new IllegalArgumentException(t("등록된 프로젝트를 찾을 수 없습니다."));
+        if (!key.isEmpty() && !projects.containsKey(key)) throw new IllegalArgumentException(t("找不到已登记的项目。"));
         selectedKey = key;
     }
 

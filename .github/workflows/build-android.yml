@@ -1,0 +1,298 @@
+name: Build API edition from source
+
+on:
+  push:
+    paths: ['upstream-source/**', 'signing-setup/**', '.github/workflows/build-android.yml']
+  pull_request:
+    paths: ['upstream-source/**', 'signing-setup/**', '.github/workflows/build-android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-android-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: upstream-source
+
+jobs:
+  checks:
+    name: UI and source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: upstream-source/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install -r tools/requirements-devtools.txt
+      - name: Test packaging and tooling logic
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Verify one-time signing setup without real keys
+        run: |
+          npm ci --prefix ../signing-setup --ignore-scripts --no-audit --no-fund
+          python3 ../signing-setup/setup_api_signing.py --self-test
+          python3 -m unittest discover -s ../signing-setup -p 'test_*.py'
+          python3 ../signing-setup/make_bundle.py --output ../api-signing-setup.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-signing-setup
+          path: api-signing-setup.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Check API edition layouts in Chromium
+        run: |
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+          node tools/verify_api_ui_browser.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-ui-diagnostics
+          path: upstream-source/artifacts/api-ui-preview/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android:
+    name: Android unit tests, lint and unsigned APK
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      API_SIGNING_CONFIGURED: ${{ secrets.CODEX_CN_API_SIGNING_JSON != '' }}
+      FRESH_SIGNING_CONFIGURED: ${{ secrets.DAFEILONG_SIGNING_JSON != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            upstream-source/**/*.gradle
+            upstream-source/gradle.properties
+            upstream-source/gradle/wrapper/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install -r tools/requirements-devtools.txt
+      - uses: actions/cache@v4
+        id: prepared
+        with:
+          path: |
+            upstream-source/app/src/main/jniLibs/
+            upstream-source/app/src/main/assets/runtime/
+            upstream-source/app/src/main/assets/devtools/
+          key: api-runtime-v1-${{ runner.os }}-ndk28.2.13676358-${{ hashFiles('upstream-source/tools/runtime-lock.json', 'upstream-source/tools/devtools-lock.json', 'upstream-source/tools/requirements-devtools.txt', 'upstream-source/tools/prepare_runtime.py', 'upstream-source/tools/prepare_devtools.py', 'upstream-source/tools/build_native.py', 'upstream-source/tools/native/**') }}
+      - uses: actions/cache@v4
+        if: steps.prepared.outputs.cache-hit != 'true'
+        with:
+          path: upstream-source/.runtime-cache/
+          key: api-runtime-downloads-${{ runner.os }}-${{ hashFiles('upstream-source/tools/runtime-lock.json', 'upstream-source/tools/devtools-lock.json') }}
+          restore-keys: api-runtime-downloads-${{ runner.os }}-
+      - name: Prepare hash-pinned ARM64 runtime and tools
+        if: steps.prepared.outputs.cache-hit != 'true'
+        run: |
+          sdkmanager 'ndk;28.2.13676358'
+          python3 tools/prepare_runtime.py
+          python3 tools/build_native.py --ndk "$ANDROID_HOME/ndk/28.2.13676358"
+          python3 tools/prepare_devtools.py
+      - name: Verify prepared files including cache hits
+        run: |
+          python3 tools/prepare_devtools.py --verify
+          PYTHONPATH=tests python3 -m unittest test_devtools.DevtoolsPackagingTests.test_real_prepared_runtime_contract
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          manifest = json.loads(Path('app/src/main/assets/runtime/manifest.json').read_text())
+          for name, expected in manifest['files'].items():
+              path = Path('app/src/main/jniLibs/arm64-v8a') / name
+              if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                  raise ValueError('Codex runtime checksum mismatch: ' + name)
+          PY
+      - name: Compile, run Android unit suites and lint both variants
+        run: bash gradlew --no-daemon --build-cache testDebugUnitTest lintDebug assembleDebugAndroidTest assembleRelease testReleaseUnitTest lintRelease
+      - name: Attach exact source and APK identity
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, shutil, subprocess, zipfile
+          from pathlib import Path
+          gradle = Path('app/build.gradle').read_text()
+          version = re.search(r"versionName '([^']+)'", gradle).group(1)
+          code = int(re.search(r'versionCode (\d+)', gradle).group(1))
+          package = re.search(r"applicationId '([^']+)'", gradle).group(1)
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if commit != os.environ['BUILD_COMMIT']:
+              raise ValueError('Checkout and build commit differ')
+          out = Path('../build-artifacts'); out.mkdir(exist_ok=True)
+          apk = out / f'mobile-codex-{version}-arm64-unsigned.apk'
+          shutil.copyfile('app/build/outputs/apk/release/app-release-unsigned.apk', apk)
+          aapt = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0/aapt'
+          badging = subprocess.check_output([str(aapt), 'dump', 'badging', str(apk)], text=True)
+          identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
+          if not identity or (identity.group(1), int(identity.group(2)), identity.group(3)) != (package, code, version):
+              raise ValueError('Built APK identity differs from Gradle source')
+          abis = re.search(r'^native-code: (.+)$', badging, re.M)
+          if not abis or re.findall(r"'([^']+)'", abis.group(1)) != ['arm64-v8a']:
+              raise ValueError('Built APK must contain only ARM64 native libraries')
+          with zipfile.ZipFile(apk) as archive:
+              for asset in Path('app/src/main/assets/web').rglob('*'):
+                  if asset.is_file() and archive.read('assets/web/' + asset.relative_to('app/src/main/assets/web').as_posix()) != asset.read_bytes():
+                      raise ValueError('APK web asset differs from source: ' + asset.name)
+          source = out / f'mobile-codex-{version}-source.tar.gz'
+          subprocess.run(['git', '-C', '..', 'archive', '--format=tar.gz', '--output', str(source.resolve()), 'HEAD'], check=True)
+          info = {'commit':commit, 'versionName':version, 'versionCode':code, 'package':package,
+                  'apk':apk.name, 'apkBytes':apk.stat().st_size,
+                  'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(), 'signed':False,
+                  'source':source.name, 'sourceSha256':hashlib.sha256(source.read_bytes()).hexdigest()}
+          (out / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
+          (out / 'SHA256SUMS').write_text(info['apkSha256'] + '  ' + apk.name + '\n'
+              + info['sourceSha256'] + '  ' + source.name + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-source-build-${{ github.sha }}
+          path: build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Test and compile the parallel and independent fresh editions
+        run: bash gradlew --no-daemon --build-cache testParallelUnitTest lintParallel assembleParallel testFreshUnitTest lintFresh assembleFresh
+      - name: Collect parallel APK and Android-compatible signing tool
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, shutil, subprocess, zipfile
+          from pathlib import Path
+          original = json.loads(Path('../build-artifacts/build-info.json').read_text())
+          if original['commit'] != os.environ['BUILD_COMMIT']:
+              raise ValueError('Parallel source identity differs from the verified build')
+          out = Path('../parallel-build-artifacts'); out.mkdir(exist_ok=True)
+          name = f"mobile-codex-{original['versionName']}-parallel-arm64-unsigned.apk"
+          apk = out / name
+          candidates = list(Path('app/build/outputs/apk/parallel').glob('*.apk'))
+          if len(candidates) != 1:
+              raise ValueError('Expected exactly one parallel APK')
+          shutil.copyfile(candidates[0], apk)
+          tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+          badging = subprocess.check_output([str(tools / 'aapt'), 'dump', 'badging', str(apk)], text=True)
+          identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
+          package = original['package'] + '.next'
+          if not identity or (identity.group(1), int(identity.group(2)), identity.group(3)) != (package, original['versionCode'], original['versionName']):
+              raise ValueError('Unexpected parallel APK identity')
+          if "application-label:'Codex CN API'" not in badging:
+              raise ValueError('Parallel app must have a distinguishable launcher name')
+          abis = re.search(r'^native-code: (.+)$', badging, re.M)
+          if not abis or re.findall(r"'([^']+)'", abis.group(1)) != ['arm64-v8a']:
+              raise ValueError('Parallel APK must contain only ARM64 libraries')
+          if re.search(r'^application-debuggable', badging, re.M):
+              raise ValueError('Parallel APK must not be debuggable')
+          with zipfile.ZipFile(apk) as archive:
+              for asset in Path('app/src/main/assets/web').rglob('*'):
+                  if asset.is_file() and archive.read('assets/web/' + asset.relative_to('app/src/main/assets/web').as_posix()) != asset.read_bytes():
+                      raise ValueError('Parallel APK web asset differs from source: ' + asset.name)
+          # Convert Google's SDK signer to DEX for local signing on Android.
+          # No private signing key is generated, uploaded, or stored in CI.
+          signer = out / 'apksigner-android.jar'
+          subprocess.run([str(tools / 'd8'), '--min-api', '29', '--lib',
+              str(Path(os.environ['ANDROID_HOME']) / 'platforms/android-35/android.jar'),
+              '--output', str(signer), str(tools / 'lib/apksigner.jar')], check=True)
+          source = Path('../build-artifacts') / original['source']
+          shutil.copyfile(source, out / source.name)
+          info = {**original, 'variant':'parallel', 'package':package, 'label':'Codex CN API',
+                  'apk':name, 'apkBytes':apk.stat().st_size, 'signed':False,
+                  'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+                  'signer':signer.name, 'signerSha256':hashlib.sha256(signer.read_bytes()).hexdigest()}
+          (out / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
+          (out / 'SHA256SUMS').write_text(''.join(digest + '  ' + filename + '\n' for digest, filename in
+              [(info['apkSha256'], info['apk']), (info['sourceSha256'], info['source']), (info['signerSha256'], info['signer'])]))
+          from tools.apk_download_kit import make_kit, reconstruct
+          kit = Path('../parallel-download-kit'); kit.mkdir(exist_ok=True)
+          recipe = make_kit(apk, kit)
+          # Exercise the actual compressed runtime members from this build's release APK.
+          restored = kit / '.verification.apk'
+          reconstruct(Path('../build-artifacts') / original['apk'], kit, restored)
+          restored.unlink()
+          # The corresponding source is in the full artifact and can also be
+          # recreated with git archive of the pinned commit and the same hash.
+          for filename in ['build-info.json', 'SHA256SUMS', info['signer']]:
+              shutil.copyfile(out / filename, kit / filename)
+          print('Verified parallel download kit:', recipe['skeletonBytes'], 'bytes of literal APK data')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-parallel-download-kit-${{ github.sha }}
+          path: parallel-download-kit/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cn-api-parallel-build-${{ github.sha }}
+          path: parallel-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect independently installable 大肥龙 APK
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/collect_fresh_apk.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dafeilong-fresh-download-kit-${{ github.sha }}
+          path: fresh-download-kit/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dafeilong-fresh-build-${{ github.sha }}
+          path: fresh-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Sign 大肥龙 with its permanent dedicated key
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.FRESH_SIGNING_CONFIGURED == 'true'
+        env:
+          DAFEILONG_SIGNING_JSON: ${{ secrets.DAFEILONG_SIGNING_JSON }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/sign_api_apk.py --edition fresh --bundle ../fresh-build-artifacts --build-tools "$ANDROID_HOME/build-tools/35.0.0" --output ../fresh-signed-artifacts
+      - uses: actions/upload-artifact@v4
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.FRESH_SIGNING_CONFIGURED == 'true'
+        with:
+          name: dafeilong-signed-${{ github.sha }}
+          path: fresh-signed-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Sign API update with its existing installation key
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.API_SIGNING_CONFIGURED == 'true'
+        env:
+          CODEX_CN_API_SIGNING_JSON: ${{ secrets.CODEX_CN_API_SIGNING_JSON }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: python3 tools/sign_api_apk.py --bundle ../parallel-build-artifacts --build-tools "$ANDROID_HOME/build-tools/35.0.0" --output ../signed-build-artifacts
+      - uses: actions/upload-artifact@v4
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.API_SIGNING_CONFIGURED == 'true'
+        with:
+          name: codex-cn-api-signed-${{ github.sha }}
+          path: signed-build-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-check-reports
+          path: upstream-source/app/build/reports/
+          if-no-files-found: ignore
+          retention-days: 7

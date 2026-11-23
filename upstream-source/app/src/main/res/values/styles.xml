@@ -8,4 +8,11 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <style name="MainActivityTheme" parent="AppTheme">
+        <item name="android:windowBackground">@color/main_window_background</item>
+        <item name="android:statusBarColor">@color/main_window_background</item>
+        <item name="android:navigationBarColor">@color/main_window_background</item>
+        <item name="android:windowLightStatusBar">@bool/main_window_light</item>
+        <item name="android:windowLightNavigationBar">@bool/main_window_light</item>
+    </style>
 </resources>

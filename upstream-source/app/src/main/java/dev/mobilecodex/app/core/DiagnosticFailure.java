@@ -41,7 +41,7 @@ public final class DiagnosticFailure extends IOException {
     public static final class StorageFailure extends IOException {
         public StorageFailure(String message, Throwable cause) { super(message, cause); }
     }
-    /** UI retains the upstream message; diagnostics retain only a fixed classification. */
+    /** Diagnostics retain only a fixed classification, never the upstream body. */
     public static final class RpcFailure extends IOException {
         final String category;
         public RpcFailure(String message, JSONObject error) {
@@ -64,6 +64,11 @@ public final class DiagnosticFailure extends IOException {
         }
         // Only exact, documented engine categories are mapped; arbitrary strings are discarded.
         Object info = error.opt("codexErrorInfo");
+        JSONObject connection = info instanceof JSONObject object ? object.optJSONObject("httpConnectionFailed") : null;
+        if (connection != null && connection.optInt("httpStatusCode") == 409) {
+            return error.optString("message").contains("The proven encrypted agent transport changed.")
+                ? "encrypted_transport_changed" : "upstream_conflict";
+        }
         String name = info instanceof String ? (String) info : info instanceof JSONObject object && object.length() == 1 ? object.keys().next() : "";
         return switch (name) {
             case "contextWindowExceeded" -> "context_limit";

@@ -68,13 +68,20 @@ public class ImageOutputTest {
         assertEquals(1, session.getJSONArray("messages").length());
         assertEquals(2, session.getJSONArray("messages").getJSONObject(0).getJSONArray("images").length()); engine.io.shutdownNow();
     }
-    @Test public void invalidAndFailedOutputsAreVisibleAndOpaqueIdsCannotTraverseFiles() throws Exception {
+    @Test public void failedGenerationShowsTheUsageLimit() throws Exception {
         JSONObject session = obj("id", "thread", "messages", new JSONArray()); Engine engine = engine(session);
-        event(engine, obj("id", "failed", "type", "imageGeneration", "status", "failed", "failure", obj("type", "usageLimitExceeded")));
-        assertEquals("failed", session.getJSONArray("messages").getJSONObject(0).getString("imageStatus"));
-        assertTrue(session.getJSONArray("messages").getJSONObject(0).getString("imageError").contains("한도"));
-        assertThrows(IOException.class, () -> engine.images.importBase64(Base64.encodeToString("not an image".getBytes(), Base64.NO_WRAP), "fake.png"));
-        assertThrows(IOException.class, () -> engine.images.open("../codex/auth.json")); engine.io.shutdownNow();
+        try {
+            event(engine, obj("id", "failed", "type", "imageGeneration", "status", "failed", "failure", obj("type", "usageLimitExceeded")));
+            assertEquals("failed", session.getJSONArray("messages").getJSONObject(0).getString("imageStatus"));
+            assertTrue(session.getJSONArray("messages").getJSONObject(0).getString("imageError").contains("用量限制"));
+        } finally { engine.io.shutdownNow(); }
+    }
+    @Test public void invalidImagePayloadsAndInvalidIdsAreRejected() throws Exception {
+        Engine engine = engine(obj("id", "thread", "messages", new JSONArray()));
+        try {
+            assertThrows(IOException.class, () -> engine.images.open("../codex/auth.json"));
+            assertThrows(IOException.class, () -> engine.images.importBase64(Base64.encodeToString("not an image".getBytes(), Base64.NO_WRAP), "fake.png"));
+        } finally { engine.io.shutdownNow(); }
     }
     @Test public void aBrokenImageDoesNotDiscardOtherImagesInTheSameToolResult() throws Exception {
         JSONObject session = obj("id", "thread", "messages", new JSONArray()); Engine engine = engine(session);
@@ -82,7 +89,7 @@ public class ImageOutputTest {
             obj("type", "image", "data", "broken"),
             obj("type", "image", "data", Base64.encodeToString(png(0xff00ffff), Base64.NO_WRAP))))));
         JSONObject message = session.getJSONArray("messages").getJSONObject(0);
-        assertEquals(1, message.getJSONArray("images").length()); assertTrue(message.getString("imageError").contains("1번째"));
+        assertEquals(1, message.getJSONArray("images").length()); assertTrue(message.getString("imageError").contains("1 图片："));
         engine.io.shutdownNow();
     }
 }

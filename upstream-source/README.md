@@ -1,3 +1,5 @@
+> 本目录已包含 Codex CN API 版修改。原上游说明保留供追溯；当前功能、构建入口与验证状态请先阅读 [仓库首页](../README.md) 和 [优化记录](../docs/API_OPTIMIZATION.md)。
+
 # Mobile Codex
 
 ## Before installing
@@ -105,7 +107,7 @@ Project information can be transferred with JSON files; chat history, running ta
 | Accounts and limits | Save multiple ChatGPT accounts locally, switch safely with separate chat histories, and see remaining Codex limits as compact and detailed charts |
 | Phone controls | Optionally use Android accessibility to open apps, read screens, tap, type, scroll, and navigate |
 | Floating chat and dictation | Chat over other apps; in the main composer, dictate with live status, partial text, and Done/Cancel controls, keep recognized text in the composer |
-| Preferences | System/English/Korean interface, model and reasoning effort, task permissions, custom instructions, themes, and optional chat icons |
+| Preferences | Simplified Chinese or English interface, Classic or Liquid Glass appearance, model and reasoning effort, task permissions, and custom instructions |
 | Updates | Check public GitHub releases, verify APK integrity and signing compatibility, and open Android’s installation prompt |
 
 The interface uses drawers and sheets on phones and multiple panels on larger screens. Light and dark themes include a translucent header, a floating composer, and draggable mobile sheets. Motion follows the device’s reduced-motion preference. Features depend on the runtime, account, Android permissions, and installed commands. A feature without a dedicated screen may still be accessible through Codex tools or configuration.
@@ -136,7 +138,7 @@ Actions artifact downloads require GitHub sign-in and expire after 7 days. Publi
 2. Start a **general chat**, or use **Add project** to choose a folder. Expand a project to see its chats.
 3. For shell access to a local project, enable **Settings → Tools → Allow device file access**.
 4. Choose a model, reasoning effort, and permissions, then send a request. Use **`+`** for attachments, **`@`** for files/apps, and **`$`** for skills.
-5. Choose **Settings → General → Language** to follow the device language or select English/Korean. Chats and file contents are not translated or reset.
+5. Choose **Settings → Language** to select Simplified Chinese, English, or follow the device language. Chats and file contents are not translated or reset.
 
 The lower-left quota ring opens **Settings → Account**. From there you can add or switch ChatGPT accounts. Credentials remain in app-private storage, and each account only sees its own saved chats.
 

@@ -162,7 +162,7 @@ sys.exit(runtime['terminal']([sys.executable, '-c', sys.argv[2]], dict(os.enviro
         self.assertEqual(runtime.parse_agy_usage('Remaining credits: lots\nnot a usage row\n'), [])
 
     def test_agy_failures_that_say_nothing_about_the_account_are_not_a_sign_out(self):
-        for code, out, err in [(124, '', '시간 초과'), (-9, '', ''), (1, '', 'boom'), (0, '  \n', ''),
+        for code, out, err in [(124, '', '超时'), (-9, '', ''), (1, '', 'boom'), (0, '  \n', ''),
                                (1, '', 'Could not sign in: network unreachable'), (1, '', 'connect ETIMEDOUT'),
                                (1, '', 'Could not sign in: service unavailable')]:
             self.assertEqual(runtime.agy_status(code, out, err), (None, []), (code, out, err))
@@ -177,12 +177,12 @@ sys.exit(runtime['terminal']([sys.executable, '-c', sys.argv[2]], dict(os.enviro
             return runtime.probe(provider, binary.name, {})
 
     def test_a_slow_cli_is_unverified_rather_than_signed_out_or_outdated(self):
-        slow = (124, '', '시간 초과')
+        slow = (124, '', '超时')
         cases = [('claude', {'auth': slow}), ('agy', {'-p': slow}), ('claude', {'--version': slow}), ('agy', {'--help': slow})]
         for provider, answers in cases:
             result = self.probe_with(provider, answers)
             self.assertEqual((result['state'], result['auth']), ('unverified', 'unknown'), (provider, answers))
-            self.assertIn('시간 초과', ''.join(step['error'] for step in result['steps']))
+            self.assertIn('超时', ''.join(step['error'] for step in result['steps']))
 
     def test_only_the_cli_itself_can_report_a_claude_sign_out(self):
         for answer, state in [((1, json.dumps({'loggedIn': False}), ''), 'login_required'), ((0, json.dumps({'loggedIn': True}), ''), 'ready'),

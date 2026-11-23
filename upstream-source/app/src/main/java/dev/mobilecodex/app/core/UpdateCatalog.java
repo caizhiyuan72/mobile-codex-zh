@@ -10,17 +10,19 @@ import static dev.mobilecodex.app.core.Json.*;
 
 /** Public GitHub release metadata. Downloaded APK identity is independently checked before installation. */
 public final class UpdateCatalog {
-    private static final Pattern VERSION = Pattern.compile("^(\\d{1,9})\\.(\\d{1,9})\\.(\\d{1,9})(?:-(alpha|beta|rc)(?:[.-]?(\\d{1,9}))?)?(?:\\+[A-Za-z0-9.-]+)?$");
+    private static final Pattern VERSION = Pattern.compile("^(\\d{1,9})\\.(\\d{1,9})\\.(\\d{1,9})(?:-(alpha|beta|rc|cn)(?:[.-]?(\\d{1,9}))?)?(?:\\+[A-Za-z0-9.-]+)?$");
     private static final Pattern APK = Pattern.compile("^mobile-codex-(.+)-arm64\\.apk$");
     public static String repository(String value) throws IOException {
         String repo = value.trim();
-        if (!repo.matches("[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}") || repo.endsWith("/.") || repo.endsWith("/..")) throw new IOException(t("GitHub 저장소를 소유자/저장소 형식으로 입력해 주세요."));
+        if (!repo.matches("[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}") || repo.endsWith("/.") || repo.endsWith("/..")) throw new IOException(t("请按“所有者/仓库名”格式输入 GitHub 仓库。"));
         return repo;
     }
     private static long[] version(String value) throws IOException {
         Matcher m = VERSION.matcher(value);
-        if (!m.matches()) throw new IOException(t("지원하지 않는 버전 형식입니다: ") + value);
-        int rank = m.group(4) == null ? 3 : List.of("alpha", "beta", "rc").indexOf(m.group(4));
+        if (!m.matches()) throw new IOException(t("不支持的版本格式：") + value);
+        // cn.N identifies a stable fork revision after the upstream base release.
+        if ("cn".equals(m.group(4)) && m.group(5) == null) throw new IOException(t("不支持的版本格式：") + value);
+        int rank = m.group(4) == null ? 3 : "cn".equals(m.group(4)) ? 4 : List.of("alpha", "beta", "rc").indexOf(m.group(4));
         return new long[]{Long.parseLong(m.group(1)), Long.parseLong(m.group(2)), Long.parseLong(m.group(3)), rank, m.group(5) == null ? 0 : Long.parseLong(m.group(5))};
     }
     public static int compare(String left, String right) throws IOException {
@@ -57,10 +59,10 @@ public final class UpdateCatalog {
         return installed.size()==1 && candidate.size()==1 && candidateHistory.containsAll(installed);
     }
     public static void identity(String expectedPackage, long installedVersion, String actualPackage, long actualVersion, String expectedName, String actualName, int minSdk, int deviceSdk, boolean signersMatch) throws IOException {
-        if(!expectedPackage.equals(actualPackage))throw new IOException(t("다른 앱의 APK입니다. 기존 앱은 변경하지 않았습니다."));
-        if(actualVersion<=installedVersion)throw new IOException(t("현재 앱보다 새 버전의 APK가 아닙니다."));
-        if(!expectedName.equals(actualName))throw new IOException(t("릴리스에 표시된 버전과 APK의 버전이 다릅니다."));
-        if(minSdk>deviceSdk)throw new IOException(t("이 업데이트는 Android API ")+minSdk+t(" 이상이 필요합니다."));
-        if(!signersMatch)throw new IOException(t("설치된 앱과 서명키가 다릅니다. 데이터를 유지하려면 기존 서명키로 빌드한 APK가 필요합니다. 기존 앱을 삭제하지 마세요."));
+        if(!expectedPackage.equals(actualPackage))throw new IOException(t("此 APK 属于其他应用，现有应用未被修改。"));
+        if(actualVersion<=installedVersion)throw new IOException(t("此 APK 不比已安装版本新。"));
+        if(!expectedName.equals(actualName))throw new IOException(t("发行版版本号与 APK 版本号不一致。"));
+        if(minSdk>deviceSdk)throw new IOException(t("此更新要求 Android API ")+minSdk+t(" 或更高版本。"));
+        if(!signersMatch)throw new IOException(t("签名密钥与已安装应用不同。要保留数据，请使用原始签名密钥构建的 APK，不要卸载现有应用。"));
     }
 }

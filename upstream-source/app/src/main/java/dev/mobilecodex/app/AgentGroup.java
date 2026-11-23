@@ -2,7 +2,6 @@ package dev.mobilecodex.app;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import dev.mobilecodex.app.core.ChatIconInstructions;
 import java.util.*;
 import java.util.regex.*;
 import static dev.mobilecodex.app.core.Json.*;
@@ -19,10 +18,10 @@ final class AgentGroup {
     static final Set<String> MODES = Set.of("chat", "read", "write");
     static final int MAX_CONTEXT = 160000;
     private static final Map<String, List<String>> ALIASES = Map.of(
-        CODEX, List.of("codex", "코덱스"),
-        "claude", List.of("claude", "클로드"),
-        "gemini", List.of("gemini", "agy", "antigravity", "제미나이"));
-    private static final List<String> EVERYONE = List.of("all", "everyone", "모두", "전원");
+        CODEX, List.of("codex"),
+        "claude", List.of("claude"),
+        "gemini", List.of("gemini", "agy", "antigravity"));
+    private static final List<String> EVERYONE = List.of("all", "everyone", "所有人", "全体");
     private static final Pattern MENTION = Pattern.compile("@([\\p{L}\\p{N}_-]+)");
     private static final Pattern CALLER = Pattern.compile("[\\p{L}\\p{N}_@-]");
     private static final Pattern NOT_A_CALL = Pattern.compile("^(?:/|:[^\\s]|\\.[\\p{L}\\p{N}_-])");
@@ -68,7 +67,7 @@ final class AgentGroup {
     private static boolean matches(String token, String alias) {
         if (!token.toLowerCase(Locale.ROOT).startsWith(alias.toLowerCase(Locale.ROOT))) return false;
         String rest = token.substring(alias.length());
-        // "@codex야" keeps a Korean particle; "@claudette" is a different name.
+        // A non-ASCII suffix can follow the alias; "@claudette" is a different name.
         return rest.isEmpty() || !rest.matches("^[A-Za-z0-9_-].*");
     }
     /** Participant ids called in text, in the order they were first mentioned. */
@@ -97,7 +96,7 @@ final class AgentGroup {
     }
 
     static String speaker(JSONObject message) {
-        if ("user".equals(message.optString("role"))) return "사용자";
+        if ("user".equals(message.optString("role"))) return "用户";
         String agent = message.optString("agent");
         return agent.isBlank() ? "@codex (Codex)" : "@" + agent + " (" + message.optString("agentName", name(agent)) + ")";
     }
@@ -111,7 +110,7 @@ final class AgentGroup {
     private static String line(JSONObject message) {
         String text = message.optString("text").trim();
         JSONArray files = message.optJSONArray("attachments");
-        if (files != null && files.length() > 0) text += (text.isEmpty() ? "" : "\n") + "(첨부 " + files.length() + "개 · Codex만 열람 가능)";
+        if (files != null && files.length() > 0) text += (text.isEmpty() ? "" : "\n") + "（" + files.length() + " 个附件，仅 Codex 可查看）";
         return "[" + speaker(message) + "] " + text;
     }
     static int indexOf(JSONArray messages, String id) {
@@ -130,7 +129,7 @@ final class AgentGroup {
             lines.addFirst(value); size += value.length() + 2;
         }
         String body = String.join("\n\n", lines);
-        return omitted == 0 ? body : "(앞선 메시지 " + omitted + "개는 길이 제한으로 생략했습니다.)\n\n" + body;
+        return omitted == 0 ? body : "（受长度限制，省略了前面 " + omitted + " 条消息。）\n\n" + body;
     }
     private static String roster(JSONObject session, String self) {
         List<String> names = new ArrayList<>();
@@ -146,35 +145,31 @@ final class AgentGroup {
             if (m != null && "assistant".equals(m.optString("role")) && m.optString("agent").isBlank()) known.add(m.optString("id"));
         }
         String body = transcript(messages, from, upTo, known, MAX_CONTEXT);
-        StringBuilder out = new StringBuilder("[그룹 대화] 이 대화에는 사용자와 Codex 외에 ").append(roster(session, CODEX))
-            .append("도 참여합니다. 다른 참가자의 의견이 꼭 필요할 때만 독립된 @ID로 호출하세요.");
-        if (!body.isBlank()) out.append("\n\nCodex의 마지막 답변 이후 오간 메시지:\n").append(body);
-        return out.append("\n[그룹 대화 끝]").toString();
+        StringBuilder out = new StringBuilder("[群组对话] 除用户和 Codex 外，当前参与者还有 ").append(roster(session, CODEX))
+            .append("。仅在确实需要其他参与者的意见时，用独立的 @ID 提及对方。");
+        if (!body.isBlank()) out.append("\n\nCodex 上次回复后的消息：\n").append(body);
+        return out.append("\n[群组对话结束]").toString();
     }
     /** Prompt for an invited agent: everything after its cursor, plus who is present. */
     static String agentPrompt(JSONObject session, JSONObject member, JSONArray messages) {
-        return agentPrompt(session, member, messages, false);
-    }
-    static String agentPrompt(JSONObject session, JSONObject member, JSONArray messages, boolean chatIconsEnabled) {
         String id = member.optString("id");
         int from = indexOf(messages, member.optString("cursorId")) + 1;
         String mode = member.optString("mode", "chat");
         String access = switch (mode) {
-            case "read" -> "작업 폴더는 mobile_* 도구로 읽기·검색만 할 수 있습니다. 수정은 Codex에게 맡기세요.";
-            case "write" -> "작업 폴더는 mobile_* 도구로 다룰 수 있습니다. 수정·명령은 앱의 승인 설정과 작업 차례를 따릅니다.";
-            default -> "파일이나 휴대폰 도구는 사용할 수 없습니다. 대화로만 답하세요.";
+            case "read" -> "只能使用 mobile_* 工具读取或搜索工作目录。修改须交由 Codex 执行。";
+            case "write" -> "可以使用 mobile_* 工具处理工作目录。修改和命令必须遵守应用审批设置和任务轮次。";
+            default -> "不能使用文件或手机工具，只能通过对话回复。";
         };
-        String header = "당신은 Mobile Codex 그룹 대화의 @" + id + " (" + name(id) + ")입니다. 다른 참가자: " + roster(session, id) + ".\n"
-            + access + " 공유된 대화 기록을 읽고 답하세요. 같은 질문에 다른 참가자도 동시에 답할 수 있습니다. 다른 참가자 의견이 꼭 필요할 때만 독립된 @ID로 호출하세요. "
-            + "@file:경로, @app:이름은 참가자 호출이 아닙니다. 도구 결과 없이 작업 성공을 주장하지 마세요.\n"
-            + ChatIconInstructions.forEnabled(chatIconsEnabled) + "\n";
+        String header = "你是 Mobile Codex 群组对话中的 @" + id + " (" + name(id) + ")。其他参与者：" + roster(session, id) + "。\n"
+            + access + " 阅读共享对话记录后回复。同一问题可能有其他参与者同时作答。仅在确实需要其他参与者的意见时，用独立的 @ID 提及对方。"
+            + " @file:路径 和 @app:名称 不是对参与者的提及。没有工具结果，不要声称操作已成功。\n\n";
         Set<String> known = new HashSet<>();
         if (!member.optString("nativeSession").isBlank()) for (int i = from; i < messages.length(); i++) {
             JSONObject m = messages.optJSONObject(i);
             if (m != null && id.equals(m.optString("agent"))) known.add(m.optString("id"));
         }
         String body = transcript(messages, from, messages.length(), known, MAX_CONTEXT - header.length());
-        return header + "\n새 대화 기록:\n" + body + "\n\n이제 답하세요.";
+        return header + "\n新对话记录：\n" + body + "\n\n现在请回复。";
     }
     /** The agent ids an AI reply asks to hear from next. */
     static List<String> followUps(String text, JSONObject session, String self) {

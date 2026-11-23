@@ -29,6 +29,8 @@ public class EngineDiagnosticTest {
         remove(new File(context.getFilesDir(), ".codex"));
         remove(new File(context.getFilesDir(), "account-profiles"));
         Files.deleteIfExists(new File(context.getFilesDir(), "sessions.json").toPath());
+        context.getSharedPreferences("api-providers-v2", 0).edit().clear().commit();
+        context.getSharedPreferences("api_provider_profiles_v1", 0).edit().clear().commit();
         engine = new Engine(context);
         engine.attach(new Engine.Ui() {
             @Override public void event(String name, JSONObject data) { if (name.equals("diagnostics.available")) diagnostics.add(data); if (name.equals("diagnostics.cleared")) recoveries.add(data); }
@@ -50,9 +52,10 @@ public class EngineDiagnosticTest {
     private void field(String name, Object value) throws Exception {
         var field = Engine.class.getDeclaredField(name); field.setAccessible(true); field.set(engine, value);
     }
-    private JSONObject handle(String action) throws Exception {
+    private JSONObject handle(String action) throws Exception { return handle(action, obj()); }
+    private JSONObject handle(String action, JSONObject args) throws Exception {
         var result = new CompletableFuture<JSONObject>();
-        engine.handle(action, obj(), (value, error) -> { if (error == null) result.complete(value); else result.completeExceptionally(error); });
+        engine.handle(action, args, (value, error) -> { if (error == null) result.complete(value); else result.completeExceptionally(error); });
         return result.get(5, TimeUnit.SECONDS);
     }
     private void notification(String name, JSONObject value) throws Exception {
@@ -63,16 +66,13 @@ public class EngineDiagnosticTest {
             } catch (Exception error) { throw new RuntimeException(error); }
         }).get(5, TimeUnit.SECONDS);
     }
-    @Test public void failedLoginNotificationAndChatErrorRecordTheirActualOperations() throws Exception {
-        engine.setTestTransport((method, params) -> obj());
-        handle("auth.login");
+    @Test public void retiredAccountNotificationsAreIgnoredAndChatErrorsRetainSafeDiagnostics() throws Exception {
         notification("account/login/completed", obj("success", false, "error", "private login token /path"));
-        assertEquals("login", diagnostics.get(0).getString("operation"));
-        assertEquals("login_failed", diagnostics.get(0).getString("errorCode"));
+        assertTrue(diagnostics.isEmpty());
         notification("error", obj("error", obj("message", "private conversation")));
-        assertEquals("chat", diagnostics.get(1).getString("operation"));
+        assertEquals("chat", diagnostics.get(0).getString("operation"));
         notification("error", obj("error", obj("message", "private conversation", "codexErrorInfo", "usageLimitExceeded")));
-        assertEquals("usage_limit", diagnostics.get(2).getString("errorCode"));
+        assertEquals("usage_limit", diagnostics.get(1).getString("errorCode"));
         assertFalse(diagnostics.toString().contains("private"));
     }
     @Test public void startupFailureDoesNotSupplyMeasurementsToTheNextActionOrNotification() throws Exception {
@@ -81,14 +81,14 @@ public class EngineDiagnosticTest {
             StartupDiagnostics stats = new StartupDiagnostics(); stats.bytes(17);
             throw new DiagnosticFailure("test launch failure", null, field("diagnosticOperation"), stats.snapshot("start_failure", "pending", false, 1, "none"));
         });
-        assertThrows(ExecutionException.class, () -> handle("auth.login"));
-        assertEquals("login", diagnostics.get(0).getString("operation"));
+        assertThrows(ExecutionException.class, () -> handle("rpc", obj("method", "model/list")));
+        assertEquals("other", diagnostics.get(0).getString("operation"));
         assertEquals(17, diagnostics.get(0).getLong("stdoutBytes"));
         assertThrows(ExecutionException.class, () -> handle("chat.invalid"));
         assertEquals("chat", diagnostics.get(1).getString("operation"));
         assertFalse(diagnostics.get(1).has("stdoutBytes"));
-        notification("account/login/completed", obj("success", false));
-        assertEquals("login", diagnostics.get(2).getString("operation"));
+        notification("error", obj("error", obj("message", "failed")));
+        assertEquals("chat", diagnostics.get(2).getString("operation"));
         assertFalse(diagnostics.get(2).has("stdoutBytes"));
     }
     @Test public void oldProcessDisconnectCannotReportOrBorrowReplacementMeasurements() throws Exception {
@@ -104,43 +104,14 @@ public class EngineDiagnosticTest {
         assertTrue(report.isNull("stdoutBytes")); assertTrue(report.isNull("elapsedMs"));
         assertEquals(-1, report.getLong("spawnMs")); assertTrue(report.getBoolean("processAlive"));
     }
-    @Test public void disconnectDuringLoginIsNotAStartupOrChatFailure() throws Exception {
-        Child child = new Child();
-        field("process", child); field("ready", true); field("loginInProgress", true);
-        engine.io.submit(() -> engine.codexDisconnected(child, null, null, new RuntimeFailure.Tail())).get(5, TimeUnit.SECONDS);
-        assertEquals("login", diagnostics.get(0).getString("operation"));
-        assertFalse(diagnostics.get(0).has("spawnMs"));
-    }
     @Test public void preparationFailureReportsStageBeforeProcessCreation() throws Exception {
         assertThrows(ExecutionException.class, () -> handle("runtime.start"));
         JSONObject diagnostic = diagnostics.get(0);
-        assertEquals("runtime_check", diagnostic.getString("stage"));
+        assertEquals("runtime_prepare", diagnostic.getString("stage"));
         assertEquals("start", diagnostic.getString("operation"));
         assertEquals(-1, diagnostic.getLong("spawnMs"));
         assertFalse(diagnostic.getBoolean("processAlive"));
     }
-    @Test public void loginRpcFailureRetainsStageAndSafeExceptionCategory() throws Exception {
-        engine.setTestTransport((method, params) -> {
-            if (method.equals("account/login/start")) throw new java.net.SocketTimeoutException("private-token /private/path");
-            return obj();
-        });
-        assertThrows(ExecutionException.class, () -> handle("auth.login"));
-        JSONObject diagnostic = diagnostics.get(0);
-        assertEquals("login_rpc", diagnostic.getString("stage"));
-        assertEquals("request_timeout", diagnostic.getString("errorCode"));
-        assertEquals("active", diagnostic.getString("homeKind"));
-        assertFalse(diagnostic.toString().contains("private"));
-        assertFalse(diagnostic.has("stdoutBytes"));
-    }
-    @Test public void loginPreparationFailureDoesNotRollbackOrEraseLiveLogin() throws Exception {
-        field("liveRemote", "private-remote"); field("loginInProgress", true);
-        assertThrows(ExecutionException.class, () -> handle("auth.login"));
-        assertEquals("login_prepare", diagnostics.get(0).getString("stage"));
-        assertEquals(true, field("loginInProgress"));
-        assertEquals("private-remote", field("liveRemote"));
-        assertFalse(diagnostics.toString().contains("private"));
-    }
-
     @Test public void backgroundChatFailureAndRecoveryUseTheirOwnLocalScope() throws Exception {
         JSONObject foreground=obj("id","local-A","codexThreadId","remote-A","messages",new org.json.JSONArray());
         JSONObject background=obj("id","local-B","codexThreadId","remote-B","messages",new org.json.JSONArray());

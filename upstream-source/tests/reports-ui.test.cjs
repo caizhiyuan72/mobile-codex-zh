@@ -24,7 +24,7 @@ test('cancel in flight revokes consent and requires a fresh preview before retry
 test('invalid or foreign result links are never offered',async()=>{
  const fx=fixture(async(action)=>action==='reports.preview'?preview:{status:'sent',url:'https://evil.test/steal'});await fx.ui.open();await fx.ui.send();assert.equal(fx.e('report-result').hidden,true);assert.equal(fx.e('report-send').disabled,false);
 });
-const launchers = ['report-open', 'report-login-open', 'report-error-open'];
+const launchers = ['report-open', 'report-error-open'];
 function assertLaunchers(fx, hidden) { for (const id of launchers) assert.equal(fx.e(id).hidden, hidden, id); }
 test('all report launchers start hidden and follow native current-error availability', async () => {
  const fx = fixture(async () => ({available:true}));

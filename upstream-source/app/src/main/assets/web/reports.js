@@ -7,10 +7,11 @@
   const {document, call, t, show, close} = options;
   const $ = id => document.getElementById(id);
   let reportId = '', sending = false, epoch = 0, availabilityRevision = 0, cancelling = null;
-  const status = text => { $('report-status').textContent = text; };
-  function controls() { $('report-send').disabled = sending || !reportId; $('report-send').textContent = t(sending ? '전송 중…' : '공개 GitHub에 전송'); }
+  let statusKey = '';
+  const status = key => { statusKey = key; $('report-status').textContent = t(key); };
+  function controls() { $('report-send').disabled = sending || !reportId; $('report-send').textContent = t(sending ? '正在发送…' : '发送到公开 GitHub'); }
   function launchers(available) {
-    for (const id of ['report-open', 'report-login-open', 'report-error-open']) $(id).hidden = !available;
+    for (const id of ['report-open', 'report-error-open']) $(id).hidden = !available;
   }
   function clearPreview() {
     ++epoch; reportId = '';
@@ -25,7 +26,7 @@
       clearPreview();
       $('report-result').hidden = true;
       delete $('report-result').dataset.url;
-      if (!sending) status(t(active ? '오류 정보가 변경되었습니다. 다시 열어 확인해 주세요.' : '아직 전송할 오류 정보가 없습니다. 오류가 발생한 뒤 다시 열어 주세요.'));
+      if (!sending) status(active ? '错误报告已发生变化，请重新打开以查看最新内容。' : '目前没有可发送的错误报告。发生错误后请重新打开。');
     }
   }
   async function refresh() {
@@ -42,34 +43,34 @@
     if (sending) { show('report-dialog'); return; }
     const generation = ++epoch; reportId = ''; controls();
     $('report-payload').textContent = ''; $('report-result').hidden = true;
-    status(t('오류 정보를 준비하고 있습니다.')); show('report-dialog');
+    status('正在准备错误报告。'); show('report-dialog');
     try {
       const value = await call('reports.preview'); if (generation !== epoch) return;
-      if (value.status !== 'preview') { if (value.status === 'unavailable') available(false); status(t('아직 전송할 오류 정보가 없습니다. 오류가 발생한 뒤 다시 열어 주세요.')); return; }
+      if (value.status !== 'preview') { if (value.status === 'unavailable') available(false); status('目前没有可发送的错误报告。发生错误后请重新打开。'); return; }
       reportId = value.reportId;
       $('report-payload').textContent = JSON.stringify(value.payload, null, 2);
       status(''); controls();
-    } catch { if (generation === epoch) status(t('오류 정보를 준비하지 못했습니다. 다시 열어 주세요.')); }
+    } catch { if (generation === epoch) status('无法准备报告，请重新打开。'); }
   }
   async function send() {
     if (sending || !reportId) return;
     sending = true; const revision = availabilityRevision; controls();
-    status(t('전송 중입니다. 취소해도 이미 등록된 글은 남을 수 있습니다.'));
+    status('正在发送。即使取消，已发布的报告仍可能保留。');
     try {
       const value = await call('reports.send', {reportId, consent:true});
       if (value.status === 'sent' && /^https:\/\/github\.com\/nokryong\/mobile-codex\/issues\/[1-9][0-9]*$/.test(value.url)) {
         $('report-result').dataset.url = value.url; $('report-result').hidden = false;
-        status(t(value.grouped ? '같은 오류의 기존 이슈에 접수했습니다.' : '오류 정보를 GitHub에 등록했습니다.'));
+        status(value.grouped ? '已合并到相同错误的现有 Issue。' : '错误报告已发布到 GitHub。');
         clearPreview();
         if (revision === availabilityRevision) launchers(false);
-      } else status(t(value.status === 'cancelled' ? '전송을 취소했습니다. 다시 보내려면 오류 정보를 다시 열어 확인해 주세요.' : '접수를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 전송해 주세요. 같은 신고는 중복 등록하지 않습니다.'));
-    } catch { status(t('접수를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 전송해 주세요. 같은 신고는 중복 등록하지 않습니다.')); }
+      } else status(value.status === 'cancelled' ? '已取消发送。若要重试，请重新打开错误报告并确认。' : '无法确认是否提交。请检查网络后重试，相同报告不会重复发布。');
+    } catch { status('无法确认是否提交。请检查网络后重试，相同报告不会重复发布。'); }
     finally { sending = false; controls(); }
   }
   async function cancel() {
     if (cancelling) return cancelling;
     clearPreview();
-    if (sending) status(t('전송을 취소하고 있습니다…'));
+    if (sending) status('正在取消…');
     else close('report-dialog');
     // Reopening waits for native revocation, so an older cancel cannot erase
     // a newly requested consent snapshot. The report itself remains retryable.
@@ -78,8 +79,8 @@
   }
   $('report-send').addEventListener('click', send);
   $('report-open').addEventListener('click', open);
-  $('report-login-open').addEventListener('click', open);
-  $('report-error-open').addEventListener('click', open);
-  $('report-result').addEventListener('click', () => call('ui.externalBrowser', {url:$('report-result').dataset.url}).catch(() => status(t('링크를 열지 못했습니다. 다시 시도해 주세요.'))));
+  $('report-error-open').addEventListener('click', () => { close('header-menu-dialog'); open(); });
+  $('report-result').addEventListener('click', () => call('ui.externalBrowser', {url:$('report-result').dataset.url}).catch(() => status('无法打开链接，请重试。')));
+  document.addEventListener?.('mobilecodex:languagechange', () => { controls(); status(statusKey); });
   return {open, send, cancel, available, refresh, isSending:() => sending};
 });

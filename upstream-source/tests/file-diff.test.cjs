@@ -89,7 +89,7 @@ test('diff preview renders markup as text and shows hunk ranges and truncation n
     w.previewTest('before\n','<img src=x onerror=alert(1)>\n');
     const box=w.document.getElementById('change-diff');assert.equal(box.querySelector('img'),null);assert.match(box.textContent,/@@ -1,1 \+1,1 @@/);assert.match(box.textContent,/<img src=x onerror=alert\(1\)>/);
     w.previewTest(Array(6000).fill('before').join('\n'),Array(6000).fill('after').join('\n'));
-    assert.ok(box.querySelector('.diff-removed'));assert.ok(box.querySelector('.diff-added'));assert.match(box.textContent,/일부 변경 내용은 생략/);assert.match(box.textContent,/간략히 비교/);
-    w.previewTest('no newline','no newline\n');assert.match(box.textContent,/마지막 줄에 줄바꿈 없음/);
+    assert.ok(box.querySelector('.diff-removed'));assert.ok(box.querySelector('.diff-added'));assert.match(box.textContent,/部分更改已省略/);assert.match(box.textContent,/大段更改已以精简形式显示/);
+    w.previewTest('no newline','no newline\n');assert.match(box.textContent,/文件末尾没有换行符/);
   }finally{dom.window.close();}
 });

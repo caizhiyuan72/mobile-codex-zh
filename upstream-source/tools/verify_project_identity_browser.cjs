@@ -7,6 +7,113 @@ const web = path.resolve(__dirname, '../app/src/main/assets/web');
 const output = path.resolve(__dirname, '../artifacts/project-identity-preview');
 fs.mkdirSync(output, {recursive:true});
 
+async function verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, geometry) {
+ await page.reload();
+ await page.locator('[data-project-menu-key="b"]').waitFor({state:'attached'});
+ await page.evaluate(() => {
+  const current = window.testState;
+  window.testState = {...current, ready:true, busy:true, turnId:'active-turn',
+   messages:[{id:'streaming-answer',role:'assistant',text:'Still working.'}],
+   projects:current.projects.map(project => project.key==='b' ? {...project,available:false,hasLocalFolder:true} : project),
+   sessions:current.sessions.map(session => ({...session,busy:session.id===current.threadId}))};
+  window.mobileCodexEvent('state', window.testState);
+ });
+ const firstCall = await page.evaluate(() => window.testCalls.length);
+ const picker = page.locator('#project-link-dialog');
+ const choice = action => picker.locator(`[data-project-folder-action="${action}"]`);
+ const navigate = async (control, path) => {
+  await control.click();
+  await picker.getByText(['大肥龙', ...path.split('/').filter(Boolean)].join(' / '),{exact:true}).waitFor();
+ };
+ const enter = path => navigate(picker.locator(`[data-workspace-folder="${path}"]`), path);
+ const openWorkspace = async () => {
+  await openSidebar();
+  const add = page.locator('#add-project');
+  assert.ok(await add.isEnabled(),'Project add must remain enabled during a turn');
+  await navigate(add, '');
+ };
+ const assertConversationPreserved = async () => {
+  assert.equal(await page.locator('#header-title').textContent(),'A conversation');
+  assert.equal(await page.locator('#header-project-label').textContent(),'Shared project');
+  assert.equal(await page.locator('.session[aria-current="true"]').textContent(),'A conversation');
+  assert.ok(await page.locator('#activity').isVisible());
+ };
+ const expectAdded = async name => {
+  await waitProjectLinkClose();
+  await page.locator('#projects').getByRole('button',{name,exact:true}).waitFor({state:'attached'});
+  await assertConversationPreserved();
+ };
+ const submitName = async name => {
+  await page.locator('#input-dialog[open] #input-value').fill(name);
+  await page.locator('#input-confirm').click();
+ };
+ const assertBlocked = async action => {
+  assert.ok(await action.isDisabled(),`${await action.textContent()} must remain disabled during a turn`);
+  await action.evaluate(button => button.click());
+ };
+
+ await openSidebar();
+ await assertConversationPreserved();
+ await page.locator('[data-project-menu-key="a"]').click();
+ await assertBlocked(page.locator('#project-actions').getByRole('button',{name:'Merge projects',exact:true}));
+ await page.locator('[data-project-menu-key="b"]').click();
+ await assertBlocked(page.locator('#project-actions').getByRole('button',{name:'Reconnect folder',exact:true}));
+
+ await openWorkspace();
+ await geometry();
+ await assertBlocked(choice('import'));
+ assert.ok(await choice('pick').isEnabled());
+ assert.ok(await choice('metadata').isEnabled());
+ await enter('Projects');
+ await enter('Projects/Nested');
+ await geometry();
+ assert.equal(await choice('import').count(),0);
+ await navigate(choice('up'), 'Projects');
+ await navigate(choice('up'), '');
+ await enter('Projects');
+ await enter('Projects/Nested');
+ await choice('bind').click();
+ await expectAdded('Nested');
+
+ await openWorkspace();
+ await enter('Projects');
+ await choice('create').click();
+ await submitName('Browser regression');
+ await expectAdded('Browser regression');
+
+ await openWorkspace();
+ await choice('metadata').click();
+ await submitName('Metadata only');
+ await expectAdded('Metadata only');
+
+ await openWorkspace();
+ await choice('pick').click();
+ await expectAdded('External folder');
+
+ await page.evaluate(() => window.mobileCodexEvent('message.delta',{threadId:'ta',id:'streaming-answer',delta:' Continued after adding projects.'}));
+ await page.locator('#messages').getByText('Still working. Continued after adding projects.',{exact:true}).waitFor();
+ const calls = await page.evaluate(firstCall => window.testCalls.slice(firstCall)
+  .filter(({action}) => /^(projects\.|ui\.projects\.|chat\.)/.test(action) || action==='files.pick')
+  .map(({action,args}) => [action,args]), firstCall);
+ assert.deepEqual(calls,[
+  ['projects.workspaceFolders',{path:''}],
+  ['projects.workspaceFolders',{path:'Projects'}],
+  ['projects.workspaceFolders',{path:'Projects/Nested'}],
+  ['projects.workspaceFolders',{path:'Projects'}],
+  ['projects.workspaceFolders',{path:''}],
+  ['projects.workspaceFolders',{path:'Projects'}],
+  ['projects.workspaceFolders',{path:'Projects/Nested'}],
+  ['projects.bindWorkspaceFolder',{path:'Projects/Nested'}],
+  ['projects.workspaceFolders',{path:''}],
+  ['projects.workspaceFolders',{path:'Projects'}],
+  ['projects.createWorkspaceFolder',{path:'Projects',name:'Browser regression'}],
+  ['projects.workspaceFolders',{path:''}],
+  ['projects.create',{name:'Metadata only'}],
+  ['projects.workspaceFolders',{path:''}],
+  ['files.pick',{}]
+ ]);
+}
+
 (async () => {
  const browser = await chromium.launch({headless:true, executablePath:process.env.MOBILE_CODEX_BROWSER_EXECUTABLE || undefined});
  try {
@@ -20,8 +127,16 @@ fs.mkdirSync(output, {recursive:true});
     return file.startsWith(web + path.sep) && fs.existsSync(file) ? route.fulfill({path:file}) : route.fulfill({status:404,body:''});
    });
    await page.addInitScript(() => {
-    localStorage.setItem('chat-icons','off');
     const binding = (key, name) => ({key,name,uri:'content://provider/tree/' + 'long-folder-'.repeat(15) + key,available:true,hasLocalFolder:true});
+    const folders = new Set(['Projects', 'Projects/Nested', 'A workspace folder with a long name for narrow screens']);
+    const parentPath = path => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const folderName = path => path.slice(path.lastIndexOf('/') + 1);
+    const addProject = (key, name, hasLocalFolder) => {
+     const project = {key, name, projectId:key, available:hasLocalFolder, hasLocalFolder, workspaceKeys:[key], bindings:hasLocalFolder ? [binding(key, name)] : []};
+     window.testState.projects = [...window.testState.projects, project];
+     window.mobileCodexEvent('state', window.testState);
+     return project;
+    };
     window.testState = {ready:false,account:{},authState:'unknown',models:[],busy:false,threadId:'ta',messages:[],
      workspace:{key:'a',selected:true,name:'Shared project',available:true},
      projects:[{key:'a',projectId:'pa',name:'Shared project',available:true,workspaceKeys:['a'],bindings:[binding('a','Folder A')]},
@@ -33,6 +148,23 @@ fs.mkdirSync(output, {recursive:true});
      setTimeout(() => {
       let result={};
       if (m.action==='state') result=window.testState;
+      if (m.action==='projects.workspaceFolders') {
+       const path = m.args.path;
+       result={rootName:'大肥龙', path, parent:path ? parentPath(path) : null,
+        entries:[...folders].filter(entry => parentPath(entry) === path).map(entry => ({name:folderName(entry),path:entry}))};
+      }
+      if (m.action==='projects.bindWorkspaceFolder') {
+       const path = m.args.path;
+       result=addProject('local:' + path, folderName(path), true);
+      }
+      if (m.action==='projects.createWorkspaceFolder') {
+       const {path, name} = m.args;
+       const createdPath = path ? `${path}/${name}` : name;
+       folders.add(createdPath);
+       result=addProject('local:' + createdPath, name, true);
+      }
+      if (m.action==='projects.create') result=addProject('metadata', m.args.name, false);
+      if (m.action==='files.pick' && !m.args.projectKey) result=addProject('external', 'External folder', true);
       if (m.action==='projects.merge') {
        const [a,b]=window.testState.projects;
        window.testState.projects=[{...b,workspaceKeys:['a','b'],bindings:[...a.bindings,...b.bindings]}];
@@ -102,8 +234,8 @@ fs.mkdirSync(output, {recursive:true});
    await page.waitForFunction(() => document.activeElement?.dataset.projectMenuKey==='a');
    assert.equal(await page.locator('.project-tree').count(),2);
    await page.locator('.project-more').first().click(); await page.getByRole('button',{name:'Merge projects',exact:true}).click();
-   page.once('dialog', dialog => dialog.accept());
    await page.locator('#project-link-choices button').click();
+   await page.locator('#confirm-accept').click();
    await page.waitForFunction(() => document.querySelectorAll('.project-tree').length===1 && !document.getElementById('project-link-dialog').open);
    await waitProjectLinkClose();
    assert.equal(await page.locator('#projects .session').count(),2);
@@ -120,13 +252,13 @@ fs.mkdirSync(output, {recursive:true});
    await page.screenshot({path:path.join(output,`unbound-${width}.png`)});
    await page.evaluate(() => window.mobileCodexEvent('state',{...window.testState,workspace:{selected:false,key:'',projectId:'',name:'Codex',hasLocalFolder:true,available:true,defaultWorkspace:true},projects:[],sessions:[{id:'orphan',workspaceKey:'removed-binding',title:'Migrating conversation'}]}));
    await openSidebar();
-   assert.equal(await page.locator('#context-folder').textContent(),'Codex');
    assert.equal(await page.locator('.detached-projects').count(),0);
    assert.equal(await page.locator('#projects .project-tree').count(),0);
    assert.equal(await page.locator('#sessions .session').count(),1);
    await closeSidebar();
-   await page.locator('#files-toggle').click();
+   await page.locator('#header-more').click(); await page.locator('#files-toggle').click();
    await page.waitForFunction(() => window.testCalls.some(call => call.action==='files.list'));
+   await page.locator('#breadcrumbs').filter({hasText:/^Codex$/}).waitFor();
    await page.screenshot({path:path.join(output,`general-codex-${width}.png`)});
    await page.locator('#file-close').click();
    await openSidebar();
@@ -137,6 +269,8 @@ fs.mkdirSync(output, {recursive:true});
    await page.locator('#input-dialog').evaluate(dialog => { window.testInputClosed = false; dialog.addEventListener('close', () => { window.testInputClosed = true; }, {once:true}); });
    await page.keyboard.press('Escape');await page.waitForFunction(() => window.testInputClosed && !document.getElementById('input-dialog').open);
    assert.equal(await page.evaluate(() => window.testCalls.some(c => c.action==='projects.create')),false);
+   await page.locator('#project-link-dialog[open] [data-project-folder-action="metadata"]:enabled').waitFor();
+   await page.keyboard.press('Escape');await waitProjectLinkClose(true);
    await openSidebar(); await page.locator('#add-project').click(); await page.getByRole('button',{name:'Import projects',exact:true}).click();
    await page.locator('#project-link-choices button').filter({has:page.getByText('Import',{exact:true})}).waitFor();
    await geometry(); await page.screenshot({path:path.join(output,`import-preview-${width}.png`)});
@@ -151,10 +285,11 @@ fs.mkdirSync(output, {recursive:true});
    await page.locator('#project-link-choices button').first().click();
    await waitProjectLinkClose();
    await openSidebar(); await page.locator('.project-more').click();
-   page.once('dialog',dialog=>dialog.accept()); await page.getByRole('button',{name:'Export project',exact:true}).click();
+   await page.getByRole('button',{name:'Export project',exact:true}).click(); await page.locator('#confirm-accept').click();
    await page.waitForFunction(() => window.testCalls.some(c => c.action==='ui.projects.exportFile'));
+   await verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, geometry);
    assert.deepEqual(errors,[]);
-   console.log(`PASS ${width}px: merge, cancel/focus, bindings, unbound, import preview/apply, conflicts, export; no overflow`);
+   console.log(`PASS ${width}px: workspace navigation, add during streaming, busy guards, merge, bindings, import preview/apply, conflicts, export; no overflow`);
    await page.close();
   }
  } finally { await browser.close(); }

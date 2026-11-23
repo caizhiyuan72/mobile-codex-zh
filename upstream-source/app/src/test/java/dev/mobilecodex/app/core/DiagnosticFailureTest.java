@@ -8,6 +8,21 @@ import static dev.mobilecodex.app.core.Json.*;
 import static org.junit.Assert.*;
 
 public class DiagnosticFailureTest {
+    @Test public void distinguishesTransportConflictFromOtherHttpFailuresWithoutRetainingBodies() throws Exception {
+        JSONObject error = obj("message", "The proven encrypted agent transport changed. private-token",
+            "codexErrorInfo", obj("httpConnectionFailed", obj("httpStatusCode", 409)));
+        assertEquals("encrypted_transport_changed", DiagnosticFailure.remoteCategory(error));
+        assertFalse(DiagnosticFailure.snapshot(new DiagnosticFailure.RpcFailure("", error), new Object()).toString().contains("private-token"));
+        error.put("message", "other conflict private-token");
+        assertEquals("upstream_conflict", DiagnosticFailure.remoteCategory(error));
+        for (int status : new int[]{503, 525}) {
+            error.getJSONObject("codexErrorInfo").getJSONObject("httpConnectionFailed").put("httpStatusCode", status);
+            assertEquals("upstream_connection", DiagnosticFailure.remoteCategory(error));
+        }
+        error.remove("codexErrorInfo");
+        error.put("message", "409 The proven encrypted agent transport changed.");
+        assertEquals("turn_failed", DiagnosticFailure.remoteCategory(error));
+    }
     @Test public void classifiesErrorsWithoutSerializingTheirMessagesOrRemoteData() throws Exception {
         Object operation = new Object();
         assertEquals("request_timeout", DiagnosticFailure.snapshot(new CompletionException(new java.util.concurrent.TimeoutException("secret")), operation).getString("errorCode"));

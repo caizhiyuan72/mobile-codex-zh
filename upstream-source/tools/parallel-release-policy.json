@@ -1,0 +1,7 @@
+{
+  "applicationId": "dev.mobilecodex.app.zhcnv3.next",
+  "applicationLabel": "Codex CN API",
+  "minimumSdk": 29,
+  "abi": "arm64-v8a",
+  "signingCertificateSha256": ["c3537a4bbf12e671868127ef3267c4806ffabed83d62208d94085ae4fe12b207"]
+}

@@ -86,7 +86,14 @@ def download(url: str, destination: Path, expected_sha256: str | None = None) ->
     # retains it. Mirrors may only supply the identical bytes from the existing lock.
     urls = [url]
     if expected_sha256 and url.startswith(POOL_URL):
-        urls.append("https://ro.mirror.flokinet.net/termux/termux-main/" + url[len(POOL_URL):])
+        # Listed in termux-tools/mirrors; these retain identical pinned archives
+        # that newer pools have removed.
+        for mirror in (
+            "https://ro.mirror.flokinet.net/termux/termux-main/",
+            "https://mirror.nyist.edu.cn/termux/apt/termux-main/",
+            "https://mirror.iscas.ac.cn/termux/apt/termux-main/",
+        ):
+            urls.append(mirror + url[len(POOL_URL):])
     last_error = None
     for candidate in urls:
         try:

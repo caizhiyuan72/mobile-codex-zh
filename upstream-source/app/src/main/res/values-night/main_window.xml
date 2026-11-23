@@ -1,0 +1,4 @@
+<resources>
+    <color name="main_window_background">@color/main_canvas_dark</color>
+    <bool name="main_window_light">false</bool>
+</resources>

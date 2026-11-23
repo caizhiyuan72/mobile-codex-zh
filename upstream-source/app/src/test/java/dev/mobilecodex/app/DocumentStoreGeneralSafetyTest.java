@@ -2,6 +2,9 @@ package dev.mobilecodex.app;
 
 import android.app.Application;
 import android.content.Context;
+import android.net.Uri;
+import dev.mobilecodex.app.core.ProjectRegistry;
+import dev.mobilecodex.app.core.WorkspacePath;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +54,93 @@ public class DocumentStoreGeneralSafetyTest {
         assertThrows(Exception.class, () -> store.read("/outside.txt"));
         assertThrows(IOException.class, () -> store.prepare("mobile_delete", obj("path", "")));
         assertTrue(fixture.isDirectory());
+    }
+
+    @Test public void projectOutputIsCreatedOnBindingAndRestoredWhenAnOlderProjectIsOpened() throws Exception {
+        DocumentStore store = store();
+        store.createWorkspaceFolder(ROOT, "项目", false);
+        File project = new File(fixture, "项目");
+        File output = new File(project, "大肥龙输出");
+        assertTrue(output.isDirectory());
+        assertFalse(new File(fixture, "大肥龙输出").exists());
+        File legacyOutput = new File(project, "输出");
+        assertFalse(legacyOutput.exists());
+        store.bindWorkspaceFolder(path("项目"), true);
+        Files.delete(output.toPath());
+        assertTrue(legacyOutput.mkdir());
+        File legacyArtifact = new File(legacyOutput, "成品.txt");
+        Files.write(legacyArtifact.toPath(), "旧成品".getBytes(StandardCharsets.UTF_8));
+
+        DocumentStore reopened = store();
+        JSONObject entry = reopened.list("").getJSONArray("entries").getJSONObject(0);
+        assertEquals("大肥龙输出", entry.getString("path"));
+        assertTrue(entry.getBoolean("directory"));
+        assertEquals("旧成品", new String(Files.readAllBytes(legacyArtifact.toPath()), StandardCharsets.UTF_8));
+        Files.delete(output.toPath());
+        Files.write(output.toPath(), "保留内容".getBytes(StandardCharsets.UTF_8));
+        reopened.list("");
+        assertEquals("保留内容", new String(Files.readAllBytes(output.toPath()), StandardCharsets.UTF_8));
+    }
+
+    @Test public void workspacePickerScopesProjectsToRealFoldersUnderTheMainWorkspace() throws Exception {
+        DocumentStore store = store();
+        String project = path("项目 #1");
+        File projectFolder = new File(fixture, "项目 #1");
+        assertTrue(projectFolder.mkdir());
+        Files.write(new File(projectFolder, "readme.txt").toPath(), new byte[] {65});
+        Files.write(new File(fixture, "outside.txt").toPath(), new byte[] {66});
+        assertTrue(new File(fixture, ".git").mkdir());
+        outside = Files.createTempDirectory(context.getCacheDir().toPath(), "outside-workspace-").toFile();
+        Files.createSymbolicLink(new File(fixture, "alias").toPath(), outside.toPath());
+
+        JSONObject listing = store.workspaceFolders(ROOT);
+        assertEquals("", listing.getString("parent"));
+        assertEquals(1, listing.getJSONArray("entries").length());
+        assertEquals(project, listing.getJSONArray("entries").getJSONObject(0).getString("path"));
+        assertThrows(IllegalArgumentException.class, () -> store.bindWorkspaceFolder("../outside", true));
+        assertThrows(IOException.class, () -> store.bindWorkspaceFolder(path("alias"), true));
+        assertThrows(IOException.class, () -> store.createWorkspaceFolder(path(".git"), "bad", true));
+        assertThrows(IOException.class, () -> store.createWorkspaceFolder(ROOT, "项目 #1", true));
+        assertThrows(IOException.class, () -> store.createWorkspaceFolder(ROOT, "outside.txt", true));
+        assertTrue(store.createWorkspaceFolder(ROOT, "新增", false).getBoolean("available"));
+        assertTrue(new File(fixture, "新增").isDirectory());
+        assertTrue(store.key().isEmpty());
+
+        String key = store.bindWorkspaceFolder(project, true).getString("key");
+        assertEquals(projectFolder.getCanonicalFile(), store.directDirectory());
+        assertEquals("A", store.read("readme.txt").getString("content"));
+        assertThrows(IOException.class, () -> store.read("outside.txt"));
+        assertEquals(key, store().workspace().getString("key"));
+        assertEquals("A", store().read("readme.txt").getString("content"));
+    }
+
+    @Test public void addingTheOriginalFolderDoesNotReplaceAnExistingReboundProject() throws Exception {
+        ProjectRegistry registry = ProjectRegistry.fromJson("");
+        String original = Uri.fromParts("workspace", ROOT, null).toString();
+        String key = WorkspacePath.hash(original), replacement = "content://provider/tree/replacement";
+        registry.put(replacement, "Rebound", key);
+        context.getSharedPreferences("projects", 0).edit().putString("registry", registry.toJson()).commit();
+        DocumentStore store = store();
+
+        String newKey = store.bindWorkspaceFolder(ROOT, false).getString("key");
+        assertNotEquals(key, newKey);
+        assertEquals(key, store.key());
+        assertEquals(newKey, store.bindWorkspaceFolder(ROOT, false).getString("key"));
+        ProjectRegistry saved = ProjectRegistry.fromJson(context.getSharedPreferences("projects", 0).getString("registry", ""));
+        assertEquals(replacement, saved.get(key).uri);
+        assertEquals(original, saved.get(newKey).uri);
+    }
+
+    @Test public void previewRoutesDocumentsAndBinaryFilesWhileKeepingUtf8Editable() throws Exception {
+        DocumentStore store = store();
+        Files.write(new File(fixture, "report.PDF").toPath(), "%PDF-1.4".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(fixture, "binary.dat").toPath(), new byte[] {0, 1, 2});
+        Files.write(new File(fixture, "script.ts").toPath(), "const value = 1;".getBytes(StandardCharsets.UTF_8));
+        assertTrue(store.preview(path("report.PDF")).getBoolean("openWithApp"));
+        assertTrue(store.preview(path("binary.dat")).getBoolean("openWithApp"));
+        assertEquals("const value = 1;", store.preview(path("script.ts")).getString("content"));
+        assertThrows(Exception.class, () -> store.openTarget("../outside.txt"));
+        assertThrows(IOException.class, () -> store.openTarget(ROOT));
     }
 
     @Test public void symlinkReadWriteAndRecursiveDeleteFailBeforeAnyLocalDeletion() throws Exception {

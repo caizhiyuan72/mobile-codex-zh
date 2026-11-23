@@ -59,7 +59,7 @@ public class EngineFileContextTest {
     private JSONObject handle(String action, JSONObject args) throws Exception { return request(action, args).get(5, TimeUnit.SECONDS); }
     private void assertStale(CompletableFuture<JSONObject> result) throws Exception {
         try { result.get(5, TimeUnit.SECONDS); fail("stale file operations must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("프로젝트가 바뀌었습니다")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("项目已变更")); }
     }
     @Test public void scopedFileRequestsRejectAnotherWorkspaceBeforeReadingOrMutating() throws Exception {
         for (String action : new String[]{"files.list", "files.search", "files.read", "files.mention", "images.read"}) {
@@ -72,6 +72,8 @@ public class EngineFileContextTest {
         assertEquals("original", handle("files.read", obj("path", source.getName())).getString("content"));
     }
     @Test public void approvingAnOldFileMutationAfterProjectSwitchDoesNotModifyTheOriginalFile() throws Exception {
+        JSONObject anotherProject = handle("projects.create", obj("name", "Another project"));
+        handle("projects.select", obj("key", ""));
         CompletableFuture<Engine.Approval> shown = new CompletableFuture<>();
         engine.attach(new Engine.Ui() {
             public void event(String name, JSONObject data) {}
@@ -81,8 +83,12 @@ public class EngineFileContextTest {
         CompletableFuture<JSONObject> mutation = request("files.mutate", obj("workspaceKey", "", "operation", "mobile_write", "arguments",
             obj("path", source.getName(), "content", "pending edit", "expectedSha256", original.getString("sha256"))));
         Engine.Approval approval = shown.get(5, TimeUnit.SECONDS);
-        handle("projects.create", obj("name", "Another project"));
-        assertFalse(handle("state", obj()).getJSONObject("workspace").getString("key").isEmpty());
+        JSONObject added = handle("projects.create", obj("name", "Added during approval"));
+        assertFalse(added.getString("key").isEmpty());
+        assertFalse(approval.decision.isDone());
+        assertTrue(handle("state", obj()).getJSONObject("workspace").getString("key").isEmpty());
+        handle("projects.select", obj("key", anotherProject.getString("key")));
+        assertEquals(anotherProject.getString("key"), handle("state", obj()).getJSONObject("workspace").getString("key"));
         approval.decision.complete(true);
         assertStale(mutation);
         assertEquals("original", new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8));

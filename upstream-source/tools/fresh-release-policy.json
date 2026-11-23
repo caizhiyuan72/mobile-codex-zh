@@ -1,0 +1,7 @@
+{
+  "applicationId": "dev.mobilecodex.app.zhcnv3.fresh",
+  "applicationLabel": "大肥龙",
+  "minimumSdk": 29,
+  "abi": "arm64-v8a",
+  "signingCertificateSha256": ["ecfc26efdc5cb36beb7a8773f73c105c8fe72fc03e634399f46f7d462d567b94"]
+}

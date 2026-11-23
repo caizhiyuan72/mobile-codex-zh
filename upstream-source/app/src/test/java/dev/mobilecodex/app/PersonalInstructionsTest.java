@@ -61,7 +61,8 @@ public class PersonalInstructionsTest {
     }
     @Test public void savingInstructionsForcesTheSameThreadToResumeInTheNextServer() throws Exception {
         File sessions = new File(context.getFilesDir(), "sessions.json");
-        dev.mobilecodex.app.core.Utf8Files.write(sessions.toPath(), array(obj("id", "thread", "title", "Existing", "workspaceKey", "", "messages", array(), "imageHistoryVersion", 1)).toString());
+        dev.mobilecodex.app.core.Utf8Files.write(sessions.toPath(), array(obj("id", "thread", "title", "Existing", "workspaceKey", "", "messages", array(),
+            "imageHistoryVersion", 1, "workHistoryVersion", 1)).toString());
         Engine engine = new Engine(context); java.util.ArrayList<String> calls = new java.util.ArrayList<>();
         engine.setTestTransport((method, params) -> { calls.add(method); assertEquals("thread/resume", method); return obj(); });
         handle(engine, "chat.resume", obj("id", "thread"));

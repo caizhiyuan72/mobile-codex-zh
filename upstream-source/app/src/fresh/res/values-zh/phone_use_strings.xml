@@ -1,0 +1,4 @@
+<resources>
+    <string name="phone_use_label">大肥龙手机控制</string>
+    <string name="phone_use_description">在应用内开启手机控制后，大肥龙可将其他应用的屏幕内容和截图发送到 AI 服务，并通过点击、输入和滚动执行你的请求。屏幕信息可能保存在大肥龙聊天记录中。你可以随时点击屏幕上的停止按钮关闭控制。仅授予无障碍权限不会启动控制。</string>
+</resources>

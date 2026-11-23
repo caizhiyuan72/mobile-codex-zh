@@ -7,12 +7,16 @@
   color-scheme: light;
 
   /* Surfaces */
-  --bg: #ffffff;                 /* conversation canvas */
-  --sidebar: #f9f9f9;            /* navigation drawer */
+  --bg: #fafafa;                 /* conversation canvas */
+  --canvas-rgb: 250, 250, 250;
+  --edge-rgb: var(--canvas-rgb);
+  --sidebar: #f5f5f7;            /* navigation drawer */
   --surface: #ffffff;            /* dialogs, popovers */
   --composer: #ffffff;
-  --bubble: #f4f4f4;             /* user message */
-  --code-bg: #f9f9f9;
+  --bubble: #ebedf1;             /* user message */
+  --code-bg: #f0f1f4;
+  --code-head: #e9ebef;
+  --control-surface: #fff;
 
   /* Translucent fills work on any surface. */
   --fill-1: rgba(0, 0, 0, .035); /* cards, fields, chips */
@@ -25,23 +29,24 @@
   --divider: rgba(0, 0, 0, .07);
 
   /* Text */
-  --text: #0d0d0d;
-  --text-2: #5d5d5d;
-  --text-3: #8f8f8f;
+  --text: #17181b;
+  --text-2: #474b54;
+  --text-3: #595e68;
 
   /* Actions and status */
-  --solid: #0d0d0d;
+  --solid: #1d2026;
   --on-solid: #ffffff;
   --disabled-bg: #e3e3e3;
   --disabled-fg: #a3a3a3;
-  --danger: #d0342c;
+  --danger: #a42428;
+  --on-danger: #fff;
   --danger-fill: rgba(208, 52, 44, .08);
-  --success: #0f8a6a;
+  --success: #00664d;
   --success-fill: rgba(16, 163, 127, .1);
   --warning-fill: #fff3cd;
   --warning-fg: #8a5a00;
-  --focus: #6b6b6b;
-  --link: #2964d9;
+  --focus: #235cc3;
+  --link: #2155b2;
   --selection: rgba(41, 100, 217, .2);
   --scrim: rgba(0, 0, 0, .4);
 
@@ -57,35 +62,56 @@
   --content-width: 768px;
 
   /* Radius */
-  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 20px; --r-2xl: 28px; --r-full: 999px;
+  --radius-pill: 999px;
+  --radius-sheet: 28px;
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --r-sm: calc(var(--radius-control) - var(--s-1));
+  --r-md: var(--radius-control);
+  --r-lg: var(--radius-card);
+  --r-xl: calc(var(--radius-card) + var(--s-1));
+  --r-2xl: var(--radius-sheet);
+  --r-full: var(--radius-pill);
+  --composer-padding: 6px;
+  --composer-control-radius: calc(var(--touch) / 2);
+  --composer-radius: calc(var(--composer-control-radius) + var(--composer-padding));
+  --segment-padding: var(--s-1);
+  --segment-radius: calc(var(--touch) / 2 + var(--segment-padding));
 
   /* Type */
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "NotoSansKR-Regular", "Noto Sans KR", "Malgun Gothic", "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
-  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-base: 15px; --fs-lg: 16px; --fs-xl: 18px; --fs-2xl: 28px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", Roboto, "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+  --mono: "SF Mono", "SFMono-Regular", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-base: 15.5px; --fs-lg: 16px; --fs-xl: 18px; --fs-2xl: 28px;
 
   /* Sizes */
   --touch: 44px;
-  --composer-visible-control-size: 32px;
+  --composer-visible-control-size: 44px;
   --sidebar-width: 260px;
-  --header-height: 56px;
+  --header-height: 60px;
+  --edge-fade: 28px;
+  --composer-overlap: var(--s-3);
+  --canvas-fade-stops: var(--bg) 0%, rgba(var(--canvas-rgb), .86) 25%, rgba(var(--canvas-rgb), .58) 45%, rgba(var(--canvas-rgb), .26) 64%, rgba(var(--canvas-rgb), .06) 83%, rgba(var(--canvas-rgb), 0) 100%;
   --text-size-factor: 1;
 
   /* Motion */
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  --fast: 120ms;
-  --normal: 200ms;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --fast: 180ms;
+  --normal: 240ms;
+  --press: scale(.96);
 }
 
 html[data-theme=dark] {
   color-scheme: dark;
 
-  --bg: #212121;
-  --sidebar: #181818;
-  --surface: #2a2a2a;
-  --composer: #303030;
-  --bubble: #303030;
-  --code-bg: #171717;
+  --bg: #090a0d;
+  --canvas-rgb: 9, 10, 13;
+  --sidebar: #111216;
+  --surface: #14161b;
+  --composer: #14161b;
+  --bubble: #1c1f27;
+  --code-bg: #14161b;
+  --code-head: #1c1f27;
+  --control-surface: #262a33;
 
   --fill-1: rgba(255, 255, 255, .05);
   --fill-2: rgba(255, 255, 255, .08);
@@ -95,22 +121,23 @@ html[data-theme=dark] {
   --border-strong: rgba(255, 255, 255, .18);
   --divider: rgba(255, 255, 255, .07);
 
-  --text: #ececec;
-  --text-2: #b4b4b4;
-  --text-3: #8e8e8e;
+  --text: #f1f2f5;
+  --text-2: #c5c8d0;
+  --text-3: #a7adb8;
 
   --solid: #ececec;
   --on-solid: #0d0d0d;
   --disabled-bg: #3d3d3d;
   --disabled-fg: #7a7a7a;
   --danger: #ff7a70;
+  --on-danger: #240c0d;
   --danger-fill: rgba(255, 122, 112, .12);
   --success: #4fd1a5;
   --success-fill: rgba(79, 209, 165, .12);
   --warning-fill: #453b25;
   --warning-fg: #ffd46b;
-  --focus: #9b9b9b;
-  --link: #7ab0ff;
+  --focus: #9ec4ff;
+  --link: #9ec4ff;
   --selection: rgba(122, 176, 255, .28);
   --scrim: rgba(0, 0, 0, .6);
 

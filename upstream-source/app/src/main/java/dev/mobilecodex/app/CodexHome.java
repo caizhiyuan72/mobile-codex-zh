@@ -15,8 +15,8 @@ public final class CodexHome {
             this.copied = copied; this.conflicts = conflicts; this.skippedEntries = skippedEntries;
         }
         public String notice() {
-            if (conflicts > 0) return t("기존 Codex 데이터 ") + conflicts + t("개는 새 파일과 충돌해 이전 위치에 보존했습니다.");
-            if (copied > 0) return t("기존 Codex 설정과 기록 ") + copied + t("개를 새 홈으로 복사했습니다.");
+            if (conflicts > 0) return t("现有 Codex 数据：") + conflicts + t(" 个项目与新文件冲突，已保留在原位置。");
+            if (copied > 0) return t("现有 Codex 设置和历史：") + copied + t(" 个项目已复制到新主目录。");
             return "";
         }
     }
@@ -30,14 +30,14 @@ public final class CodexHome {
     public static CodexHome open(Context context) throws IOException {
         File files = context.getFilesDir();
         File root = new File(files, ".codex"), legacy = new File(files, "codex");
-        if (!root.isDirectory() && !root.mkdirs()) throw new IOException(t("Codex 홈 폴더를 만들 수 없습니다."));
+        if (!root.isDirectory() && !root.mkdirs()) throw new IOException(t("无法创建 Codex 主文件夹。"));
         int[] counts = new int[3];
         android.content.SharedPreferences migration = context.getSharedPreferences("codex-home-migration", 0);
         if (!migration.getBoolean("legacy-codex-copied", false)) {
             if (legacy.isDirectory()) copyMissing(legacy, root, counts);
             // Do not resurrect credentials or history from the legacy root after a user removes them from .codex.
             if (!migration.edit().putBoolean("legacy-codex-copied", true).commit()) {
-                throw new IOException(t("기존 Codex 데이터 이전 상태를 저장하지 못했습니다."));
+                throw new IOException(t("无法保存 Codex 迁移状态。"));
             }
         }
         return new CodexHome(root.getCanonicalFile(), legacy.getCanonicalFile(), new Migration(counts[0], counts[1], counts[2]));
@@ -47,9 +47,9 @@ public final class CodexHome {
     public File legacy() { return legacy; }
     public Migration migration() { return migration; }
     public File child(String name) throws IOException {
-        if (name == null || name.isBlank() || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) throw new IOException(t("Codex 홈 파일 이름이 올바르지 않습니다."));
+        if (name == null || name.isBlank() || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) throw new IOException(t("Codex 主文件名无效。"));
         File file = new File(root, name).getCanonicalFile();
-        if (!file.getParentFile().equals(root)) throw new IOException(t("Codex 홈 밖의 파일은 사용할 수 없습니다."));
+        if (!file.getParentFile().equals(root)) throw new IOException(t("不能使用 Codex 主目录之外的文件。"));
         return file;
     }
     private static void copyMissing(File source, File target, int[] counts) throws IOException {
@@ -59,8 +59,8 @@ public final class CodexHome {
         }
         if (source.isDirectory()) {
             if (target.exists() && !target.isDirectory()) { counts[1]++; return; }
-            if (!target.exists() && !target.mkdirs()) throw new IOException(t("기존 Codex 폴더를 옮길 수 없습니다."));
-            File[] entries = source.listFiles(); if (entries == null) throw new IOException(t("기존 Codex 폴더를 읽을 수 없습니다."));
+            if (!target.exists() && !target.mkdirs()) throw new IOException(t("无法移动原来的 Codex 文件夹。"));
+            File[] entries = source.listFiles(); if (entries == null) throw new IOException(t("无法读取原来的 Codex 文件夹。"));
             for (File entry : entries) copyMissing(entry, new File(target, entry.getName()), counts);
             return;
         }
@@ -69,7 +69,7 @@ public final class CodexHome {
             return;
         }
         if (target.exists()) { counts[1]++; return; }
-        File parent = target.getParentFile(); if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException(t("Codex 홈 폴더를 만들 수 없습니다."));
+        File parent = target.getParentFile(); if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException(t("无法创建 Codex 主文件夹。"));
         File pending = new File(parent, "." + target.getName() + ".migration-" + UUID.randomUUID());
         boolean copied = false;
         try {

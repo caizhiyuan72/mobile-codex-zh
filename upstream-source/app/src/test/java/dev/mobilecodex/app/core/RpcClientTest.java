@@ -52,7 +52,7 @@ public class RpcClientTest {
         });
         CompletableFuture<JSONObject> request = rpc.request("plugin/list", obj()); rpc.start();
         assertTrue(done.await(2, TimeUnit.SECONDS));
-        assertTrue(closed.get().getMessage().contains("실행이 종료"));
+        assertEquals("Codex 已停止运行并断开连接。", closed.get().getMessage());
         assertThrows(ExecutionException.class, request::get);
     }
     @Test public void malformedLineDoesNotDiscardTheNextFramedReply() throws Exception {
