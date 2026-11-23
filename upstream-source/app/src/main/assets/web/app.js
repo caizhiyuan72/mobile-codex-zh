@@ -174,8 +174,12 @@
     }
     document.querySelectorAll('.sidebar-toggle').forEach(b => b.setAttribute('aria-expanded', String(open)));
   }
+  function syncThemeChoices(choice) {
+    for (const radio of $('theme-choices').querySelectorAll('input')) radio.checked = radio.value === choice;
+  }
   function setTheme() {
     const choice = $('theme').value;
+    syncThemeChoices(choice);
     try { localStorage.setItem('theme', choice); } catch {}
     appearance.applyTheme(choice);
     syncNativeTheme();
@@ -204,6 +208,8 @@
         updateGlassInset();
         syncNativeTheme();
         if (following) followLatest(); else restoreReadingPosition(anchor);
+        composerMeasureKey = '';
+        sizeComposer();
       });
     }
   }
@@ -473,6 +479,7 @@
       document.documentElement.style.setProperty('--app-height', height + 'px');
       // Resize the composer in this viewport frame so the keyboard cannot leave it one frame behind.
       updateSend(); measureComposer(); positionModelPicker();
+      if (document.documentElement.hasAttribute('data-liquid-glass')) followLatest();
       if (!matchMedia('(max-width:760px)').matches) {
         document.body.classList.remove('sidebar-open'); $('scrim').hidden = true;
         $('sidebar').inert = false; document.querySelector('main').inert = false;
@@ -3111,7 +3118,11 @@
   chatScroll.addEventListener('scroll', () => {
     const top = chatScroll.scrollTop, previous = historyView.top;
     historyView.top = top;
-    if (top !== previous) following = top > previous && !chatTouch?.towardHistory && chatScroll.scrollHeight - top - chatScroll.clientHeight <= 2;
+    if (top !== previous) {
+      const atBottom = chatScroll.scrollHeight - top - chatScroll.clientHeight <= 2;
+      const clampedAtBottom = following && document.documentElement.hasAttribute('data-liquid-glass');
+      following = atBottom && !chatTouch?.towardHistory && (top > previous || clampedAtBottom);
+    }
     updateJumpLatest();
     if (top < previous && top <= 160) loadHistoryFromScroll();
   }, {passive:true});
@@ -3430,6 +3441,12 @@
   on('skill-import', async () => { const r = await call('skills.import'); if (!r.cancelled) { toast(t('스킬 폴더를 가져왔습니다.')); await loadTools(); } });
   $('request-dialog').addEventListener('cancel', e => e.preventDefault());
   $('theme').value = appearance.choice;
+  syncThemeChoices($('theme').value);
+  $('theme-choices').addEventListener('change', event => {
+    const select = $('theme');
+    select.value = event.target.value;
+    select.dispatchEvent(new Event('change', {bubbles:true}));
+  });
   syncNativeTheme();
   appearance.systemTheme.addEventListener('change', setTheme);
   window.addEventListener('resize', viewportChanged);

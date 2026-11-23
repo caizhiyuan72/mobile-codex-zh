@@ -722,6 +722,8 @@ html[data-theme=dark] .diff-added { color: #7fdcb9; }
 }
 .appearance-choices input:checked + span { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
 .appearance-choices input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: -2px; }
+html:not([data-liquid-glass]) .theme-choices,
+html[data-liquid-glass] .theme-setting > #theme { display: none; }
 .settings-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: var(--s-5); min-height: 0; }
 .settings-nav { display: grid; align-content: start; gap: 2px; }
 .settings-nav button {
