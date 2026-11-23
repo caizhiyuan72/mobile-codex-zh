@@ -28,13 +28,13 @@ class AttachmentStore {
         directory.mkdirs();
     }
     JSONObject importUri(Uri uri) throws Exception {
-        if (!"content".equals(uri.getScheme())) throw new IOException(t("문서 제공자의 파일을 선택해 주세요."));
+        if (!"content".equals(uri.getScheme())) throw new IOException(t("请选择文档提供方中的文件。"));
         String name = "attachment", mime = context.getContentResolver().getType(uri);
         try (Cursor c = context.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
             if (c != null && c.moveToFirst() && !c.isNull(0)) name = c.getString(0);
         }
         try (InputStream in = context.getContentResolver().openInputStream(uri)) {
-            if (in == null) throw new IOException(name + t(": 파일을 열 수 없습니다."));
+            if (in == null) throw new IOException(name + t("：无法打开文件。"));
             return store(in, name, mime);
         }
     }
@@ -44,7 +44,7 @@ class AttachmentStore {
     JSONObject store(InputStream in, String name, String mime, BooleanSupplier cancelled) throws Exception {
         String id = UUID.randomUUID().toString();
         File folder = new File(directory, id);
-        if (!folder.mkdirs()) throw new IOException(t("첨부 파일 저장 공간을 만들 수 없습니다."));
+        if (!folder.mkdirs()) throw new IOException(t("无法创建附件存储空间。"));
         String filename = safeName(name);
         File original = new File(folder, filename), pending = new File(folder, "content.tmp");
         try {
@@ -56,7 +56,7 @@ class AttachmentStore {
                     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Attachment import cancelled");
                     count = in.read(buffer);
                     if (count == -1) break;
-                    if (availableBytes(folder) < count + 1048576L) throw new IOException(t("저장 공간이 부족합니다."));
+                    if (availableBytes(folder) < count + 1048576L) throw new IOException(t("存储空间不足。"));
                     out.write(buffer, 0, count); hash.update(buffer, 0, count); size += count;
                 }
             }
@@ -99,12 +99,12 @@ class AttachmentStore {
     }
     JSONObject get(String id) throws Exception {
         if (id == null || !id.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
-            throw new IOException(t("잘못된 첨부 파일 ID입니다."));
+            throw new IOException(t("附件 ID 无效。"));
         File folder = new File(directory, id);
         JSONObject metadata = new JSONObject(dev.mobilecodex.app.core.Utf8Files.read(new File(folder, "metadata.json").toPath()));
         File original = new File(folder, metadata.getString("filename")).getCanonicalFile();
         if (!original.getParentFile().equals(folder.getCanonicalFile()) || !original.isFile())
-            throw new FileNotFoundException(t("첨부 파일을 찾을 수 없습니다."));
+            throw new FileNotFoundException(t("找不到附件。"));
         metadata.put("path", original.getAbsolutePath());
         return metadata;
     }

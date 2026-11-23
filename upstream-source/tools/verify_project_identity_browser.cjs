@@ -234,8 +234,8 @@ async function verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, ge
    await page.waitForFunction(() => document.activeElement?.dataset.projectMenuKey==='a');
    assert.equal(await page.locator('.project-tree').count(),2);
    await page.locator('.project-more').first().click(); await page.getByRole('button',{name:'Merge projects',exact:true}).click();
-   page.once('dialog', dialog => dialog.accept());
    await page.locator('#project-link-choices button').click();
+   await page.locator('#confirm-accept').click();
    await page.waitForFunction(() => document.querySelectorAll('.project-tree').length===1 && !document.getElementById('project-link-dialog').open);
    await waitProjectLinkClose();
    assert.equal(await page.locator('#projects .session').count(),2);
@@ -256,7 +256,7 @@ async function verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, ge
    assert.equal(await page.locator('#projects .project-tree').count(),0);
    assert.equal(await page.locator('#sessions .session').count(),1);
    await closeSidebar();
-   await page.locator('#files-toggle').click();
+   await page.locator('#header-more').click(); await page.locator('#files-toggle').click();
    await page.waitForFunction(() => window.testCalls.some(call => call.action==='files.list'));
    await page.locator('#breadcrumbs').filter({hasText:/^Codex$/}).waitFor();
    await page.screenshot({path:path.join(output,`general-codex-${width}.png`)});
@@ -285,7 +285,7 @@ async function verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, ge
    await page.locator('#project-link-choices button').first().click();
    await waitProjectLinkClose();
    await openSidebar(); await page.locator('.project-more').click();
-   page.once('dialog',dialog=>dialog.accept()); await page.getByRole('button',{name:'Export project',exact:true}).click();
+   await page.getByRole('button',{name:'Export project',exact:true}).click(); await page.locator('#confirm-accept').click();
    await page.waitForFunction(() => window.testCalls.some(c => c.action==='ui.projects.exportFile'));
    await verifyWorkspacePicker(page, openSidebar, waitProjectLinkClose, geometry);
    assert.deepEqual(errors,[]);

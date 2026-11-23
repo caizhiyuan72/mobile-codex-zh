@@ -51,7 +51,6 @@ function assertStopReachable(w) {
   const send = w.document.getElementById('send');
   assert.equal(send.hidden, true, 'A running task exposes only Stop in the action position');
   assert.equal(w.getComputedStyle(send).display, 'none');
-  assert.equal(w.getComputedStyle(stop).backgroundColor, 'rgb(215, 58, 73)');
 }
 
 test('Codex tasks expose Stop on initial restore without input focus', async () => {

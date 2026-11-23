@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  const t = (key, args = {}) => window.MobileCodexLocale?.t(key, args) ?? key.replace(/\{([a-zA-Z]+)\}/g, (token, name) => args[name] ?? token);
   const states = new Set(['idle', 'requesting', 'pending', 'connected', 'denied', 'expired', 'error']);
   const validClientId = value => /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(value);
   const validUserCode = value => /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(value);
@@ -51,13 +52,13 @@
     $('github-setup-steps').hidden = configured;
     $('github-config-save').hidden = !configured;
     $('github-config-save').disabled = input.disabled || !validClientId(input.value.trim()) || input.value.trim() === snapshot.clientId;
-    $('github-config-note').textContent = state === 'connected' ? '更换 Client ID 前，请先退出本机登录。'
-      : waiting ? '本次登录结束后可修改 Client ID。' : 'Client ID 是公开标识，无需填写 Client Secret。';
+    $('github-config-note').textContent = t(state === 'connected' ? '更换 Client ID 前，请先退出本机登录。'
+      : waiting ? '本次登录结束后可修改 Client ID。' : 'Client ID 是公开标识，无需填写 Client Secret。');
     $('github-open-setup').disabled = locked || !!auxiliaryBusy;
     $('github-account').hidden = state !== 'connected';
-    $('github-account').textContent = state === 'connected' ? (snapshot.login ? '已连接 @' + snapshot.login : '已连接 GitHub') : '';
+    $('github-account').textContent = state === 'connected' ? (snapshot.login ? t('已连接 @{login}', {login:snapshot.login}) : t('已连接 GitHub')) : '';
     $('github-scopes').hidden = state !== 'connected' || !snapshot.scopes.length;
-    $('github-scopes').textContent = snapshot.scopes.length ? '已授权：' + snapshot.scopes.join(' · ') : '';
+    $('github-scopes').textContent = snapshot.scopes.length ? t('已授权：{scopes}', {scopes:snapshot.scopes.join(' · ')}) : '';
 
     const status = state === 'connected' ? '可按需使用 GitHub 仓库功能。'
       : state === 'requesting' ? '正在向 GitHub 获取授权码…'
@@ -66,30 +67,30 @@
       : state === 'expired' ? 'GitHub 授权已过期，请重新登录。'
       : state === 'error' ? (errorMessages[snapshot.error] || genericError)
       : configured ? 'Client ID 已配置，可以使用浏览器登录 GitHub。' : '先配置你自己的 GitHub OAuth 应用。';
-    $('github-status').textContent = status;
+    $('github-status').textContent = t(status);
     $('github-status').classList.toggle('github-auth-error', ['denied', 'expired', 'error'].includes(state));
     $('github-pending').hidden = !codeVisible;
     $('github-user-code').value = codeVisible ? snapshot.userCode : '';
     $('github-copy-code').disabled = !codeVisible || copying || locked;
     $('github-code-expiry').textContent = codeVisible && snapshot.expiresAt
-      ? '有效至 ' + new Date(snapshot.expiresAt).toLocaleTimeString('zh-CN', {hour:'2-digit', minute:'2-digit'})
-      : '授权码过期后需要重新登录。';
+      ? t('有效至 {time}', {time:new Date(snapshot.expiresAt).toLocaleTimeString(window.MobileCodexLocale?.language() || 'zh-CN', {hour:'2-digit', minute:'2-digit'})})
+      : t('授权码过期后需要重新登录。');
     $('github-cancel').hidden = !waiting;
     $('github-cancel').disabled = locked && busy !== 'github.login';
-    $('github-cancel').textContent = busy === 'github.cancel' ? '正在取消…' : '取消登录';
+    $('github-cancel').textContent = t(busy === 'github.cancel' ? '正在取消…' : '取消登录');
     $('github-disconnect').hidden = state !== 'connected';
     $('github-disconnect').disabled = locked;
-    $('github-disconnect').textContent = busy === 'github.disconnect' ? '正在退出…' : '退出登录';
+    $('github-disconnect').textContent = t(busy === 'github.disconnect' ? '正在退出…' : '退出登录');
 
     const main = $('github-main-action');
     main.hidden = state === 'connected';
     mainAction = state === 'connected' ? '' : !configured ? 'configure' : waiting ? (codeVisible ? 'verify' : '') : 'login';
-    main.textContent = !configured ? (busy === 'github.configure' ? '正在保存…' : '保存 Client ID')
-      : state === 'requesting' ? '正在获取授权码…' : state === 'pending' ? (codeVisible ? '打开 GitHub 授权页' : '等待授权码…') : '浏览器登录';
+    main.textContent = t(!configured ? (busy === 'github.configure' ? '正在保存…' : '保存 Client ID')
+      : state === 'requesting' ? '正在获取授权码…' : state === 'pending' ? (codeVisible ? '打开 GitHub 授权页' : '等待授权码…') : '浏览器登录');
     main.disabled = locked || !mainAction || !!auxiliaryBusy || (mainAction === 'configure' && !validClientId(input.value.trim()))
       || (mainAction === 'login' && dirty && input.value.trim() !== snapshot.clientId);
     $('github-action-status').hidden = !notice;
-    $('github-action-status').textContent = notice;
+    $('github-action-status').textContent = t(notice);
     $('github-action-status').classList.toggle('github-auth-error', noticeError);
   }
 
@@ -112,7 +113,7 @@
       if (version !== operation) return;
       const reason = typeof error?.message === 'string' ? error.message : '';
       notice = Object.hasOwn(errorMessages, reason) ? errorMessages[reason] : genericError;
-      noticeError = true; toast(notice);
+      noticeError = true; toast(t(notice));
     } finally {
       if (version === operation) { busy = ''; draw(); }
     }
@@ -125,7 +126,7 @@
     try { await call(action); }
     catch (_) {
       if (version === auxiliaryOperation) {
-        notice = '未能打开浏览器，请检查浏览器是否可用后重试。'; noticeError = true; toast(notice);
+        notice = '未能打开浏览器，请检查浏览器是否可用后重试。'; noticeError = true; toast(t(notice));
       }
     } finally {
       if (version === auxiliaryOperation) { auxiliaryBusy = ''; draw(); }
@@ -206,6 +207,8 @@
       <p class="muted github-permission-note">请求公开仓库读写（public_repo）和工作流（workflow）权限。GitHub OAuth 授权不能限制到单个仓库，暂不支持私有仓库。不会自动推送、发布或触发 Actions。</p>
       <p class="muted github-disconnect-note">退出登录只移除此设备的 GitHub 连接。</p>`;
     content.append(panel);
+    window.MobileCodexLocale?.bind(panel);
+    document.addEventListener('mobilecodex:languagechange', draw);
     $('github-config-form').addEventListener('submit', save);
     $('github-client-id').addEventListener('input', () => { dirty = true; notice = ''; noticeError = false; draw(); });
     $('github-main-action').addEventListener('click', () => {

@@ -19,13 +19,14 @@ public class ApiModelDiscoveryTest {
         assertEquals("models", result.getString("source"));
         assertEquals("[\"org/coder\"]", result.getJSONArray("models").toString());
         assertFalse(result.getBoolean("verified"));
+        assertFalse(result.has("listIssueStatus"));
     }
 
     @Test public void publicPricingRetainsGatewayPrefixAndDoesNotReceiveTheKey() throws Exception {
         JSONObject result = ApiModelDiscovery.discover("https://gateway.test/relay/v1", "test-key", (url, key) -> {
             if (url.endsWith("/models")) {
                 assertEquals("test-key", key);
-                throw new IOException("HTTP 401");
+                throw new ApiModelDiscovery.HttpStatusException(401);
             }
             assertEquals("https://gateway.test/relay/api/pricing", url);
             assertEquals("", key);
@@ -35,16 +36,28 @@ public class ApiModelDiscoveryTest {
                 obj("model_name", "unknown")));
         });
         assertEquals("publicPricing", result.getString("source"));
-        assertEquals("HTTP 401", result.getString("listIssue"));
+        assertEquals("读取模型列表失败（HTTP 401）", result.getString("listIssue"));
+        assertEquals(401, result.get("listIssueStatus"));
         assertEquals(3, result.getJSONArray("models").length());
         assertEquals("[\"chat-only\"]", result.getJSONArray("chatOnlyModels").toString());
         assertFalse(result.getBoolean("verified"));
     }
 
+    @Test public void nonHttpFailureHasNoStatusCode() throws Exception {
+        JSONObject result = ApiModelDiscovery.discover("https://gateway.test/v1", "test-key", (url, key) -> {
+            if (url.endsWith("/models")) throw new IOException("读取模型列表超时");
+            assertEquals("", key);
+            return obj("success", true, "data", array(obj("model_name", "public-model")));
+        });
+        assertEquals("publicPricing", result.getString("source"));
+        assertEquals("读取模型列表超时", result.getString("listIssue"));
+        assertTrue(result.isNull("listIssueStatus"));
+    }
+
     @Test public void failedPublicCatalogDoesNotHideTheOriginalError() throws Exception {
         try {
             ApiModelDiscovery.discover("https://gateway.test/v1", "test-key", (url, key) -> {
-                if (url.endsWith("/models")) throw new IOException("HTTP 403");
+                if (url.endsWith("/models")) throw new ApiModelDiscovery.HttpStatusException(403);
                 return obj("success", false, "data", array(obj("model_name", "unavailable")));
             });
             fail();

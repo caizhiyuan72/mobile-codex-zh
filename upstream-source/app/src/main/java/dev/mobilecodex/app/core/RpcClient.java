@@ -24,7 +24,7 @@ public final class RpcClient implements AutoCloseable {
     private final Object transportLock = new Object();
     private volatile boolean closed;
     private final StartupDiagnostics diagnostics;
-    private volatile IOException closeError = new IOException(t("Codex 연결이 종료되었습니다."));
+    private volatile IOException closeError = new IOException(t("Codex 已断开连接。"));
 
     public RpcClient(InputStream input, OutputStream output, Listener listener) {
         this(input, output, listener, new StartupDiagnostics());
@@ -59,7 +59,7 @@ public final class RpcClient implements AutoCloseable {
         try {
             timeout = timer.schedule(() -> {
                 CompletableFuture<JSONObject> value = pending.remove(key);
-                if (value != null) value.completeExceptionally(new TimeoutException(method + t(" 응답 시간 초과")));
+                if (value != null) value.completeExceptionally(new TimeoutException(method + t(" 响应超时")));
             }, timeoutSeconds, TimeUnit.SECONDS);
         } catch (RejectedExecutionException closedTimer) {
             pending.remove(key); result.completeExceptionally(closedException()); return result;
@@ -86,12 +86,12 @@ public final class RpcClient implements AutoCloseable {
         synchronized (transportLock) {
             if (closed) throw closedException();
             try { output.write(value.toString()); output.write('\n'); output.flush(); diagnostics.written(); }
-            catch (IOException e) { failure = new IOException(t("Codex 통신이 끊겼습니다."), e); }
+            catch (IOException e) { failure = new IOException(t("Codex 通信已中断。"), e); }
         }
         if (failure != null) { disconnect(failure); throw failure; }
     }
     private void readLoop() {
-        Throwable cause = new EOFException(t("Codex 실행이 종료되었습니다."));
+        Throwable cause = new EOFException(t("Codex 已停止运行。"));
         try {
             while (!closed) {
                 String line = limitedLine();
@@ -113,7 +113,7 @@ public final class RpcClient implements AutoCloseable {
         int ch;
         while ((ch = input.read()) != -1) {
             if (ch == '\n') return line.toString();
-            if (line.length() >= 8 * 1024 * 1024) throw new IOException(t("Codex 응답이 8 MiB 제한을 초과했습니다."));
+            if (line.length() >= 8 * 1024 * 1024) throw new IOException(t("Codex 响应超过 8 MiB 限制。"));
             line.append((char) ch);
         }
         return line.length() == 0 ? null : line.toString();
@@ -137,7 +137,7 @@ public final class RpcClient implements AutoCloseable {
         CompletableFuture<JSONObject> target = pending.remove(String.valueOf(id));
         if (target == null) { diagnostics.unmatched(); return; }
         JSONObject error = msg.optJSONObject("error");
-        if (error != null) target.completeExceptionally(new DiagnosticFailure.RpcFailure(error.optString("message", t("Codex 요청 실패")), error));
+        if (error != null) target.completeExceptionally(new DiagnosticFailure.RpcFailure(error.optString("message", t("Codex 请求失败")), error));
         else {
             JSONObject result = msg.optJSONObject("result");
             target.complete(result == null ? new JSONObject() : result);
@@ -146,10 +146,10 @@ public final class RpcClient implements AutoCloseable {
     public boolean isClosed() { return closed; }
     private IOException closedException() { return new IOException(closeError.getMessage(), closeError.getCause()); }
     private static IOException safeDisconnectCause(Throwable error) {
-        if (error instanceof EOFException) return new IOException(t("Codex 실행이 종료되어 연결이 끊겼습니다."));
-        String message = error == null ? t("Codex 연결이 종료되었습니다.") : error.getMessage();
+        if (error instanceof EOFException) return new IOException(t("Codex 已停止运行并断开连接。"));
+        String message = error == null ? t("Codex 已断开连接。") : error.getMessage();
         if (message != null && message.contains("8 MiB")) return new IOException(message);
-        return new IOException(t("Codex 통신이 끊겼습니다."));
+        return new IOException(t("Codex 通信已中断。"));
     }
     private void disconnect(IOException error) {
         if (!closeInternal(error)) return;
@@ -169,6 +169,6 @@ public final class RpcClient implements AutoCloseable {
         return true;
     }
     @Override public void close() {
-        closeInternal(new IOException(t("Codex 연결이 종료되었습니다.")));
+        closeInternal(new IOException(t("Codex 已断开连接。")));
     }
 }

@@ -25,3 +25,7 @@
 | Arch Linux ARM64 的 PostgreSQL `initdb` 调用 `shmget` 报 `Function not implemented`，PRoot 的 `--sysvipc` 在选择连接数时卡住。Android 原生 PostgreSQL 的子进程也受应用目录执行限制 | 用纯 WASM PGlite 的本地 PostgreSQL 套接字和 Debian ARM64 Valkey 验证 Sub2API 启动。生产部署使用 Linux Docker 及正式 PostgreSQL。 | 2026-11-23 本地验证了数据库迁移、管理员创建、`/health` 返回 200 和匿名 `/v1/models` 返回 401。PGlite 的会话连接导致登录超时。`check-relay.py` 已通过模拟 HTTPS 服务的鉴权及 Responses 流式验证，真实上游转发待联调。 |
 
 普通界面验证可在手机终端从 `upstream-source/` 直接运行 `node --test --test-concurrency=2 tests/*.test.cjs`。命令失败时，先记录实际错误和发生在哪个环境，再把换用的方法及运行结果补到对应条目。替代方法待验证时，标为待验证。
+
+2026-11-23 苹果界面重构复查：Linux ARM64 上浏览器五个套件通过，含原版与液态玻璃的深浅色、取样对比度和模拟键盘。Android `:app:assembleFresh` 与 71 项兼容定向单测通过；扩大范围时有 7 个图片相关用例依赖 Robolectric 原生图形库，需在 Linux x86_64 CI 验证。桌面 Chromium 的视口模拟不替代真机输入法或帧率测试。
+
+GitHub 登录有效且 REST 公开分支查询返回 200，但本机 Git HTTPS 查询出现 `SSL_read: unexpected eof while reading`，强制 HTTP/1.1 也有同样错误。REST 可用于确认远端提交，不代表 Git 上传可用；网络恢复后再走现有凭据助手正常推送，无需禁用证书验证或重新授权。

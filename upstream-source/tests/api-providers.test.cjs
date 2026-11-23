@@ -5,10 +5,16 @@ const {JSDOM} = require('jsdom');
 const script = fs.readFileSync('app/src/main/assets/web/api-providers.js', 'utf8');
 const profile = {id:'provider-1', name:'示例 API', baseUrl:'https://api.example.test/v1', models:['coding-model'], hasKey:true};
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-function fixture(t, handler = async () => ({}), state = {apiProviders:[profile], apiActive:profile.id}) {
+function fixture(t, handler = async () => ({}), state = {apiProviders:[profile], apiActive:profile.id}, language) {
   const dom = new JSDOM('<!doctype html><dialog id="settings-dialog"><nav class="settings-nav"><button data-settings-tab="advanced">高级</button></nav><div class="settings-content"></div></dialog>', {runScripts:'outside-only', url:'https://appassets.androidplatform.net/'});
   t.after(() => dom.window.close());
   const {window:w} = dom, d = w.document, calls = [], notices = [];
+  if (language) {
+    w.localStorage.setItem('language', language);
+    for (const file of ['translations.js', 'translations-zh.js', 'locale.js']) {
+      w.eval(fs.readFileSync(`app/src/main/assets/web/${file}`, 'utf8'));
+    }
+  }
   w.eval(script);
   const ui = w.MobileCodexApiProviders;
   ui.init({call:async (action, args) => { calls.push({action, args:JSON.parse(JSON.stringify(args))}); return handler(action, args); },
@@ -118,11 +124,21 @@ test('the first provider is saved and can be explicitly enabled', async t => {
 
 test('disabling uses an empty API selection, while deleting requires the card action confirmation', async t => {
   const x = fixture(t);
+  const confirmations = [];
+  x.w.confirm = () => { throw new Error('Unexpected native confirmation'); };
+  x.w.MobileCodexConfirm = message => new Promise(resolve => confirmations.push({message, resolve}));
   x.findButton('停用').click(); await settle();
   assert.deepEqual(x.calls[0], {action:'providers.select', args:{id:''}});
-  x.w.confirm = () => false; x.findButton('删除').click(); await settle();
+  x.findButton('删除').click(); x.findButton('删除').click(); await settle();
+  assert.equal(confirmations.length, 1);
+  assert.match(confirmations[0].message, /示例 API.*本地对话记录会保留/);
   assert.equal(x.calls.length, 1);
-  x.w.confirm = () => true; x.findButton('删除').click(); await settle();
+  confirmations[0].resolve(false); await settle();
+  assert.equal(x.calls.length, 1);
+  x.findButton('删除').click(); await settle();
+  assert.equal(confirmations.length, 2);
+  assert.equal(x.calls.length, 1);
+  confirmations[1].resolve(true); await settle();
   assert.deepEqual(x.calls[1], {action:'providers.remove', args:{id:profile.id}});
 });
 
@@ -184,18 +200,39 @@ test('API errors cannot copy a credential into the status or toast', async t => 
   assert.equal(x.get('api-key').value, '');
 });
 
-test('public pricing lists model IDs without implying that the key or Responses works', async t => {
+test('public pricing localizes a 401 fallback without implying that the key or Responses works', async t => {
   const x = fixture(t, async () => ({source:'publicPricing', models:['gpt-6.2-sol'],
-    listIssue:'读取模型列表失败（HTTP 401）', chatOnlyModels:['gpt-6.2-sol']}));
+    listIssue:'读取模型列表失败（HTTP 401）', listIssueStatus:401, chatOnlyModels:['gpt-6.2-sol']}), undefined, 'en');
   x.get('api-new').click();
   x.get('api-url').value = 'https://example.test'; x.get('api-key').value = 'test-credential';
   x.get('api-scan').click(); await settle();
-  assert.match(x.get('api-discovery-status').textContent, /HTTP 401.*公开价目表.*Responses/);
+  const status = () => x.get('api-discovery-status').textContent;
+  const english = 'Could not load models (HTTP 401). Public pricing is shown for reference. Key permissions and Responses API support are unverified.';
+  assert.equal(status(), english);
+  x.w.MobileCodexLocale.set('zh-CN');
+  assert.equal(status(), '无法加载模型（HTTP 401）。已读取公开价目表供参考，密钥权限和 Responses 对话能力仍需实测。');
   assert.match(x.get('api-discovery-results').textContent, /gpt-6.2-sol.*Chat Completions/);
   x.get('api-discovery-results').querySelector('input').click();
+  x.w.MobileCodexLocale.set('en');
+  assert.equal(status(), english);
+  assert.equal(x.get('api-discovery-results').querySelector('input').checked, true);
   x.get('api-add-selected').click();
   assert.equal(x.get('api-models').value, 'gpt-6.2-sol');
-  assert.match(x.get('api-discovery-status').textContent, /仍需实测/);
+  assert.match(status(), /Key permissions and Responses API support are unverified/);
+  assert.equal(x.get('api-key').value, 'test-credential');
+  x.get('settings-dialog').dispatchEvent(new x.w.Event('close'));
+  assert.equal(x.get('api-key').value, '');
+  assert.equal(status(), '');
+});
+
+test('public pricing does not display the raw list error when no valid HTTP status is available', async t => {
+  const x = fixture(t, async () => ({source:'publicPricing', models:['public-model'],
+    listIssue:'读取模型列表超时：test-credential', listIssueStatus:'401 test-credential'}), undefined, 'en');
+  x.get('api-new').click();
+  x.get('api-url').value = profile.baseUrl; x.get('api-key').value = 'test-credential';
+  x.get('api-scan').click(); await settle();
+  assert.equal(x.get('api-discovery-status').textContent,
+    'Could not load models. Public pricing is shown for reference. Key permissions and Responses API support are unverified.');
 });
 
 test('New API connection exports fill the form without saving or keeping the pasted JSON', async t => {

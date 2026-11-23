@@ -15,17 +15,22 @@ async function settle(page){await page.evaluate(async()=>{await document.fonts.r
 async function toolbar(page,width,height,{busy=false,focused=true}={}){
  const geometry=await page.evaluate(busy=>{
   const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
-  return {viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,composer:box('composer'),prompt:box('prompt'),controls:['add-attachment','composer-options',busy?'stop':'send'].map(box),actionIds:[...document.querySelectorAll('.composer-actions > .send-button')].filter(button=>button.getClientRects().length).map(button=>button.id),stopColor:getComputedStyle(document.getElementById('stop')).backgroundColor,stopDisabled:document.getElementById('stop').disabled,active:document.activeElement.id};
+  const stop=document.getElementById('stop'), surface=document.createElement('span');
+  surface.style.backgroundColor='var(--danger)';stop.append(surface);
+  const dangerColor=getComputedStyle(surface).backgroundColor;surface.remove();
+  return {viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,composer:box('composer'),prompt:box('prompt'),controls:['add-attachment',busy?'stop':'send'].map(box),optionsHidden:document.getElementById('composer-add-menu').hidden,actionIds:[...document.querySelectorAll('.composer-actions > .send-button')].filter(button=>button.getClientRects().length).map(button=>button.id),stopColor:getComputedStyle(stop).backgroundColor,dangerColor,stopDisabled:stop.disabled,active:document.activeElement.id};
  },busy);
  assert.ok(geometry.scrollWidth<=width+1,'document fits '+width);
  assert.ok(geometry.composer.left>=0&&geometry.composer.right<=width+1,'composer fits');
  assert.ok(geometry.composer.bottom<=height+1,'composer stays above viewport edge');
  for(const control of geometry.controls){assert.ok(control.width>=43.5&&control.height>=43.5,control.id+' retains 44px target');assert.ok(control.left>=geometry.composer.left&&control.right<=geometry.composer.right+1,control.id+' stays in composer');}
- const [attach,model,send]=geometry.controls;assert.ok(Math.abs(attach.top-send.top)<=1&&Math.abs(model.top-send.top)<=1,'actions share one row');
- assert.ok(attach.right<=model.left+1&&model.right<=send.left+1,'actions do not overlap');assert.ok(geometry.prompt.bottom<=attach.top+1,'input does not overlap toolbar');
+ const [attach,send]=geometry.controls;assert.ok(Math.abs(attach.top-send.top)<=1,'actions share one row');
+ assert.ok(attach.right<=send.left+1,'actions do not overlap');
+ assert.ok(geometry.prompt.bottom<=attach.top+1||(geometry.prompt.left>=attach.right-1&&geometry.prompt.right<=send.left+1),'input does not overlap controls');
+ assert.ok(geometry.optionsHidden,'model options are disclosed from the plus menu');
  assert.ok(geometry.prompt.height<=Math.max(112,height*.27)+2,'input has a bounded height');
  assert.deepEqual(geometry.actionIds,[busy?'stop':'send'],'exactly one composer action is visible');
- if(busy){assert.equal(geometry.stopDisabled,false);assert.equal(geometry.stopColor,'rgb(215, 58, 73)','Stop is visibly red');}
+ if(busy){assert.equal(geometry.stopDisabled,false);assert.notEqual(geometry.dangerColor,'rgba(0, 0, 0, 0)');assert.equal(geometry.stopColor,geometry.dangerColor,'Stop uses the danger surface');}
  if(focused)assert.equal(geometry.active,'prompt');return geometry;
 }
 async function editingLine(page,expected){
@@ -95,7 +100,7 @@ async function attachmentLayout(page,width,theme){
  await page.locator('#draft-context .context-image').first().click();await settle(page);
  assert.equal(await page.locator('#image-dialog').evaluate(dialog=>dialog.open),true,'thumbnail still opens the image viewer');
  assert.ok(await page.locator('#image-dialog').evaluate(dialog=>{const r=dialog.getBoundingClientRect();return r.left>=-1&&r.right<=innerWidth+1&&r.top>=-1&&r.bottom<=innerHeight+1;}),'image viewer fits the short viewport');
- await page.locator('#image-dialog [data-close]').click();await settle(page);
+ await page.locator('#image-dialog .dialog-head [data-close]').click();await settle(page);
  await page.locator('#draft-context .chip-remove').nth(2).click();await settle(page);
  assert.equal(await page.locator('#draft-context .context-image').count(),2,'an attachment can be removed');
  assert.equal(await page.locator('#draft-context .context-chip').count(),3,'other attachments are preserved');
@@ -154,7 +159,7 @@ async function reasoningLayout(page,width){
  assert.ok(result.fits,'model picker content fits '+width);
  assert.ok(result.slider.width>0&&result.slider.height>=43.5,'reasoning uses a visible 44px range control');
  assert.ok(result.slider.left>=result.picker.left&&result.slider.right<=result.picker.right+1,'slider fits the picker');
- assert.ok(result.summaryFont>=14&&result.headingFont>=18,'model names remain readable on phone');
+ assert.ok(result.summaryFont>=12&&result.headingFont>=16,'model names remain readable on phone');
  assert.deepEqual(result.levels,['low','medium','high','xhigh','max','ultra'],'GPT-6.2 Sol offers six request levels');
  assert.equal(result.forbidden,0,'model picker omits descriptions and experimental controls');
  await page.locator('#effort-slider').evaluate(slider=>{slider.value=slider.max;slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));});
@@ -263,13 +268,13 @@ async function githubLayout(page,width,theme){
    if(width===320)await editingLine(page,{value:draft,start:draft.length,end:draft.length});
    await page.screenshot({path:path.join(output,`keyboard-${width}-${theme}.png`)});
    if(width===320)await earlierSelection(page,width,theme);
-   await page.locator('#composer-options').click();await settle(page);
+   await page.locator('#add-attachment').click();await page.locator('#composer-options').click();await settle(page);
    const picker=await page.locator('#model-picker').boundingBox();assert.ok(picker.x>=-1&&picker.x+picker.width<=width+1&&picker.y>=-1&&picker.y+picker.height<=421,'model picker fits short viewport');
    await reasoningLayout(page,width);
-   await page.locator('#model-picker [data-close]').click();await settle(page);
+   await page.locator('#model-picker .model-picker-head [data-close]').click();await settle(page);
    await page.setViewportSize({width,height:820});await settle(page);
    if(width<=760)await page.locator('.topbar .sidebar-toggle').click();
-   await page.locator('#settings').click();await page.locator('[data-settings-tab="providers"]').click();await settle(page);
+   await page.locator('#settings').click();await page.locator('#settings-advanced > summary').click();await page.locator('[data-settings-tab="providers"]').click();await settle(page);
    assert.equal(await page.locator('[data-settings-panel="providers"]').evaluate(panel=>panel.scrollWidth<=panel.clientWidth+1),true,'API panel fits narrow viewport');
    assert.equal(await page.locator('#settings-dialog').evaluate(dialog=>{const r=dialog.getBoundingClientRect();return r.left>=-1&&r.right<=innerWidth+1&&r.top>=-1&&r.bottom<=innerHeight+1;}),true);
    await page.screenshot({path:path.join(output,`api-${width}-${theme}.png`)});

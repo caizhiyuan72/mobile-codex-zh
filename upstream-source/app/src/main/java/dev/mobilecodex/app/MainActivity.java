@@ -167,8 +167,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
             }
             @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
                 new AlertDialog.Builder(MainActivity.this).setTitle(t("Codex CN")).setMessage(message)
-                    .setPositiveButton(t("확인"), (dialog, which) -> result.confirm())
-                    .setNegativeButton(t("취소"), (dialog, which) -> result.cancel())
+                    .setPositiveButton(t("确定"), (dialog, which) -> result.confirm())
+                    .setNegativeButton(t("取消"), (dialog, which) -> result.cancel())
                     .setOnCancelListener(dialog -> result.cancel()).show();
                 return true;
             }
@@ -258,9 +258,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
     private void applyTheme(String choice) {
         theme = choice;
         boolean dark = "dark".equals(choice) || ("system".equals(choice) && systemUsesDarkTheme());
-        int background = Color.parseColor(liquidGlass
-            ? (dark ? "#2b3f60" : "#dce7f6")
-            : (dark ? "#212121" : "#fafafa"));
+        int background = getColor(dark ? R.color.main_canvas_dark : R.color.main_canvas_light);
         if (appliedBackground != background) {
             getWindow().setBackgroundDrawable(new ColorDrawable(background));
             root.setBackgroundColor(background);
@@ -314,8 +312,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
             text.setText(approval.message); text.setTextIsSelectable(true); text.setTextSize(14); text.setPadding(space12, space8, space12, space8);
             ScrollView scroll = new ScrollView(this); scroll.addView(text);
             approvalDialog = new AlertDialog.Builder(this).setTitle(approval.title).setView(scroll)
-                .setPositiveButton(t("적용"), (dialog, which) -> approval.decision.complete(true))
-                .setNegativeButton(t("취소"), (dialog, which) -> approval.decision.complete(false))
+                .setPositiveButton(t("应用"), (dialog, which) -> approval.decision.complete(true))
+                .setNegativeButton(t("取消"), (dialog, which) -> approval.decision.complete(false))
                 .setOnCancelListener(dialog -> approval.decision.complete(false)).create();
             approvalDialog.setOnDismissListener(dialog -> approvalId = "");
             approvalDialog.show();
@@ -325,7 +323,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         });
     }
     private void chooseFolder(String id, String projectKey) {
-        if (pendingPickerId != null) { respond(id, null, new IllegalStateException(t("폴더 선택이 진행 중입니다."))); return; }
+        if (pendingPickerId != null) { respond(id, null, new IllegalStateException(t("正在选择文件夹。"))); return; }
         pendingPickerId = id;
         reconnectProjectKey = projectKey;
         Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
@@ -334,7 +332,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
         catch (Exception e) { pendingPickerId = null; reconnectProjectKey = ""; respond(id, null, e); }
     }
     private void chooseProjectFile(String id, String content) {
-        if (pendingProjectRequest != null) { respond(id, null, new IllegalStateException(t("파일 선택이 진행 중입니다."))); return; }
+        if (pendingProjectRequest != null) { respond(id, null, new IllegalStateException(t("正在选择文件。"))); return; }
         pendingProjectRequest = id;
         try {
             if (content != null) {
@@ -368,15 +366,15 @@ public final class MainActivity extends Activity implements Engine.Ui {
                             String content = ProjectTransferFiles.read(in);
                             // A recreated WebView has no pending confirmation; never import silently.
                             if (id != null) respond(id, obj("content", content), null);
-                            else event("notice", obj("message", t("화면이 다시 열렸습니다. 프로젝트 파일을 다시 선택해 주세요.")));
+                            else event("notice", obj("message", t("界面已重新创建，请重新选择项目文件。")));
                         }
                     } else {
-                        if (cache == null) throw new java.io.IOException(t("다시 내보내 주세요."));
+                        if (cache == null) throw new java.io.IOException(t("请重新导出。"));
                         String content;
                         try (var in = new java.io.FileInputStream(cache)) { content = ProjectTransferFiles.read(in); }
                         try (var out = getContentResolver().openOutputStream(uri, "wt")) { ProjectTransferFiles.write(out, content); }
                         if (id != null) respond(id, obj("saved", true), null);
-                        event("notice", obj("message", t("프로젝트 정보를 저장했습니다.")));
+                        event("notice", obj("message", t("项目资料已保存。")));
                     }
                 } catch (Exception e) { if (id != null) respond(id, null, e); event("error", obj("message", e.getMessage())); }
                 finally { if (cache != null) cache.delete(); }
@@ -396,7 +394,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 org.json.JSONArray attachments = new org.json.JSONArray(), errors = new org.json.JSONArray();
                 for (Uri uri : uris) {
                     try { attachments.put(engine.attachments.importUri(uri)); }
-                    catch (Exception e) { errors.put(e.getMessage() == null ? t("파일을 읽지 못했습니다.") : e.getMessage()); }
+                    catch (Exception e) { errors.put(e.getMessage() == null ? t("无法读取文件。") : e.getMessage()); }
                 }
                 JSONObject receipt = obj("receiptId", java.util.UUID.randomUUID().toString(), "draftKey", scope,
                     "attachments", attachments, "errors", errors, "cancelled", uris.isEmpty());
@@ -411,10 +409,10 @@ public final class MainActivity extends Activity implements Engine.Ui {
             Uri destination = data.getData();
             engine.io.execute(() -> {
                 try (var in = engine.attachments.open(attachmentId); var out = getContentResolver().openOutputStream(destination)) {
-                    if (out == null) throw new java.io.IOException(t("저장 위치를 열 수 없습니다."));
+                    if (out == null) throw new java.io.IOException(t("无法打开保存位置。"));
                     byte[] buffer = new byte[32768]; int count;
                     while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
-                    event("notice", obj("message", t("첨부 파일을 저장했습니다.")));
+                    event("notice", obj("message", t("附件已保存。")));
                 } catch (Exception e) { event("error", obj("message", e.getMessage())); }
             });
         } else if (request == EXPORT_IMAGE) {
@@ -424,11 +422,11 @@ public final class MainActivity extends Activity implements Engine.Ui {
             engine.io.execute(() -> {
                 try {
                     try (var in = engine.images.open(id); var out = getContentResolver().openOutputStream(destination)) {
-                        if (out == null) throw new java.io.IOException(t("저장 위치를 열 수 없습니다."));
+                        if (out == null) throw new java.io.IOException(t("无法打开保存位置。"));
                         byte[] buffer = new byte[32768]; int count;
                         while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
                     }
-                    event("notice", obj("message", t("이미지를 저장했습니다.")));
+                    event("notice", obj("message", t("图片已保存。")));
                 } catch (Exception e) { event("error", obj("message", e.getMessage())); }
             });
         } else if (request == IMPORT_SKILL) {
@@ -457,21 +455,21 @@ public final class MainActivity extends Activity implements Engine.Ui {
         } else if (request == EXPORT_RECOVERY && result == RESULT_OK && data != null && data.getData() != null) {
             String id = exportId; exportId = ""; Uri destination = data.getData();
             engine.io.execute(() -> {
-                try { engine.documents.exportRecovery(id, destination); event("notice", obj("message", t("복구 사본을 저장했습니다."))); }
+                try { engine.documents.exportRecovery(id, destination); event("notice", obj("message", t("恢复副本已保存。"))); }
                 catch (Exception e) { event("error", obj("message", e.getMessage())); }
             });
         }
     }
     private void installUpdate(String requestId, String sha256) {
         try {
-            if (!engine.canInstallUpdate()) throw new java.io.IOException(t("진행 중인 작업과 터미널 명령을 마친 뒤 설치해 주세요."));
-            if (!getPackageManager().canRequestPackageInstalls()) throw new java.io.IOException(t("먼저 이 앱의 업데이트 설치를 허용해 주세요."));
+            if (!engine.canInstallUpdate()) throw new java.io.IOException(t("请先结束当前任务和终端命令，再安装更新。"));
+            if (!getPackageManager().canRequestPackageInstalls()) throw new java.io.IOException(t("请先允许此应用安装更新。"));
             updates.prepareInstall(sha256, (file, failure) -> runOnUiThread(() -> {
                 if (failure != null) { respond(requestId, null, failure); return; }
                 try {
-                    if (isDestroyed() || isFinishing() || !foreground) throw new java.io.IOException(t("앱으로 돌아와 설치를 다시 눌러 주세요."));
-                    if (!engine.canInstallUpdate()) throw new java.io.IOException(t("진행 중인 작업과 터미널 명령을 마친 뒤 설치해 주세요."));
-                    if (!getPackageManager().canRequestPackageInstalls()) throw new java.io.IOException(t("앱 설치 허용 설정을 확인해 주세요."));
+                    if (isDestroyed() || isFinishing() || !foreground) throw new java.io.IOException(t("返回应用后，再次点击“安装”。"));
+                    if (!engine.canInstallUpdate()) throw new java.io.IOException(t("请先结束当前任务和终端命令，再安装更新。"));
+                    if (!getPackageManager().canRequestPackageInstalls()) throw new java.io.IOException(t("请检查应用安装权限。"));
                     PhoneUseService.stopControl(); PhoneUseService.closeFloatingForUpdate();
                     Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".updates", file);
                     Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).putExtra(Intent.EXTRA_RETURN_RESULT, true);
@@ -487,14 +485,14 @@ public final class MainActivity extends Activity implements Engine.Ui {
             if (error != null) { respond(requestId, null, error); return; }
             try {
                 if (!foreground || isFinishing() || isDestroyed() || !workspaceKey.equals(engine.documents.key()))
-                    throw new IOException(t("프로젝트가 바뀌었습니다. 다시 열어 주세요."));
+                    throw new IOException(t("项目已变更，请重新打开。"));
                 boolean choose = args.optBoolean("choose");
                 if (target.hasInternalPreview() && !choose) {
                     startActivity(new Intent(this, DocumentPreviewActivity.class).setDataAndType(target.uri(), target.mime())
                         .putExtra(Intent.EXTRA_TITLE, target.name()));
                 } else {
                     if (FileOpenTarget.APK.equals(target.mime())) {
-                        if (!engine.canInstallUpdate()) throw new IOException(t("진행 중인 작업과 터미널 명령을 마친 뒤 설치해 주세요."));
+                        if (!engine.canInstallUpdate()) throw new IOException(t("请先结束当前任务和终端命令，再安装更新。"));
                         PhoneUseService.stopControl(); PhoneUseService.closeFloatingForUpdate();
                     }
                     Intent view = target.viewIntent();
@@ -554,7 +552,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 if (action.equals("attachments.pick")) {
                     String scope = args.getString("draftKey");
                     runOnUiThread(() -> {
-                        if (attachmentDraftKey != null) { respond(id, null, new IllegalStateException(t("파일 선택이 진행 중입니다."))); return; }
+                        if (attachmentDraftKey != null) { respond(id, null, new IllegalStateException(t("正在选择文件。"))); return; }
                         pendingAttachmentRequest = id; attachmentDraftKey = scope;
                         try {
                             startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*")
@@ -566,7 +564,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 if (action.equals("attachments.export")) {
                     JSONObject attachment = engine.attachments.get(args.getString("id"));
                     runOnUiThread(() -> {
-                        if (exportAttachmentId != null) { respond(id, null, new IllegalStateException(t("첨부 파일 저장 위치를 선택 중입니다."))); return; }
+                        if (exportAttachmentId != null) { respond(id, null, new IllegalStateException(t("正在选择附件保存位置。"))); return; }
                         exportAttachmentId = attachment.optString("id");
                         try {
                             startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType(attachment.optString("mime", "application/octet-stream"))
@@ -579,7 +577,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     String imageId = args.getString("id"), name = args.optString("name", "codex-image.png");
                     String mime = engine.images.mime(imageId);
                     runOnUiThread(() -> {
-                        if (pendingImageId != null) { respond(id, null, new IllegalStateException(t("이미지 저장 위치를 선택 중입니다."))); return; }
+                        if (pendingImageId != null) { respond(id, null, new IllegalStateException(t("正在选择图片保存位置。"))); return; }
                         pendingImageId = imageId;
                         try {
                             startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType(mime)
@@ -647,14 +645,14 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 if (action.equals("ui.phoneEnable")) {
                     runOnUiThread(() -> {
                         if (!PhoneUseService.status(MainActivity.this).optBoolean("connected")) {
-                            respond(id, null, new IllegalStateException(t("접근성 설정에서 Mobile Codex 휴대폰 제어를 먼저 켜 주세요."))); return;
+                            respond(id, null, new IllegalStateException(t("请先在无障碍设置中启用 Mobile Codex 手机控制。"))); return;
                         }
-                        new AlertDialog.Builder(MainActivity.this).setTitle(t("휴대폰 제어 켜기"))
-                            .setMessage(t("Codex가 요청을 수행하면서 다른 앱의 화면 내용과 스크린샷을 AI 서비스로 전송하고 탭·입력·스크롤할 수 있습니다. 화면 정보는 Codex 대화 기록에 남을 수 있습니다. 화면 위의 중지 버튼이나 앱 설정에서 언제든 끌 수 있습니다."))
-                            .setPositiveButton(t("동의하고 켜기"), (dialog, which) -> {
+                        new AlertDialog.Builder(MainActivity.this).setTitle(t("启用手机控制"))
+                            .setMessage(t("为执行你的请求，Codex 可以将其他应用的屏幕内容和截图发送到 AI 服务，并进行点击、输入和滚动。屏幕信息可能保留在 Codex 对话记录中。你可随时通过屏幕上的停止按钮或应用设置关闭控制。"))
+                            .setPositiveButton(t("同意并启用"), (dialog, which) -> {
                                 try { PhoneUseService.enableFromUi(); respond(id, PhoneUseService.status(MainActivity.this), null); }
                                 catch (Exception e) { respond(id, null, e); }
-                            }).setNegativeButton(t("취소"), (dialog, which) -> respond(id, obj("cancelled", true), null))
+                            }).setNegativeButton(t("取消"), (dialog, which) -> respond(id, obj("cancelled", true), null))
                             .setOnCancelListener(dialog -> respond(id, obj("cancelled", true), null)).show();
                     }); return;
                 }
@@ -683,7 +681,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 }
                 if (action.equals("skills.import")) {
                     runOnUiThread(() -> {
-                        if (pendingSkillId != null) { respond(id, null, new IllegalStateException(t("스킬 선택이 진행 중입니다."))); return; }
+                        if (pendingSkillId != null) { respond(id, null, new IllegalStateException(t("正在选择技能。"))); return; }
                         pendingSkillId = id;
                         startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), IMPORT_SKILL);
                     }); return;
@@ -692,7 +690,7 @@ public final class MainActivity extends Activity implements Engine.Ui {
                     Uri uri = Uri.parse(args.getString("url"));
                     boolean messageLink = action.equals("ui.openLink");
                     if (!isBrowserUri(uri, messageLink))
-                        throw new IllegalArgumentException(messageLink ? t("올바른 HTTP 또는 HTTPS 주소만 열 수 있습니다.") : t("HTTPS 주소만 열 수 있습니다."));
+                        throw new IllegalArgumentException(messageLink ? t("只能打开有效的 HTTP 或 HTTPS 链接。") : t("只能打开 HTTPS 链接。"));
                     runOnUiThread(() -> {
                         try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); respond(id, obj("ok", true), null); }
                         catch (Exception e) { respond(id, null, e); }
@@ -728,13 +726,13 @@ public final class MainActivity extends Activity implements Engine.Ui {
                 }
                 if (action.equals("ui.copyCode")) {
                     String text = args.getString("code");
-                    if (text.length() > 256 * 1024) throw new IOException(t("클립보드에 복사하지 못했습니다."));
+                    if (text.length() > 256 * 1024) throw new IOException(t("无法复制到剪贴板。"));
                     runOnUiThread(() -> {
                         try {
-                            if (!foreground) throw new IOException(t("클립보드에 복사하지 못했습니다."));
-                            getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("복사"), text));
+                            if (!foreground) throw new IOException(t("无法复制到剪贴板。"));
+                            getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("复制"), text));
                             respond(id, obj("ok", true), null);
-                        } catch (Exception error) { respond(id, null, new IOException(t("클립보드에 복사하지 못했습니다."))); }
+                        } catch (Exception error) { respond(id, null, new IOException(t("无法复制到剪贴板。"))); }
                     }); return;
                 }
                 if (action.equals("files.pick")) { String key = args.optString("projectKey", ""); runOnUiThread(() -> chooseFolder(id, key)); return; }

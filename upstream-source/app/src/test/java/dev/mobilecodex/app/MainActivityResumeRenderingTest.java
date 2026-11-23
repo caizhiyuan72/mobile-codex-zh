@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.os.Looper;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
 import org.junit.Test;
@@ -43,7 +44,7 @@ public class MainActivityResumeRenderingTest {
         }
     }
 
-    @Test public void comingBackKeepsTheLoadedWebViewAndGlassPalette() throws Exception {
+    @Test public void comingBackKeepsTheLoadedWebViewAndDarkCanvas() throws Exception {
         try (var controller = Robolectric.buildActivity(MainActivity.class)) {
             MainActivity activity = controller.get();
             activity.getPreferences(Context.MODE_PRIVATE).edit().putString("theme", "dark").putBoolean("liquidGlass", true).apply();
@@ -51,7 +52,7 @@ public class MainActivityResumeRenderingTest {
             AppTextSize.set(activity, 130);
             controller.create().start().resume();
 
-            int background = Color.rgb(43, 63, 96);
+            int background = Color.rgb(9, 10, 13);
             assertBackgrounds(activity, background);
             var windowBackground = windowBackground(activity);
             WebView web = (WebView) root(activity).getChildAt(0);
@@ -70,6 +71,36 @@ public class MainActivityResumeRenderingTest {
             assertEquals(0, shadowWeb.getReloadInvocations());
             assertEquals(130, web.getSettings().getTextZoom());
             assertBackgrounds(activity, background);
+            assertEquals("dark", activity.getPreferences(Context.MODE_PRIVATE).getString("theme", ""));
+            assertTrue(activity.getPreferences(Context.MODE_PRIVATE).getBoolean("liquidGlass", false));
+        }
+    }
+
+    @Test public void themeBridgePersistsBothChoicesWithoutReloadingWebView() throws Exception {
+        try (var controller = Robolectric.buildActivity(MainActivity.class)) {
+            MainActivity activity = controller.get();
+            var preferences = activity.getPreferences(Context.MODE_PRIVATE);
+            preferences.edit().putString("theme", "light").putBoolean("liquidGlass", false).apply();
+            controller.create();
+
+            WebView web = (WebView) root(activity).getChildAt(0);
+            var shadowWeb = shadowOf(web);
+            Object bridge = shadowWeb.getJavascriptInterface("Native");
+            var postMessage = bridge.getClass().getDeclaredMethod("postMessage", String.class);
+            postMessage.setAccessible(true);
+            postMessage.invoke(bridge, "{\"id\":\"dark-glass\",\"action\":\"ui.theme\",\"args\":{\"theme\":\"dark\",\"liquidGlass\":true}}");
+            shadowOf(Looper.getMainLooper()).idle();
+            assertEquals("dark", preferences.getString("theme", ""));
+            assertTrue(preferences.getBoolean("liquidGlass", false));
+            assertBackgrounds(activity, Color.rgb(9, 10, 13));
+
+            var darkBackground = windowBackground(activity);
+            postMessage.invoke(bridge, "{\"id\":\"dark-classic\",\"action\":\"ui.theme\",\"args\":{\"theme\":\"dark\",\"liquidGlass\":false}}");
+            shadowOf(Looper.getMainLooper()).idle();
+            assertFalse(preferences.getBoolean("liquidGlass", true));
+            assertSame(darkBackground, windowBackground(activity));
+            assertSame(web, root(activity).getChildAt(0));
+            assertEquals(0, shadowWeb.getReloadInvocations());
         }
     }
 }

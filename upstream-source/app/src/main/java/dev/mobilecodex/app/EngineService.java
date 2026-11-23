@@ -10,13 +10,13 @@ public final class EngineService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(new NotificationChannel(CHANNEL, t("진행 중인 작업"), NotificationManager.IMPORTANCE_LOW));
+        manager.createNotificationChannel(new NotificationChannel(CHANNEL, t("正在进行的任务"), NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, EngineService.class).setAction("stop"), PendingIntent.FLAG_IMMUTABLE);
         Notification notification = new Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.notification_icon).setContentTitle(t("Codex CN"))
-            .setContentText(t("기기에서 실행 중 · 눌러서 열기")).setContentIntent(open).setOngoing(true)
-            .addAction(new Notification.Action.Builder(null, t("종료"), stop).build()).build();
+            .setContentText(t("正在此设备运行 · 点击打开")).setContentIntent(open).setOngoing(true)
+            .addAction(new Notification.Action.Builder(null, t("退出"), stop).build()).build();
         startForeground(21, notification);
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {

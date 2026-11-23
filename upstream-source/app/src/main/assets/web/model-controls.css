@@ -1,8 +1,4 @@
-.composer-bottom .options-button { gap: 7px; height: 36px; min-height: 36px; padding: 0 10px; border-radius: 999px; background: var(--fill-1); }
-.composer-bottom .options-button:hover, .composer-bottom .options-button[aria-expanded="true"] { background: var(--fill-2); }
 #model-summary { font-weight: 550; }
-#effort-summary { padding-inline-start: 7px; border-inline-start: 1px solid var(--border); }
-#model-picker { width: 304px; border-radius: 16px; }
 .model-picker-head { padding-inline-start: 12px; color: var(--text-2); font-weight: 600; }
 .model-picker-panel { padding: 0 4px 6px; }
 .model-picker-heading { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; min-height: 44px; padding: 0 10px; background: var(--fill-1); text-align: start; }
@@ -10,7 +6,7 @@
 .model-picker-heading > .model-picker-label { flex: none; color: var(--text-2); font-size: var(--fs-sm); }
 .model-picker-heading > .model-picker-icon { width: 16px; height: 16px; color: var(--text-2); }
 .model-picker-heading > .model-picker-arrow { color: var(--text-3); }
-#model-heading { margin-inline-start: auto; font-size: var(--fs-sm); line-height: 1.4; }
+#model-heading { margin-inline-start: auto; }
 #picker-provider-row:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 6px; color: var(--text-2); font-size: var(--fs-xs); }
 #picker-provider-row select { min-width: 0; max-width: 66%; }
 #reasoning-control { --effort-accent: var(--text); padding: 10px 10px 5px; }
@@ -22,7 +18,6 @@
 #reasoning-control[data-effort="ultra"] { --effort-accent: #df5689; }
 .effort-caption { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-sm); }
 #effort-heading { padding: 2px 7px; border-radius: 999px; background: var(--fill-1); color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
-#effort-slider { height: 32px; }
 #effort-slider::-webkit-slider-runnable-track {
   height: 4px;
   background: linear-gradient(to right, var(--effort-accent) var(--effort-fill, 0%), var(--fill-2) var(--effort-fill, 0%));
@@ -31,6 +26,5 @@
 .effort-levels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px; font-size: min(var(--fs-xs), 14px); line-height: 1.5; color: var(--text-2); }
 .effort-levels span { flex: 1; text-align: center; }
 .effort-levels span.selected { color: var(--text); font-weight: 600; }
-.effort-levels span { flex: 1; text-align: center; }
 .effort-levels span:first-child { text-align: left; }
 .effort-levels span:last-child { text-align: right; }

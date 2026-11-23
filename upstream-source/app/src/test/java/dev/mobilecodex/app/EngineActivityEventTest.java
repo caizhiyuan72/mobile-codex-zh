@@ -32,7 +32,7 @@ public class EngineActivityEventTest {
     private final List<JSONObject> activity = new ArrayList<>();
 
     @Before public void before() throws Exception {
-        Texts.configure(true, Map.of());
+        Texts.configure(Map.of());
         Application application = RuntimeEnvironment.getApplication();
         ShadowEnvironment.addExternalDir("engine-activity-events");
         engine = new Engine(application);
@@ -62,7 +62,7 @@ public class EngineActivityEventTest {
     @After public void after() throws Exception {
         engine.io.shutdownNow();
         ((ScheduledExecutorService) get("approvalTimer")).shutdownNow();
-        Texts.configure(true, Map.of());
+        Texts.configure(Map.of());
     }
 
     @Test public void currentCommandOutputCarriesTheLocalThreadId() throws Exception {

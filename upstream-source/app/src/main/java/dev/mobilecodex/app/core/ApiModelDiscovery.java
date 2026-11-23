@@ -17,6 +17,15 @@ import static dev.mobilecodex.app.core.Json.obj;
 public final class ApiModelDiscovery {
     interface Fetcher { JSONObject get(String url, String apiKey) throws IOException; }
 
+    static final class HttpStatusException extends IOException {
+        final int status;
+
+        HttpStatusException(int status) {
+            super("读取模型列表失败（HTTP " + status + "）");
+            this.status = status;
+        }
+    }
+
     private static final int MAX_BYTES = 2 * 1024 * 1024;
     private static final int MAX_MODELS = 2000;
 
@@ -45,6 +54,7 @@ public final class ApiModelDiscovery {
                 Set<String> models = readModels(rows, "model_name");
                 if (catalog.optBoolean("success") && !models.isEmpty())
                     return obj("models", new JSONArray(models), "source", "publicPricing", "listIssue", listError.getMessage(),
+                        "listIssueStatus", listError instanceof HttpStatusException httpError ? httpError.status : null,
                         "chatOnlyModels", chatOnlyModels(rows, models), "verified", false);
             } catch (IOException ignored) {}
         }
@@ -88,7 +98,7 @@ public final class ApiModelDiscovery {
             connection.setRequestProperty("Accept", "application/json");
             if (!apiKey.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + apiKey);
             int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) throw new IOException("读取模型列表失败（HTTP " + status + "）");
+            if (status < 200 || status >= 300) throw new HttpStatusException(status);
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             try (InputStream input = connection.getInputStream()) {
                 byte[] block = new byte[8192];

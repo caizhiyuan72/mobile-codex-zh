@@ -12,12 +12,10 @@ final class AppLanguage {
     private static Map<String, String> chinese = Map.of();
     static void initialize(Context context) {
         english = load(context, "translations-en.json");
-        var translated = new HashMap<>(english);
-        translated.putAll(load(context, "translations-zh-CN.json"));
+        var translated = new HashMap<>(load(context, "translations-zh-CN.json"));
         // Persisted status messages may already use the English display string.
         english.forEach((source, value) -> {
-            String localized = translated.get(source);
-            if (localized != null) translated.putIfAbsent(value, localized);
+            translated.putIfAbsent(value, translated.getOrDefault(source, source));
         });
         chinese = Map.copyOf(translated);
         configure(context);
@@ -47,7 +45,7 @@ final class AppLanguage {
     static String brandName() { return "fresh".equals(BuildConfig.BUILD_TYPE) ? "大肥龙" : ""; }
     static void configure(Context context) {
         String language = locale(context).getLanguage();
-        Texts.configure(false, language.equals("zh") ? chinese : english, brandName());
+        Texts.configure(language.equals("zh") ? chinese : english, brandName());
     }
     static JSONObject snapshot(Context context) { return obj("brandName", brandName(), "choice", choice(context), "systemLanguage", context.getResources().getConfiguration().getLocales().get(0).toLanguageTag()); }
     @android.annotation.SuppressLint("ApplySharedPref")

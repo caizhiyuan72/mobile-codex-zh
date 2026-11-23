@@ -15,6 +15,7 @@ function setup(extra={},overrides={}) {
  w.requestAnimationFrame=callback=>frames.push(callback);
  w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  w.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
+ w.confirm=()=>{throw new Error('Unexpected native confirmation');};
  w.Native={locale:()=>JSON.stringify({choice:'zh-CN',systemLanguage:'zh-CN'}),postMessage(raw){const message=JSON.parse(raw);calls.push(message);queueMicrotask(async()=>{try{const result=overrides[message.action]?await overrides[message.action](message):message.action==='state'?state:message.action==='rpc'?{data:[],marketplaces:[]}:{};w.mobileCodexEvent('response',{id:message.id,result});}catch(error){w.mobileCodexEvent('response',{id:message.id,error:error.message});}});}};
  for(const script of w.document.querySelectorAll('script[src]')) w.eval(fs.readFileSync(path.join(web,script.getAttribute('src')),'utf8'));
  const flush=()=>{let count=0;while(frames.length){assert.ok(++count<100,'animation frames settle');const queued=frames.splice(0);for(const callback of queued)callback();}};
@@ -43,27 +44,55 @@ test('a stale chat can rebind to the same provider only after confirmation', asy
   'chat.provider.rebind': () => ({...state, apiScope:'proxy:2', apiCanRebind:false, authState:'configured'})
  });
  await tick(); flush();
- const header = w.document.getElementById('header-api');
- const picker = w.document.getElementById('picker-provider');
+ const document = w.document;
+ const header = document.getElementById('header-api');
+ const picker = document.getElementById('picker-provider');
+ const confirmation = document.getElementById('confirm-dialog');
  assert.equal(header.textContent, 'API · 重新绑定');
+ document.getElementById('header-more').click(); await Promise.resolve();
+ assert.equal(document.getElementById('header-menu-dialog').open, true);
  header.click(); await tick(); flush();
- assert.equal(w.document.getElementById('model-picker').open, true);
- assert.equal(w.document.getElementById('model-picker').classList.contains('show-models'), true);
+ assert.equal(document.getElementById('header-menu-dialog').open, false);
+ assert.equal(document.getElementById('model-picker').open, true);
+ assert.equal(document.getElementById('model-picker').classList.contains('show-models'), true);
  assert.equal(picker.disabled, false);
  assert.equal(picker.value, '');
  const choose = () => { picker.value = 'proxy'; picker.dispatchEvent(new w.Event('change')); };
- w.confirm = () => false;
  choose(); await tick();
+ assert.equal(confirmation.open, true);
+ assert.equal(calls.some(call => call.action === 'chat.provider.rebind'), false);
+ document.getElementById('confirm-cancel').click(); await tick();
+ assert.equal(confirmation.open, false);
  assert.equal(picker.value, '');
  assert.equal(calls.some(call => call.action === 'chat.provider.rebind'), false);
- w.confirm = message => { assert.match(message, /本地消息和项目会保留/); return true; };
- choose(); await tick(); flush();
+ choose(); await Promise.resolve();
+ assert.equal(confirmation.open, true);
+ assert.match(document.getElementById('confirm-message').textContent, /本地消息和项目会保留/);
+ document.getElementById('confirm-accept').click(); await tick(); flush();
+ assert.equal(confirmation.open, false);
  const rebind = calls.find(call => call.action === 'chat.provider.rebind');
  assert.equal(rebind.args.id, 'proxy');
  assert.equal(rebind.args.expectedThreadId, 'test');
  assert.equal(rebind.args.expectedApiScope, 'proxy:1');
  assert.equal(picker.disabled, true);
  assert.match(w.document.getElementById('messages').textContent, /历史消息/);
+});
+
+test('changing the language translates live labels without replacing notification switches', async () => {
+ const {w,flush}=setup({apiCanRebind:true,conversationFailure:{code:'upstream_auth'}});
+ await tick(); flush();
+ const doc=w.document, element=id=>doc.getElementById(id), notification=element('notifications-toggle');
+ notification.checked=false;
+ const select=element('language');
+ select.value='en'; select.dispatchEvent(new w.Event('change'));
+ await tick(); flush();
+ assert.equal(doc.documentElement.lang,'en');
+ assert.equal(element('header-api').textContent,'API · Reconnect');
+ assert.equal(element('picker-provider').options[0].textContent,'Reconnect API');
+ assert.match(element('conversation-failure-message').textContent,/rejected authentication/);
+ assert.equal(element(notification.getAttribute('aria-labelledby')).textContent,'Task notifications');
+ assert.equal(element('notifications-toggle'),notification);
+ assert.equal(notification.checked,false);
 });
 
 test('subagent counts restore from the current turn, then show only the final total',async()=>{

@@ -40,7 +40,7 @@ public class EngineTurnCompletionTest {
     private final List<JSONObject> errors = new ArrayList<>();
 
     @Before public void before() throws Exception {
-        Texts.configure(true, Map.of());
+        Texts.configure(Map.of());
         application = RuntimeEnvironment.getApplication();
         // API 32's isExternalStorageManager() reads the first external volume.
         // Robolectric starts with none; provide one so Engine can publish state.
@@ -74,7 +74,7 @@ public class EngineTurnCompletionTest {
     @After public void after() throws Exception {
         engine.io.shutdownNow();
         ((ScheduledExecutorService) get("approvalTimer")).shutdownNow();
-        Texts.configure(true, Map.of());
+        Texts.configure(Map.of());
     }
 
     @Test public void interruptedTurnReportsStoppedAndPersistsStoppedImageReason() throws Exception {
@@ -85,17 +85,17 @@ public class EngineTurnCompletionTest {
 
         Intent notification = lastTaskNotification();
         assertEquals("interrupted", notification.getStringExtra("kind"));
-        assertEquals("작업 중지됨", notification.getStringExtra("title"));
-        assertEquals("Codex 작업이 중지되었습니다.", notification.getStringExtra("message"));
+        assertEquals("任务已停止", notification.getStringExtra("title"));
+        assertEquals("Codex 任务已停止。", notification.getStringExtra("message"));
         assertEquals("local-thread", notification.getStringExtra("threadId"));
         assertFalse(state.getBoolean("busy"));
-        assertEquals("작업 중지됨", state.getString("status"));
+        assertEquals("任务已停止", state.getString("status"));
         assertFalse(session.getBoolean("approvalPending"));
         assertTrue(errors.isEmpty());
         JSONArray saved = new JSONArray(Utf8Files.read(new File(application.getFilesDir(), "sessions.json").toPath()));
         JSONObject image = saved.getJSONObject(0).getJSONArray("messages").getJSONObject(0);
         assertEquals("failed", image.getString("imageStatus"));
-        assertEquals("작업이 중지되어 이미지 생성이 완료되지 않았습니다.", image.getString("imageError"));
+        assertEquals("任务已停止，图片生成未能完成。", image.getString("imageError"));
     }
 
     @Test public void completedTurnRetainsSuccessfulNotification() throws Exception {
@@ -105,8 +105,8 @@ public class EngineTurnCompletionTest {
 
         Intent notification = lastTaskNotification();
         assertEquals("completed", notification.getStringExtra("kind"));
-        assertEquals("답변 완료", notification.getStringExtra("title"));
-        assertEquals("Codex가 작업을 마쳤습니다.", notification.getStringExtra("message"));
+        assertEquals("回答完成", notification.getStringExtra("title"));
+        assertEquals("Codex 已完成任务。", notification.getStringExtra("message"));
         assertFalse(state.getBoolean("busy"));
         assertEquals(1, state.getJSONArray("messages").length());
         assertEquals("Exported report.pdf.", state.getJSONArray("messages").getJSONObject(0).getString("text"));
@@ -121,11 +121,11 @@ public class EngineTurnCompletionTest {
 
         complete(obj("id", "turn-one", "status", "completed"));
 
-        assertEquals("작업 종료", lastTaskNotification().getStringExtra("title"));
+        assertEquals("任务已结束", lastTaskNotification().getStringExtra("title"));
         assertFalse(state.getBoolean("busy"));
         assertEquals("completionNotice", state.getJSONArray("messages").getJSONObject(2).getString("kind"));
         JSONArray saved = new JSONArray(Utf8Files.read(new File(application.getFilesDir(), "sessions.json").toPath()));
-        assertEquals("앱 알림: 작업이 끝났지만 최종 답변을 받지 못했습니다.",
+        assertEquals("应用提示：任务已结束，但没有收到最终回复。",
             saved.getJSONObject(0).getJSONArray("messages").getJSONObject(2).getString("text"));
     }
 
@@ -137,7 +137,7 @@ public class EngineTurnCompletionTest {
             obj("id", "progress", "type", "agentMessage", "phase", "commentary", "text", "Checking files."),
             obj("id", "answer", "type", "agentMessage", "phase", "final_answer", "text", "Saved report.pdf."))));
 
-        assertEquals("답변 완료", lastTaskNotification().getStringExtra("title"));
+        assertEquals("回答完成", lastTaskNotification().getStringExtra("title"));
         JSONArray messages = state.getJSONArray("messages");
         assertEquals(1, messages.length());
         assertEquals("Saved report.pdf.", messages.getJSONObject(0).getString("text"));
@@ -147,8 +147,8 @@ public class EngineTurnCompletionTest {
         complete(obj("id", "turn-one", "status", "failed", "error", JSONObject.NULL));
 
         assertEquals("failed", lastTaskNotification().getStringExtra("kind"));
-        assertEquals("작업 실패", lastTaskNotification().getStringExtra("title"));
-        assertEquals("작업 실패", state.getString("status"));
+        assertEquals("任务失败", lastTaskNotification().getStringExtra("title"));
+        assertEquals("任务失败", state.getString("status"));
         assertEquals(1, errors.size());
         assertEquals(ConversationFailure.message("turn_failed"), errors.get(0).getString("message"));
         assertEquals("turn_failed", state.getJSONObject("conversationFailure").getString("code"));
@@ -254,7 +254,7 @@ public class EngineTurnCompletionTest {
         assertEquals("background-local", lastTaskNotification().getStringExtra("threadId"));
         assertEquals("interrupted", lastTaskNotification().getStringExtra("kind"));
         assertTrue(state.getBoolean("busy"));
-        assertEquals("작업 중", state.getString("status"));
+        assertEquals("正在工作", state.getString("status"));
         assertEquals("turn-one", state.getString("turnId"));
         assertFalse(background.getBoolean("approvalPending"));
         assertTrue(session.getBoolean("approvalPending"));

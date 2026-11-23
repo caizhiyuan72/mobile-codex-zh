@@ -7,6 +7,18 @@ const root = 'app/src/main/assets/web/';
 const opened = [];
 afterEach(() => { for (const dom of opened.splice(0)) dom.window.close(); });
 const tick = () => new Promise(r => setTimeout(r, 10));
+async function answerConfirmation(document, accept, message) {
+  await Promise.resolve();
+  const dialog = document.getElementById('confirm-dialog');
+  assert.equal(dialog.open, true);
+  const copy = document.getElementById('confirm-message').textContent;
+  assert.ok(copy.trim());
+  if (message) assert.match(copy, message);
+  assert.equal(document.activeElement.id, 'confirm-cancel');
+  document.getElementById(accept ? 'confirm-accept' : 'confirm-cancel').click();
+  await tick();
+  assert.equal(dialog.open, false);
+}
 const fastModel = {id:'fast-model',model:'fast-model',displayName:'Fast-capable model',isDefault:true,serviceTiers:[{id:'priority',name:'Fast'}]};
 const historyMessages = (from, to) => Array.from({length:to-from+1}, (_,i)=>({id:'m'+(from+i),role:(from+i)%2?'user':'assistant',text:'Message '+(from+i)}));
 const historyMeta = (before, total=100) => ({beforeId:before?'m'+before:'',hasMore:!!before,total});
@@ -20,7 +32,7 @@ function setup(overrides = {}, options = {}) {
   if (options.drafts) for (const [key,value] of Object.entries(options.drafts)) w.localStorage.setItem(key,value);
   w.HTMLDialogElement.prototype.showModal = function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close = function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
-  w.confirm = options.confirm || (() => true);
+  w.confirm = () => { throw new Error('Unexpected native confirmation'); };
   const snapshot = {ready:true,busy:false,permissions:'workspace-write',models:[{id:'fixture-model',displayName:'Fixture model',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high'}],messages:[],sessions:[],account:{},apiActive:'fixture-api',apiProviders:[{id:'fixture-api',hasKey:true}],workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'};
   w.Native = {postMessage(raw){ const m=JSON.parse(raw); calls.push(m); queueMicrotask(async () => {
     if(m.action==='rpc.respond') responses.push(m.args);
@@ -49,7 +61,11 @@ test('liquid glass is opt-in and switching styles preserves the conversation and
 
  doc.getElementById('settings').click();
  await tick();
- assert.equal(glass.closest('.appearance-setting').parentElement.id, 'settings-dialog');
+ assert.ok(glass.closest('#settings-dialog .settings-primary'));
+ const advanced = doc.getElementById('settings-advanced');
+ const segment = glass.closest('[role="radiogroup"]');
+ assert.equal(advanced.open, false);
+ assert.equal(segment.dataset.segment, '0');
  assert.equal(doc.getElementById('chat-preview'), null);
  assert.equal(classic.checked, true);
  assert.equal(glass.checked, false);
@@ -59,6 +75,7 @@ test('liquid glass is opt-in and switching styles preserves the conversation and
 
  const callsBeforeSwitch = calls.length;
  glass.click();
+ assert.equal(segment.dataset.segment, '1');
  assert.equal(rootElement.hasAttribute('data-liquid-glass'), true);
  assert.equal(w.localStorage.getItem('interfaceStyle'), 'glass');
  const reopened = setup({}, {drafts:{interfaceStyle:w.localStorage.getItem('interfaceStyle')}});
@@ -67,6 +84,7 @@ test('liquid glass is opt-in and switching styles preserves the conversation and
  assert.deepEqual(reopened.calls.find(call => call.action === 'ui.theme').args, {theme:'system', liquidGlass:true});
 
  classic.click();
+ assert.equal(segment.dataset.segment, '0');
  assert.equal(rootElement.hasAttribute('data-liquid-glass'), false);
  assert.equal(w.localStorage.getItem('interfaceStyle'), 'classic');
  const restored = setup({}, {drafts:{interfaceStyle:w.localStorage.getItem('interfaceStyle')}});
@@ -315,8 +333,11 @@ test('Linux incomplete installation can be explicitly removed without automatic 
  w.mobileCodexEvent('state',{...snapshot,linux:{supported:true,installed:false,hasFiles:true,enabled:false,busy:false,state:'error',error:'incomplete installation'}});await tick();
  const remove=w.document.getElementById('linux-remove');
  assert.equal(remove.hidden,false);
- w.confirm=()=>false;remove.click();await tick();assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
- w.confirm=()=>true;remove.click();await tick();assert.equal(calls.filter(c=>c.action==='linux.remove').length,1);
+ remove.click();assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
+ await answerConfirmation(w.document,false,/Linux/);
+ assert.equal(calls.filter(c=>c.action==='linux.remove').length,0);
+ remove.click();await answerConfirmation(w.document,true,/Linux/);
+ assert.equal(calls.filter(c=>c.action==='linux.remove').length,1);
  assert.equal(remove.hidden,true);assert.equal(calls.filter(c=>c.action==='linux.install').length,0);
 });
 test('submit is cancelled synchronously and calls native with chosen model and effort',async()=>{
@@ -608,7 +629,11 @@ test('file management uses labelled actions and protects unsaved editor changes'
  assert.deepEqual([...d.querySelectorAll('#file-actions button')].map(b=>b.textContent),['重命名','移动','移除','选择其他应用打开']);
  d.querySelector('#file-actions button').click();await tick();d.getElementById('input-value').value='new.md';d.getElementById('input-confirm').click();await tick();await tick();
  assert.deepEqual(calls.find(c=>c.action==='files.mutate').args,{operation:'mobile_rename',arguments:{path:'test.md',name:'new.md'},workspaceKey:''});
- d.querySelector('.file-row').click();await tick();d.getElementById('editor').value='unsaved';w.confirm=()=>false;w.mobileCodexBack();assert.equal(d.getElementById('editor-dialog').open,true);
+ d.querySelector('.file-row').click();await tick();const editor=d.getElementById('editor');editor.value='unsaved';
+ assert.equal(w.mobileCodexBack(),true);await answerConfirmation(d,false);
+ assert.equal(d.getElementById('editor-dialog').open,true);assert.equal(editor.value,'unsaved');
+ assert.equal(w.mobileCodexBack(),true);await answerConfirmation(d,true);
+ assert.equal(d.getElementById('editor-dialog').open,false);assert.equal(editor.value,'old');
 });
 test('generated images appear, open full-screen, export and survive a snapshot refresh',async()=>{
  const {w,snapshot,calls}=setup();await tick();const d=w.document,id='a'.repeat(64),image={id,url:'/images/'+id,name:'robot.png',width:1024,height:1024};
@@ -894,8 +919,11 @@ test('personal instructions load offline, retain failed saves and can be cleared
 });
 test('personal instructions preserve unsaved edits on cancel and explain an active override',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'override',activePath:'/private/.codex/AGENTS.override.md',notice:'AGENTS.override.md가 우선 적용됩니다.'})});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.match(d.getElementById('instructions-status').textContent,/우선 적용/);
- d.getElementById('instructions-editor').value='작성 중';w.confirm=()=>false;d.querySelector('[data-close="settings-dialog"]').click();assert.equal(d.getElementById('settings-dialog').open,true);assert.equal(d.getElementById('instructions-editor').value,'작성 중');
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();assert.match(d.getElementById('instructions-status').textContent,/우선 적용/);
+ const editor=d.getElementById('instructions-editor');editor.value='작성 중';
+ d.querySelector('.dialog-head [data-close="settings-dialog"]').click();await answerConfirmation(d,false);
+ assert.equal(d.getElementById('settings-dialog').open,true);assert.equal(editor.value,'작성 중');
 });
 
 test('clearing an override shows the newly effective base instructions without lying about disabling both',async()=>{
@@ -1067,7 +1095,7 @@ test('mobile session cards keep history open for renaming, cancelling and consec
  const {w,calls,snapshot}=setup({
   'chat.rename':({args})=>{sessions.find(s=>s.id===args.id).title=args.title;update();return {};},
   'chat.delete':({args})=>{sessions.splice(sessions.findIndex(s=>s.id===args.id),1);update();return {};}
- },{mobile:true,confirm:()=>{throw Error('Unexpected native dialog');}});
+ },{mobile:true});
  const update=()=>w.mobileCodexEvent('state',{...snapshot,sessions:[...sessions],projects});
  await tick();update();const d=w.document;
  const more=id=>d.querySelector(`[data-session-id="${id}"] .session-more`);
@@ -1344,12 +1372,11 @@ test('adding an external folder without switching conversations keeps the file d
  assert.deepEqual(calls.filter(call=>call.action==='files.list').at(-1).args,{path:'src',workspaceKey:'current'});
 });
 test('mobile project menu supports new chat, persisted display rename and cancellable removal',async()=>{
-  let confirmResult=true;
   const {w,calls,snapshot}=setup({
     'chat.new':()=>({...snapshot}),
     'projects.rename':m=>({key:m.args.key,name:m.args.name}),
     'projects.remove':()=>({...snapshot,workspace:{selected:false},projects:[]})
-  },{mobile:true,confirm:()=>confirmResult});
+  },{mobile:true});
   await tick();const d=w.document;
   const project={key:'project-menu',name:'Folder name',selected:true,available:true};
   w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:project.key,name:project.name},projects:[project]});await tick();
@@ -1360,7 +1387,7 @@ test('mobile project menu supports new chat, persisted display rename and cancel
   d.getElementById('input-value').value='표시 이름';d.getElementById('input-confirm').click();await tick();await tick();
   assert.deepEqual(calls.filter(c=>c.action==='projects.rename').at(-1).args,{key:project.key,name:'표시 이름'});assert.equal(d.querySelector('.project-tree .project-button span').textContent,'표시 이름');
   if(!d.body.classList.contains('sidebar-open'))d.querySelector('.sidebar-toggle').click();
-  open();await tick();confirmResult=false;[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);assert.ok(d.body.classList.contains('sidebar-open'));
+  open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();assert.equal(calls.some(c=>c.action==='projects.remove'),false);assert.ok(d.body.classList.contains('sidebar-open'));
   d.querySelector('#project-remove-card button').click();await tick();assert.equal(d.querySelector('#project-remove-card'),null);assert.equal(calls.some(c=>c.action==='projects.remove'),false);
   open();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='从项目列表中移除').click();await tick();d.querySelector('#project-remove-card button:last-child').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='projects.remove').at(-1).args,{key:project.key});assert.ok(d.body.classList.contains('sidebar-open'));
  });
@@ -1375,17 +1402,19 @@ test('shared projects group conversations without changing their original worksp
  d.querySelector('.project-new').click();await tick();assert.deepEqual(calls.filter(c=>c.action==='chat.new').at(-1).args,{workspaceKey:'b',eventOnly:true});
 });
 test('project merge requires confirmation, handles failure, and suppresses duplicate writes',async()=>{
- let confirmResult=false, resolveMerge, fail=true;
- const {w,calls,snapshot}=setup({'projects.merge':()=>fail?Promise.reject(new Error('storage full')):new Promise(resolve=>{resolveMerge=resolve;})},{confirm:()=>confirmResult});
+ let resolveMerge, fail=true;
+ const {w,calls,snapshot}=setup({'projects.merge':()=>fail?Promise.reject(new Error('storage full')):new Promise(resolve=>{resolveMerge=resolve;})});
  await tick();const d=w.document;
  const projects=[{key:'a',projectId:'pa',name:'Same',available:true,bindings:[{key:'a',uri:'content://one'}]},{key:'b',projectId:'pb',name:'Same',available:true,bindings:[{key:'b',uri:'content://two'}]}];
  w.mobileCodexEvent('state',{...snapshot,projects});d.querySelector('.project-more').click();await tick();
  [...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='合并项目').click();await tick();
- let choice=d.querySelector('#project-link-choices button');assert.match(choice.textContent,/content:\/\/two/);
- choice.click();await tick();assert.equal(calls.some(c=>c.action==='projects.merge'),false);
- confirmResult=true;choice.click();await tick();assert.equal(d.getElementById('project-link-dialog').open,true);assert.match(d.getElementById('toast').textContent,/storage full/);
+ const choice=d.querySelector('#project-link-choices button');assert.match(choice.textContent,/content:\/\/two/);
+ choice.click();await answerConfirmation(d,false,/Same/);assert.equal(calls.some(c=>c.action==='projects.merge'),false);
+ choice.click();await answerConfirmation(d,true,/Same/);assert.equal(d.getElementById('project-link-dialog').open,true);assert.match(d.getElementById('toast').textContent,/storage full/);
  assert.equal(d.querySelectorAll('.project-tree').length,2);
- fail=false;choice.click();choice.click();await tick();assert.equal(calls.filter(c=>c.action==='projects.merge').length,2);
+ fail=false;choice.click();choice.click();await answerConfirmation(d,true,/Same/);
+ choice.click();assert.equal(d.getElementById('confirm-dialog').open,false);
+ assert.equal(calls.filter(c=>c.action==='projects.merge').length,2);
  assert.deepEqual(calls.filter(c=>c.action==='projects.merge').at(-1).args,{sourceKey:'a',targetKey:'b'});
  resolveMerge({projects:[{...projects[1],workspaceKeys:['a','b']}]});await tick();await tick();
  assert.equal(d.getElementById('project-link-dialog').open,false);assert.equal(d.querySelectorAll('.project-tree').length,1);
@@ -1444,13 +1473,14 @@ test('project import previews safely, cancels without applying, and uses the exa
  assert.equal(d.getElementById('project-link-dialog').open,false);assert.equal(d.querySelector('.project-new').disabled,true);
 });
 test('project export asks before opening a destination and conflict resolution can select current display name',async()=>{
- let approved=false;
  const bundle={format:'mobile-codex-projects',schemaVersion:1,events:[]};
- const {w,calls,snapshot}=setup({'projects.export':()=>bundle},{confirm:()=>approved}); await tick();const d=w.document;
+ const {w,calls,snapshot}=setup({'projects.export':()=>bundle}); await tick();const d=w.document;
  w.mobileCodexEvent('state',{...snapshot,projects:[{key:'a',projectId:'proj_a',name:'Desktop',nameConflicts:['Desktop','Phone'],available:true}]});
  const exportIt=async()=>{d.querySelector('.project-more').click();await tick();[...d.querySelectorAll('#project-actions button')].find(b=>b.textContent==='导出项目').click();await tick();};
  await exportIt();assert.equal(calls.some(c=>c.action==='ui.projects.exportFile'),false);
- approved=true;await exportIt();assert.equal(calls.filter(c=>c.action==='ui.projects.exportFile').at(-1).args.content,JSON.stringify(bundle));
+ await answerConfirmation(d,false,/Desktop/);assert.equal(calls.some(c=>c.action==='ui.projects.exportFile'),false);
+ await exportIt();await answerConfirmation(d,true,/Desktop/);
+ assert.equal(calls.filter(c=>c.action==='ui.projects.exportFile').at(-1).args.content,JSON.stringify(bundle));
  [...d.querySelectorAll('#projects button')].find(b=>b.textContent==='解决名称冲突').click();await tick();d.querySelector('#project-link-choices button').click();await tick();
  assert.deepEqual(calls.filter(c=>c.action==='projects.rename').at(-1).args,{key:'a',name:'Desktop'});
 });
@@ -1494,7 +1524,10 @@ test('change preview renders file text safely and restore uses its exact token a
  const {w,calls,snapshot}=setup({'changes.list':()=>({entries:[{path:'a.txt',status:' M'}]}),'changes.preview':()=>({path:'a.txt',token:'review-1',before:'old',after:'<img src=x onerror=alert(1)>',canRestore:true,actionLabel:'복원'})});await tick();
  w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,key:'project-a'}});w.document.getElementById('show-changes').click();await tick();
  w.document.querySelector('#changes-list button').click();await tick();assert.equal(w.document.querySelectorAll('#change-diff img').length,0);assert.match(w.document.getElementById('change-diff').textContent,/<img/);
- w.document.getElementById('change-restore').click();await tick();const r=calls.find(x=>x.action==='changes.restore');assert.equal(r.args.token,'review-1');assert.equal(r.args.workspaceKey,'project-a');
+ const restore=w.document.getElementById('change-restore');restore.click();await answerConfirmation(w.document,false,/a[.]txt/);
+ assert.equal(calls.some(call=>call.action==='changes.restore'),false);
+ restore.click();await answerConfirmation(w.document,true,/a[.]txt/);
+ assert.deepEqual(calls.find(call=>call.action==='changes.restore').args,{token:'review-1',workspaceKey:'project-a'});
 });
 test('late change previews cannot restore into a switched project',async()=>{
  let resolve;const {w,calls,snapshot}=setup({'changes.list':()=>({entries:[{path:'a.txt'}]}),'changes.preview':()=>new Promise(r=>resolve=r)});await tick();
@@ -1784,7 +1817,8 @@ test('fresh identity reaches Chinese and English UI without changing user text o
   const select=d.getElementById('language');select.value=language;select.dispatchEvent(new w.Event('change'));await tick();await tick();
   w.mobileCodexEvent('state',{...snapshot,workspace:{selected:true,name:'Codex'},messages:[message]});
   assert.match(prompt.placeholder,/大肥龙/);assert.match(prompt.getAttribute('aria-label'),/大肥龙/);
-  assert.match(d.getElementById('welcome-description').textContent,/大肥龙/);
+  assert.equal(d.querySelector('.welcome-mark img').alt,'大肥龙');
+  assert.ok(d.getElementById('welcome-title').textContent.trim());
   assert.equal(d.getElementById('project-label').textContent,'Codex');assert.equal(prompt.value,draft);
   assert.equal(d.querySelector('[data-id="identity"] p').textContent,draft);
   assert.equal(d.getElementById('update-repository').value,'caizhiyuan72/mobile-codex-zh');
@@ -1831,25 +1865,31 @@ test('outside taps dismiss sheets and centered dialogs, while inside taps stay o
 });
 test('outside taps respect unsaved changes and do not answer approval requests',async()=>{
  const {w,responses}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();
- d.getElementById('instructions-editor').value='Unsaved edit';w.confirm=()=>false;
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();
+ d.getElementById('instructions-editor').value='Unsaved edit';
  const settings=d.getElementById('settings-dialog');backdropPointer(w,settings,100,100);
+ await answerConfirmation(d,false);
  assert.equal(settings.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');
- w.confirm=()=>true;backdropPointer(w,settings,100,100);assert.equal(settings.open,false);
+ backdropPointer(w,settings,100,100);await answerConfirmation(d,true);assert.equal(settings.open,false);
  w.mobileCodexEvent('server.request',{key:'approval',method:'item/commandExecution/requestApproval',params:{threadId:'t',command:'true'}});
  const request=d.getElementById('request-dialog');assert.equal(request.open,true);
  backdropPointer(w,request,100,100);assert.equal(request.open,false);assert.equal(responses.length,0);
  w.mobileCodexEvent('state',{ready:true,busy:false,permissions:'workspace-write',models:[],messages:[],sessions:[],account:{type:'chatgpt'},workspace:{selected:true,name:'Project'},cwd:'/test/project',threadId:'t',status:'연결됨'});
  assert.equal(request.open,true);
+ const requestGrip=request.querySelector('.sheet-grip');
+ sheetPointer(w,requestGrip,'pointerdown',100,20);sheetPointer(w,requestGrip,'pointermove',100,170);sheetPointer(w,requestGrip,'pointerup',100,170);
+ assert.equal(request.open,false);assert.equal(responses.length,0);
 });
 test('mobile sheet drag closes through the existing unsaved-instructions guard',async()=>{
  const {w}=setup({'instructions.read':()=>({content:'Saved instructions',activePath:'/private/AGENTS.md'})},{mobile:true});await tick();const d=w.document;
- d.getElementById('settings').click();await tick();d.querySelector('[data-settings-tab="personal"]').click();await tick();
- d.getElementById('instructions-editor').value='Unsaved edit';w.confirm=()=>false;
+ d.getElementById('settings').click();await tick();d.querySelector('#settings-advanced > summary').click();
+ d.querySelector('[data-settings-tab="personal"]').click();await tick();
+ d.getElementById('instructions-editor').value='Unsaved edit';
  const sheet=d.getElementById('settings-dialog'),grip=sheet.querySelector('.sheet-grip');
  const drag=()=>{sheetPointer(w,grip,'pointerdown',100,20);sheetPointer(w,grip,'pointermove',105,170);sheetPointer(w,grip,'pointerup',105,170);};
- drag();assert.equal(sheet.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');assert.equal(sheet.style.getPropertyValue('--sheet-offset'),'');
- w.confirm=()=>true;drag();assert.equal(sheet.open,false);
+ drag();await answerConfirmation(d,false);assert.equal(sheet.open,true);assert.equal(d.getElementById('instructions-editor').value,'Unsaved edit');assert.equal(sheet.style.getPropertyValue('--sheet-offset'),'');
+ drag();await answerConfirmation(d,true);assert.equal(sheet.open,false);
 });
 test('short or cancelled sheet drags stay open and do not turn into close clicks',async()=>{
  const {w}=setup({}, {mobile:true});await tick();const d=w.document;d.getElementById('composer-options').click();await tick();
@@ -1862,13 +1902,13 @@ test('short or cancelled sheet drags stay open and do not turn into close clicks
  // Keyboard activation remains available even immediately after a cancelled pointer gesture.
  grip.click();assert.equal(sheet.open,false);
 });
-test('dragging content or a desktop dialog never dismisses it and approvals have no grip',async()=>{
+test('dragging content or a desktop dialog never dismisses it',async()=>{
  for(const mobile of [true,false]){
   const {w}=setup({}, {mobile});await tick();const d=w.document;d.getElementById('composer-options').click();await tick();
   d.getElementById('model-picker-permissions').click();await tick();
   const sheet=d.getElementById('options-dialog'),target=mobile?sheet.querySelector('.dialog-head'):sheet.querySelector('.sheet-grip');
   sheetPointer(w,target,'pointerdown',100,20);sheetPointer(w,target,'pointermove',100,200);sheetPointer(w,target,'pointerup',100,200);
-  assert.equal(sheet.open,true);assert.equal(d.querySelector('#request-dialog .sheet-grip'),null);
+  assert.equal(sheet.open,true);
  }
 });
 test('composer keeps a stable toolbar through focus changes without losing the draft',async()=>{

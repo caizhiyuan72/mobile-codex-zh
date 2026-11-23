@@ -59,7 +59,7 @@ public final class CodexNotificationReceiver extends BroadcastReceiver {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (!manager.areNotificationsEnabled()) return;
         if (manager.getNotificationChannel(channelId) == null) {
-            String channelName = !result ? t("Codex 작업 알림") : vibration ? t("답변 완료") : t("답변 완료") + " · " + t("진동 없음");
+            String channelName = !result ? t("Codex 任务通知") : vibration ? t("回答完成") : t("回答完成") + " · " + t("无振动");
             NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH);
             channel.setSound(Settings.System.DEFAULT_NOTIFICATION_URI,
                 new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());

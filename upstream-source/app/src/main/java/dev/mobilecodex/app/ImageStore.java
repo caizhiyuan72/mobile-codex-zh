@@ -15,7 +15,7 @@ import static dev.mobilecodex.app.core.Json.*;
 
 /** Durable image bytes. The WebView receives only opaque IDs, never general file access. */
 class ImageStore {
-    static final class NotImageException extends IOException { NotImageException() { super(t("표시 가능한 이미지 파일이 아닙니다.")); } }
+    static final class NotImageException extends IOException { NotImageException() { super(t("无法显示此图片文件。")); } }
     private final File directory;
     ImageStore(Context context) { directory = new File(context.getFilesDir(), "images"); directory.mkdirs(); }
 
@@ -27,7 +27,7 @@ class ImageStore {
     JSONObject importBase64(String value, String name) throws Exception {
         if (value.startsWith("data:")) {
             int comma = value.indexOf(',');
-            if (comma < 0 || !value.substring(0, comma).endsWith(";base64")) throw new IOException(t("이미지 데이터 형식을 읽을 수 없습니다."));
+            if (comma < 0 || !value.substring(0, comma).endsWith(";base64")) throw new IOException(t("无法读取图片数据格式。"));
             value = value.substring(comma + 1);
         }
         try (InputStream in = new Base64InputStream(new ByteArrayInputStream(value.getBytes(StandardCharsets.US_ASCII)), Base64.DEFAULT)) {
@@ -45,7 +45,7 @@ class ImageStore {
                 byte[] buffer = new byte[32768]; int count;
                 while ((count = in.read(buffer)) != -1) {
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Image import cancelled");
-                    if (pending.getParentFile().getUsableSpace() < count + 1048576L) throw new IOException(t("저장 공간이 부족합니다."));
+                    if (pending.getParentFile().getUsableSpace() < count + 1048576L) throw new IOException(t("存储空间不足。"));
                     hash.update(buffer, 0, count); out.write(buffer, 0, count);
                 }
             }
@@ -80,9 +80,9 @@ class ImageStore {
         return bounds;
     }
     File file(String id) throws IOException {
-        if (id == null || !id.matches("[0-9a-f]{64}")) throw new IOException(t("잘못된 이미지 ID입니다."));
+        if (id == null || !id.matches("[0-9a-f]{64}")) throw new IOException(t("图片 ID 无效。"));
         File file = new File(directory, id);
-        if (!file.isFile()) throw new FileNotFoundException(t("이미지 파일을 찾을 수 없습니다."));
+        if (!file.isFile()) throw new FileNotFoundException(t("找不到图片文件。"));
         return file;
     }
     String mime(String id) throws IOException { return bounds(file(id)).outMimeType; }

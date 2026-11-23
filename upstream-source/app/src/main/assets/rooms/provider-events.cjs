@@ -14,7 +14,7 @@ function normalize(provider, e) {
     const s=e.step_update;
     if(e.event==='step_update'&&s?.step_type==='agent_response'&&s.text_delta)out.push({kind:'delta',text:s.text_delta});
     if(e.event==='step_update'&&s?.step_type==='tool')out.push({kind:'status',status:'working'});
-    if(e.event==='result')out.push(e.result?.status==='SUCCESS'?{kind:'final',text:e.result.response||'',sessionId:e.result.conversation_id}:{kind:'error',message:e.result?.error||e.result?.status||'Antigravity 응답 오류'});
+    if(e.event==='result')out.push(e.result?.status==='SUCCESS'?{kind:'final',text:e.result.response||'',sessionId:e.result.conversation_id}:{kind:'error',message:e.result?.error||e.result?.status||'Antigravity 响应出错'});
   }
   return out;
 }

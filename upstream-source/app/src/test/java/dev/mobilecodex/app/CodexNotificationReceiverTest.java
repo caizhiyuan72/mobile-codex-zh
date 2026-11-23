@@ -36,8 +36,8 @@ public class CodexNotificationReceiverTest {
         context.getSharedPreferences("notifications", 0).edit()
             .putBoolean("enabled", true).putBoolean("foreground", false)
             .putString("visibleThread", "thread-one").commit();
-        Intent intent = Engine.taskNotificationIntent(context, "completed", "답변 완료",
-            "Codex가 작업을 마쳤습니다.", "thread-one", "");
+        Intent intent = Engine.taskNotificationIntent(context, "completed", "回答完成",
+            "Codex 已完成任务。", "thread-one", "");
 
         assertEquals(CodexNotificationReceiver.class.getName(), intent.getComponent().getClassName());
         context.sendBroadcast(intent);

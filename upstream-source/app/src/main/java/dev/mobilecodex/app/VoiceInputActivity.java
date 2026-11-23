@@ -22,14 +22,14 @@ public final class VoiceInputActivity extends Activity {
         if (request.optString("receiptId").isEmpty()) { finish(); return; }
         VoiceInput.activate(this, request.optString("receiptId"));
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(SPACE_12_DP), dp(SPACE_8_DP), dp(SPACE_12_DP), dp(SPACE_8_DP));
-        TextView note = new TextView(this); note.setText(t("음성 입력\n인식된 내용은 초안에 넣습니다. 확인한 뒤 보내세요.\n음성 처리는 기기에 설정된 인식 서비스가 담당합니다.")); note.setTextSize(16); panel.addView(note);
-        Button cancel = new Button(this); cancel.setText(t("취소")); cancel.setOnClickListener(v -> deliver("", "")); panel.addView(cancel);
+        TextView note = new TextView(this); note.setText(t("语音输入\n识别的文字将进入草稿，请检查后再发送。\n语音识别由设备配置的服务处理。")); note.setTextSize(16); panel.addView(note);
+        Button cancel = new Button(this); cancel.setText(t("取消")); cancel.setOnClickListener(v -> deliver("", "")); panel.addView(cancel);
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.addView(panel, new ScrollView.LayoutParams(-1, -2)); setContentView(scroll);
         if (android.os.Build.VERSION.SDK_INT >= 33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> deliver("", ""));
         if (saved == null) {
             try { startActivityForResult(recognitionIntent(Locale.getDefault()), RECOGNIZE); }
-            catch (ActivityNotFoundException error) { deliver("", t("사용 가능한 음성 인식 앱이 없습니다. 기기의 음성 입력 서비스를 설치하거나 활성화해 주세요.")); }
-            catch (RuntimeException error) { deliver("", t("음성 인식을 시작하지 못했습니다. 기기의 음성 입력 설정과 마이크 권한을 확인해 주세요.")); }
+            catch (ActivityNotFoundException error) { deliver("", t("没有可用的语音识别应用。请安装或启用设备的语音输入服务。")); }
+            catch (RuntimeException error) { deliver("", t("无法启动语音识别。请检查语音设置和麦克风权限。")); }
         }
     }
     static Intent recognitionIntent(Locale locale) {
@@ -37,7 +37,7 @@ public final class VoiceInputActivity extends Activity {
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale.toLanguageTag())
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, t("말씀하세요. 확인한 뒤 보내실 수 있습니다."));
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, t("请开始说话。发送前可以检查内容。"));
     }
     static String recognizedText(int result, Intent data) {
         if (result != RESULT_OK || data == null) return "";
@@ -50,16 +50,16 @@ public final class VoiceInputActivity extends Activity {
         super.onActivityResult(code, result, data);
         if (code == RECOGNIZE) {
             String text = recognizedText(result, data);
-            deliver(text, result == RESULT_OK && text.isEmpty() ? t("음성을 인식하지 못했습니다. 다시 시도해 주세요.") : "");
+            deliver(text, result == RESULT_OK && text.isEmpty() ? t("未能识别语音，请重试。") : "");
         }
     }
     private void deliver(String text, String error) {
         if (delivered) return;
         try { VoiceInput.complete(this, request, text, error); delivered = true; finish(); }
         catch (Exception failure) {
-            new AlertDialog.Builder(this).setTitle(t("음성 결과를 저장하지 못했습니다")).setMessage(text.isEmpty() ? failure.getMessage() : text)
-                .setPositiveButton(t("복사하고 닫기"), (dialog, which) -> { if (!text.isEmpty()) getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("음성 입력"), text)); delivered = true; finish(); })
-                .setNegativeButton(t("다시 저장"), (dialog, which) -> deliver(text, error)).setCancelable(false).show();
+            new AlertDialog.Builder(this).setTitle(t("无法保存语音识别结果")).setMessage(text.isEmpty() ? failure.getMessage() : text)
+                .setPositiveButton(t("复制并关闭"), (dialog, which) -> { if (!text.isEmpty()) getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("语音听写"), text)); delivered = true; finish(); })
+                .setNegativeButton(t("重试保存"), (dialog, which) -> deliver(text, error)).setCancelable(false).show();
         }
     }
     @Override public void onBackPressed() { deliver("", ""); }

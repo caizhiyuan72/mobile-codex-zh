@@ -32,7 +32,7 @@ final class InlineDictation {
     private void emit() { events.accept(snapshot()); }
     void start() {
         if (request == null || !waitingPermission()) return;
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) { finish("", t("기기의 음성 인식 서비스를 사용할 수 없습니다. 설정에서 활성화해 주세요.")); return; }
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) { finish("", t("设备的语音识别服务不可用，请在设备设置中启用。")); return; }
         final JSONObject session = request;
         try {
             phase = "starting"; emit();
@@ -48,7 +48,7 @@ final class InlineDictation {
                 public void onResults(Bundle results) {
                     if (!current()) return;
                     String text = resultText(results);
-                    finish(text, text.isEmpty() ? t("음성을 인식하지 못했습니다. 다시 시도해 주세요.") : "");
+                    finish(text, text.isEmpty() ? t("未能识别语音，请重试。") : "");
                 }
                 public void onPartialResults(Bundle results) { if (current()) { partial = resultText(results); emit(); } }
                 public void onEvent(int type, Bundle params) { }
@@ -57,7 +57,7 @@ final class InlineDictation {
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
             recognizer.startListening(intent);
             timeout(15000);
-        } catch (RuntimeException error) { finish("", t("마이크를 시작하지 못했습니다. 권한과 음성 인식 설정을 확인해 주세요.")); }
+        } catch (RuntimeException error) { finish("", t("无法启动麦克风，请检查麦克风权限和语音识别设置。")); }
     }
     static String resultText(Bundle results) {
         ArrayList<String> values = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
@@ -66,11 +66,11 @@ final class InlineDictation {
     }
     static String errorMessage(int code) {
         return switch (code) {
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> t("마이크 권한이 필요합니다. 앱 권한에서 마이크를 허용해 주세요.");
-            case SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> t("음성을 인식하지 못했습니다. 다시 시도해 주세요.");
-            case SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> t("음성 인식 서비스에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.");
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> t("다른 앱이 음성 인식 서비스를 사용 중입니다. 잠시 뒤 다시 시도해 주세요.");
-            default -> t("음성 인식이 중단되었습니다. 다시 시도해 주세요.");
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> t("需要麦克风权限，请在应用权限中允许访问麦克风。");
+            case SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> t("未能识别语音，请重试。");
+            case SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> t("无法连接语音识别服务，请检查网络连接。");
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> t("其他应用正在使用语音识别，请稍后重试。");
+            default -> t("语音识别已停止，请重试。");
         };
     }
     void denied() { if (waitingPermission()) finish("", errorMessage(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)); }
@@ -79,7 +79,7 @@ final class InlineDictation {
     private void timeout(long delay) {
         if (deadline != null) handler.removeCallbacks(deadline);
         JSONObject session = request;
-        deadline = () -> { if (request == session && session != null) { if (phase.equals("listening")) stop(); else finish("", t("음성 인식 시간이 초과되었습니다. 다시 시도해 주세요.")); } };
+        deadline = () -> { if (request == session && session != null) { if (phase.equals("listening")) stop(); else finish("", t("语音识别超时，请重试。")); } };
         handler.postDelayed(deadline, delay);
     }
     void cancel() { if (request != null) finish("", ""); }
@@ -95,10 +95,10 @@ final class InlineDictation {
             // Do not discard a transcript when durable storage is full. Offer a selectable copy.
             VoiceInput.release(context, completed.optString("receiptId"));
             android.widget.TextView message = new android.widget.TextView(context); message.setPadding(32, 24, 32, 24); message.setTextIsSelectable(true);
-            message.setText(text.isEmpty() ? t("음성 입력 결과를 저장하지 못했습니다.") : text);
-            new android.app.AlertDialog.Builder(context).setTitle(t("음성 결과를 저장하지 못했습니다"))
-                .setView(message).setPositiveButton(t("복사하고 닫기"), (dialog, which) -> {
-                    if (!text.isEmpty()) context.getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("음성 입력"), text));
+            message.setText(text.isEmpty() ? t("无法保存语音输入结果。") : text);
+            new android.app.AlertDialog.Builder(context).setTitle(t("无法保存语音识别结果"))
+                .setView(message).setPositiveButton(t("复制并关闭"), (dialog, which) -> {
+                    if (!text.isEmpty()) context.getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(t("语音听写"), text));
                 }).show();
         }
         emit();

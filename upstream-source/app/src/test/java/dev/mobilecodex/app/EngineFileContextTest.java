@@ -59,7 +59,7 @@ public class EngineFileContextTest {
     private JSONObject handle(String action, JSONObject args) throws Exception { return request(action, args).get(5, TimeUnit.SECONDS); }
     private void assertStale(CompletableFuture<JSONObject> result) throws Exception {
         try { result.get(5, TimeUnit.SECONDS); fail("stale file operations must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("프로젝트가 바뀌었습니다")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("项目已变更")); }
     }
     @Test public void scopedFileRequestsRejectAnotherWorkspaceBeforeReadingOrMutating() throws Exception {
         for (String action : new String[]{"files.list", "files.search", "files.read", "files.mention", "images.read"}) {

@@ -1,4 +1,6 @@
 <resources>
-    <color name="main_window_background">#FAFAFA</color>
+    <color name="main_canvas_light">#FAFAFA</color>
+    <color name="main_canvas_dark">#090A0D</color>
+    <color name="main_window_background">@color/main_canvas_light</color>
     <bool name="main_window_light">true</bool>
 </resources>

@@ -86,7 +86,7 @@ final class FloatingChat implements Engine.Ui {
     private void build() {
         root = new FrameLayout(service); root.setClipChildren(false); root.setClipToPadding(false); root.setPadding(dp(6), dp(6), dp(6), dp(6));
         // Collapsed: only the character face, draggable; tap to open.
-        bubble = new FrameLayout(service); bubble.setContentDescription(t("Codex 플로팅 대화 열기"));
+        bubble = new FrameLayout(service); bubble.setContentDescription(t("打开 Codex 悬浮聊天"));
         ImageView bubbleFace = faceView(dp(56)); bubbleFace.setElevation(dp(6));
         bubble.addView(bubbleFace, new FrameLayout.LayoutParams(dp(56), dp(56)));
         bubbleDot = new View(service); bubbleDot.setElevation(dp(7));
@@ -103,28 +103,28 @@ final class FloatingChat implements Engine.Ui {
         TextView title = new TextView(service); title.setText(t("Codex")); title.setTextSize(15); title.setTextColor(text()); title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); titles.addView(title);
         status = new TextView(service); status.setTextColor(text2()); status.setTextSize(12); status.setMaxLines(2); status.setEllipsize(TextUtils.TruncateAt.END); titles.addView(status);
         header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView app = pill(t("앱에서 열기"), false, this::openApp); app.setMinHeight(dp(32)); app.setTextSize(12); header.addView(app, new LinearLayout.LayoutParams(-2, dp(32)));
-        header.addView(iconButton("–", t("접기"), () -> setExpanded(false)), new LinearLayout.LayoutParams(dp(40), dp(44)));
-        header.addView(iconButton("✕", t("닫기"), this::close), new LinearLayout.LayoutParams(dp(40), dp(44)));
+        TextView app = pill(t("打开应用"), false, this::openApp); app.setMinHeight(dp(32)); app.setTextSize(12); header.addView(app, new LinearLayout.LayoutParams(-2, dp(32)));
+        header.addView(iconButton("–", t("收起"), () -> setExpanded(false)), new LinearLayout.LayoutParams(dp(40), dp(44)));
+        header.addView(iconButton("✕", t("关闭"), this::close), new LinearLayout.LayoutParams(dp(40), dp(44)));
         panel.addView(header);
         ScrollView scroll = new ScrollView(service); scroll.setBackground(shape(fill(), 14));
         LinearLayout.LayoutParams scrollLayout = new LinearLayout.LayoutParams(-1, 0, 1); scrollLayout.setMargins(0, dp(8), dp(4), dp(8));
         transcript = new TextView(service); transcript.setTextColor(text()); transcript.setTextSize(14); transcript.setLineSpacing(0, 1.2f); transcript.setTextIsSelectable(true); transcript.setPadding(dp(12), dp(10), dp(12), dp(10)); scroll.addView(transcript);
         panel.addView(scroll, scrollLayout);
         LinearLayout actions = new LinearLayout(service); actions.setGravity(Gravity.CENTER_VERTICAL);
-        stop = pill(t("중단"), false, () -> command("chat.stop", obj(), null));
-        resume = pill(t("계속"), false, () -> { if (input.getText().toString().isBlank()) input.setText(t("중단한 작업을 현재 상태부터 확인하고 이어서 진행해 줘.")); submit(); });
+        stop = pill(t("停止"), false, () -> command("chat.stop", obj(), null));
+        resume = pill(t("继续"), false, () -> { if (input.getText().toString().isBlank()) input.setText(t("检查当前状态并继续中断的任务。")); submit(); });
         LinearLayout.LayoutParams actionLayout = new LinearLayout.LayoutParams(-2, dp(32)); actionLayout.setMargins(0, 0, dp(6), dp(8));
         actions.addView(stop, actionLayout); actions.addView(resume, new LinearLayout.LayoutParams(actionLayout));
         panel.addView(actions);
         LinearLayout inputRow = new LinearLayout(service); inputRow.setGravity(Gravity.CENTER_VERTICAL); inputRow.setBackground(shape(fill(), 22)); inputRow.setPadding(dp(14), dp(2), dp(4), dp(2));
-        input = new EditText(service); input.setTextColor(text()); input.setHintTextColor(text2()); input.setHint(t("작업 요청 또는 추가 지시")); input.setTextSize(15); input.setBackground(null); input.setPadding(0, dp(8), dp(4), dp(8));
+        input = new EditText(service); input.setTextColor(text()); input.setHintTextColor(text2()); input.setHint(t("任务请求或追加指令")); input.setTextSize(15); input.setBackground(null); input.setPadding(0, dp(8), dp(4), dp(8));
         input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setMinLines(1); input.setMaxLines(4);
         inputRow.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
-        microphone = iconButton("●", t("음성으로 초안 입력"), this::dictate); microphone.setText(t("음성")); microphone.setTextSize(13);
+        microphone = iconButton("●", t("语音听写草稿"), this::dictate); microphone.setText(t("语音")); microphone.setTextSize(13);
         inputRow.addView(microphone, new LinearLayout.LayoutParams(dp(48), dp(44)));
-        send = iconButton("↑", t("보내기"), this::submit); send.setTextSize(18); send.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        send = iconButton("↑", t("发送"), this::submit); send.setTextSize(18); send.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams sendLayout = new LinearLayout.LayoutParams(dp(36), dp(36)); sendLayout.setMargins(dp(2), 0, dp(2), 0);
         inputRow.addView(send, sendLayout);
         panel.addView(inputRow);
@@ -186,14 +186,14 @@ final class FloatingChat implements Engine.Ui {
         bubble.setVisibility(expanded?View.GONE:View.VISIBLE);
         panel.setVisibility(expanded?View.VISIBLE:View.GONE);
         status.setVisibility(expanded ? View.VISIBLE : View.GONE);
-        status.setText(state.optString("status", t("연결 확인 중")) + (expanded ? t(" · 창을 접으면 휴대폰 조작 가능") : "")); transcript.setText(transcriptText); updateButtons(); updateFace();
+        status.setText(state.optString("status", t("正在检查连接")) + (expanded ? t(" · 收起此窗口以控制手机") : "")); transcript.setText(transcriptText); updateButtons(); updateFace();
     }
     private void updateButtons() {
         if(send==null) return;
         boolean voice = !scope.isEmpty() && !sending && !VoiceInput.active();
         microphone.setEnabled(voice); microphone.setAlpha(voice ? 1f : .4f);
         boolean busy=state.optBoolean("busy"), canSend=!sending&&!input.getText().toString().isBlank();
-        send.setContentDescription(busy?t("추가 지시"):t("보내기")); send.setEnabled(canSend);
+        send.setContentDescription(busy?t("追加指令"):t("发送")); send.setEnabled(canSend);
         GradientDrawable circle = new GradientDrawable(); circle.setShape(GradientDrawable.OVAL); circle.setColor(canSend ? text() : line()); send.setBackground(circle); send.setTextColor(canSend ? surface() : text2());
         stop.setVisibility(busy ? View.VISIBLE : View.GONE); stop.setEnabled(busy);
         resume.setVisibility(!busy && !sending ? View.VISIBLE : View.GONE); resume.setEnabled(!busy&&!sending);
@@ -218,10 +218,10 @@ final class FloatingChat implements Engine.Ui {
                 if (!drafts.getBoolean(marker, false)) {
                     String current = target.equals(scope) ? input.getText().toString() : drafts.getString(key, "");
                     String merged = VoiceInput.merge(current, result);
-                    if (!drafts.edit().putString(key, merged).putBoolean(marker, true).commit()) throw new java.io.IOException(t("음성 초안을 저장하지 못했습니다. 창을 다시 열어 주세요."));
+                    if (!drafts.edit().putString(key, merged).putBoolean(marker, true).commit()) throw new java.io.IOException(t("无法保存语音草稿，请重新打开窗口。"));
                     if (target.equals(scope)) { binding = true; input.setText(merged); input.setSelection(merged.length()); binding = false; }
                     if (!result.optString("error").isEmpty()) Toast.makeText(service, result.optString("error"), Toast.LENGTH_LONG).show();
-                    else if (!result.optString("text").isEmpty()) Toast.makeText(service, target.equals(scope) ? t("음성 초안을 확인한 뒤 보내세요.") : t("원래 대화의 음성 초안을 저장했습니다."), Toast.LENGTH_LONG).show();
+                    else if (!result.optString("text").isEmpty()) Toast.makeText(service, target.equals(scope) ? t("发送前请检查语音草稿。") : t("语音草稿已保存到原对话。"), Toast.LENGTH_LONG).show();
                 }
                 VoiceInput.acknowledge(service, "floating", id); drafts.edit().remove(marker).apply();
             } catch (Exception error) { Toast.makeText(service, error.getMessage(), Toast.LENGTH_LONG).show(); }
@@ -255,12 +255,12 @@ final class FloatingChat implements Engine.Ui {
             else if(name.equals("state")) {
                 String next=scope(copy); if(!next.equals(scope)) { saveDraft(); scope=next; binding=true; input.setText(drafts.getString(draftKey(scope),"")); binding=false; }
                 state=copy; JSONArray messages=copy.optJSONArray("messages"); StringBuilder text=new StringBuilder();
-                if(messages!=null) for(int i=Math.max(0,messages.length()-4);i<messages.length();i++){JSONObject m=messages.optJSONObject(i); if(m!=null) text.append(m.optString("role").equals("user")?t("나: "):m.optString("agentName",t("Codex"))+": ").append(m.optString("text")).append("\n\n");}
+                if(messages!=null) for(int i=Math.max(0,messages.length()-4);i<messages.length();i++){JSONObject m=messages.optJSONObject(i); if(m!=null) text.append(m.optString("role").equals("user")?t("我："):m.optString("agentName",t("Codex"))+": ").append(m.optString("text")).append("\n\n");}
                 transcriptText=text.length()>12000?text.substring(text.length()-12000):text.toString(); display();
             } else if(name.equals("message.delta")) { transcriptText+=copy.optString("delta"); if(transcriptText.length()>12000)transcriptText=transcriptText.substring(transcriptText.length()-12000); transcript.setText(transcriptText); }
-            else if(name.equals("server.request")) { attention = true; status.setText(t("앱에서 승인 / 질문을 확인해 주세요.")); updateFace(); }
+            else if(name.equals("server.request")) { attention = true; status.setText(t("请在应用中检查审批 / 问题。")); updateFace(); }
             else if(name.equals("error")) status.setText(copy.optString("message"));
         });
     }
-    @Override public void approval(Engine.Approval approval) { main.post(()->{if(visible){attention=true;status.setText(t("앱에서 파일 변경을 확인해 주세요."));updateFace();}}); }
+    @Override public void approval(Engine.Approval approval) { main.post(()->{if(visible){attention=true;status.setText(t("请在应用中检查文件更改。"));updateFace();}}); }
 }

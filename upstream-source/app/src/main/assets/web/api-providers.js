@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  const t = (key, args = {}) => window.MobileCodexLocale?.t(key, args) ?? key.replace(/\{([a-zA-Z]+)\}/g, (token, name) => args[name] ?? token);
   const element = (tag, text, className) => {
     const result = document.createElement(tag);
     if (text != null) result.textContent = text;
@@ -13,13 +14,17 @@
   let profiles = [], active = '', editing = '', discovered = [], selected = new Set();
   let chatOnly = new Set(), publicCatalog = false;
   const previewLimit = 3;
-  let expandedId = '', renderedProfiles = '', showAllProfiles = false;
+  let expandedId = '', renderedProfiles = '', showAllProfiles = false, confirming = false;
+  let statusKey = '', discoveryKey = '', discoveryArgs;
   function status(message = '', error = false) {
-    $('api-status').textContent = message;
+    statusKey = message;
+    $('api-status').textContent = t(message);
     $('api-status').classList.toggle('api-error', error);
   }
-  function discoveryStatus(message = '', error = false) {
-    $('api-discovery-status').textContent = message;
+  function discoveryStatus(message = '', error = false, args = () => ({})) {
+    discoveryKey = message;
+    discoveryArgs = args;
+    $('api-discovery-status').textContent = t(message, args());
     $('api-discovery-status').classList.toggle('api-error', error);
   }
   function errorMessage(error) {
@@ -36,7 +41,7 @@
       control.disabled = value || control.dataset.inactive === 'true' || (control.id === 'api-scan' && scanning);
     });
   }
-  async function perform(operation, reportError = message => { status(message, true); toast(message); }) {
+  async function perform(operation, reportError = message => { status(message, true); toast(t(message)); }) {
     if (busy) return false;
     setBusy(true);
     try { await operation(); return true; }
@@ -60,8 +65,7 @@
   function clear() {
     editing = ''; $('api-form').reset(); $('api-key').required = true;
     $('api-import').open = false;
-    $('api-editor-heading').textContent = '添加服务商';
-    $('api-key-note').textContent = '密钥加密保存在此设备，不会再次显示。';
+    renderEditor();
     $('api-form').hidden = true;
     $('api-new').setAttribute('aria-expanded', 'false');
     resetDiscovery();
@@ -75,8 +79,7 @@
     editing = profile.id; $('api-name').value = profile.name; $('api-url').value = profile.baseUrl;
     $('api-import').open = false; $('api-import-json').value = '';
     $('api-models').value = profile.models.join('\n'); $('api-key').value = ''; $('api-key').required = false;
-    $('api-key-note').textContent = '留空保留已保存的密钥，填写则替换。';
-    $('api-editor-heading').textContent = '编辑服务商';
+    renderEditor();
     resetDiscovery(); showEditor();
   }
   async function select(id) {
@@ -87,7 +90,7 @@
     });
   }
   function draw() {
-    const signature = JSON.stringify([active, profiles, showAllProfiles]);
+    const signature = JSON.stringify([active, profiles, showAllProfiles, window.MobileCodexLocale?.language()]);
     if (signature === renderedProfiles) return;
     renderedProfiles = signature;
     const currentProfile = profiles.find(profile => profile.id === active);
@@ -106,9 +109,9 @@
       card.open = profile.id === expandedId;
       const heading = element('summary', null, 'api-card-heading');
       const caption = element('span', null, 'api-card-caption');
-      caption.append(element('strong', profile.name), element('small', `${profile.models.length} 个模型`, 'muted'));
+      caption.append(element('strong', profile.name), element('small', t('{count} 个模型', {count:profile.models.length}), 'muted'));
       heading.append(caption);
-      if (current) heading.append(element('span', '使用中', 'status-pill'));
+      if (current) heading.append(element('span', t('使用中'), 'status-pill'));
       heading.addEventListener('click', event => {
         event.preventDefault();
         if (busy) return;
@@ -117,19 +120,26 @@
         card.open = !!expandedId;
       });
       card.append(heading, element('p', profile.baseUrl, 'api-meta'),
-        element('small', profile.hasKey ? '密钥已加密保存' : '尚未设置密钥', 'muted'));
+        element('small', t(profile.hasKey ? '密钥已加密保存' : '尚未设置密钥'), 'muted'));
       if (profile.models.length) {
         const models = element('details', null, 'api-models');
         models.open = card.open && modelsOpen;
         const ids = element('ul', null, 'api-model-ids');
         for (const id of profile.models) ids.append(element('li', id));
-        models.append(element('summary', `查看 ${profile.models.length} 个模型 ID`), ids);
+        models.append(element('summary', t('查看 {count} 个模型 ID', {count:profile.models.length})), ids);
         card.append(models);
       }
       const actions = element('div', null, 'api-buttons');
-      actions.append(button(current ? '停用' : '启用', () => select(current ? '' : profile.id)),
-        button('编辑', () => edit(profile)), button('删除', async () => {
-          if (!window.confirm('删除“' + profile.name + '”及其密钥？本地对话记录会保留。')) return;
+      actions.append(button(t(current ? '停用' : '启用'), () => select(current ? '' : profile.id)),
+        button(t('编辑'), () => edit(profile)), button(t('删除'), async () => {
+          if (confirming) return;
+          confirming = true;
+          try {
+            const confirm = window.MobileCodexConfirm || window.confirm;
+            if (!await confirm.call(window, t('删除“{name}”及其密钥？本地对话记录会保留。', {name:profile.name}))) return;
+          } catch {
+            return;
+          } finally { confirming = false; }
           await perform(async () => {
             await call('providers.remove', {id:profile.id}); await refresh();
             if (editing === profile.id) clear();
@@ -139,9 +149,9 @@
       card.append(actions);
       (list.children.length < previewLimit ? list : remaining).append(card);
     }
-    if (!profiles.length) list.append(element('p', '添加 API 服务商，即可开始使用。', 'muted'));
+    if (!profiles.length) list.append(element('p', t('添加 API 服务商，即可开始使用。'), 'muted'));
     if (profiles.length > previewLimit) {
-      const more = button(showAllProfiles ? '收起服务商列表' : `显示其余 ${profiles.length - previewLimit} 个服务商`, () => {
+      const more = button(showAllProfiles ? t('收起服务商列表') : t('显示其余 {count} 个服务商', {count:profiles.length - previewLimit}), () => {
         showAllProfiles = !showAllProfiles; draw();
         if (showAllProfiles) list.querySelectorAll('summary')[previewLimit]?.focus();
         else $('api-show-more')?.focus();
@@ -151,13 +161,14 @@
       more.setAttribute('aria-expanded', String(showAllProfiles));
       list.append(more, remaining);
     }
-    $('api-current').textContent = currentProfile ? '' : '尚未启用 API';
+    $('api-current').textContent = currentProfile ? '' : t('尚未启用 API');
     setBusy(busy);
   }
   function renderDiscovery() {
     const query = $('api-filter').value.toLowerCase().trim();
     const box = $('api-discovery-results'); box.replaceChildren(); $('api-discovery').hidden = false;
-    $('api-discovery-count').textContent = '找到 ' + discovered.length + ' 个模型 · 已选 ' + selected.size + ' / 150';
+    const renderCount = () => { $('api-discovery-count').textContent = t('找到 {count} 个模型 · 已选 {selected} / 150', {count:discovered.length, selected:selected.size}); };
+    renderCount();
     const matching = discovered.filter(id => id.toLowerCase().includes(query));
     for (const id of matching) {
       const row = element('label', null, 'api-model-row'), checkbox = element('input');
@@ -165,13 +176,13 @@
       checkbox.addEventListener('change', () => {
         if (checkbox.checked && selected.size >= 150) { checkbox.checked = false; discoveryStatus('最多可选择 150 个模型。', true); return; }
         if (checkbox.checked) selected.add(id); else selected.delete(id);
-        $('api-discovery-count').textContent = '找到 ' + discovered.length + ' 个模型 · 已选 ' + selected.size + ' / 150';
+        renderCount();
       });
       const name = element('span', id);
-      if (chatOnly.has(id)) name.append(element('small', '（价目表仅标注 Chat Completions）', 'muted'));
+      if (chatOnly.has(id)) name.append(element('small', t('（价目表仅标注 Chat Completions）'), 'muted'));
       row.append(checkbox, name); box.append(row);
     }
-    if (!matching.length) box.append(element('p', '没有匹配的模型。', 'muted'));
+    if (!matching.length) box.append(element('p', t('没有匹配的模型。'), 'muted'));
   }
   const modelIds = () => $('api-models').value.split(/[\r\n,]/).map(id => id.trim()).filter(Boolean);
   function importConnection() {
@@ -211,8 +222,13 @@
       const existing = new Set(modelIds()); selected = new Set(discovered.filter(id => existing.has(id)).slice(0, 150));
       $('api-filter').value = ''; renderDiscovery();
       if (publicCatalog) {
-        const issue = errorMessage({message:data.listIssue});
-        discoveryStatus(issue + '。已读取公开价目表供参考，密钥权限和 Responses 对话能力仍需实测。');
+        const status = data.listIssueStatus;
+        const http = Number.isInteger(status) && status >= 100 && status <= 599;
+        discoveryStatus('{issue}。已读取公开价目表供参考，密钥权限和 Responses 对话能力仍需实测。', false, () => {
+          const english = window.MobileCodexLocale?.language() === 'en';
+          const detail = http ? (english ? ` (HTTP ${status})` : `（HTTP ${status}）`) : '';
+          return {issue:t('无法加载模型') + detail + (english ? '.' : '')};
+        });
       } else {
         discoveryStatus(discovered.length ? '请选择要添加的模型。模型列表不代表已通过对话和工具调用测试。' : '服务商未返回模型，可手动填写模型 ID。');
       }
@@ -235,6 +251,16 @@
     });
     $('api-key').value = '';
   }
+  function renderEditor() {
+    const profile = profiles.find(profile => profile.id === editing);
+    const entered = $('api-url').value.trim().replace(/\/+$/, '');
+    const base = entered.replace(/\/(?:chat\/completions|responses|models)$/, '');
+    const changed = !!profile && entered !== profile.baseUrl && base !== profile.baseUrl;
+    $('api-key').required = !editing || changed;
+    $('api-editor-heading').textContent = t(editing ? '编辑服务商' : '添加服务商');
+    $('api-key-note').textContent = t(changed ? '接口地址已更改，请重新填写此地址的密钥。'
+      : editing ? '留空保留已保存的密钥，填写则替换。' : '密钥加密保存在此设备，不会再次显示。');
+  }
   function init(options) {
     if (installed) return;
     call = options.call; refresh = options.refresh; toast = options.toast;
@@ -242,6 +268,7 @@
     if (!nav || !content) return;
     const tab = element('button', '模型 API'); tab.type = 'button'; tab.dataset.settingsTab = 'providers';
     nav.insertBefore(tab, nav.firstChild);
+    window.MobileCodexLocale?.bind(tab);
     const panel = element('section', null, 'settings-section'); panel.dataset.settingsPanel = 'providers'; panel.hidden = true;
     panel.innerHTML = `<div class="api-panel-heading"><h3>模型 API</h3><button id="api-new" class="secondary-button" type="button" aria-controls="api-form" aria-expanded="false">添加服务商</button></div>
       <p class="muted" id="api-current"></p><p id="api-migration" class="muted api-error" role="status" hidden></p>
@@ -272,6 +299,7 @@
       </form>
       <div id="api-profiles"></div>`;
     content.append(panel);
+    window.MobileCodexLocale?.bind(panel);
     $('api-form').addEventListener('submit', save);
     $('api-new').addEventListener('click', () => {
       if (busy) return;
@@ -289,16 +317,7 @@
     $('api-import-apply').addEventListener('click', importConnection);
     $('api-filter').addEventListener('input', renderDiscovery);
     ['api-url','api-key'].forEach(id => $(id).addEventListener('input', resetDiscovery));
-    $('api-url').addEventListener('input', () => {
-      const profile = profiles.find(profile => profile.id === editing);
-      const entered = $('api-url').value.trim().replace(/\/+$/, '');
-      const endpoint = /\/(?:chat\/completions|responses|models)$/;
-      const base = entered.replace(endpoint, '');
-      const changed = !!profile && entered !== profile.baseUrl && base !== profile.baseUrl;
-      $('api-key').required = !editing || changed;
-      $('api-key-note').textContent = changed ? '接口地址已更改，请重新填写此地址的密钥。'
-        : editing ? '留空保留已保存的密钥，填写则替换。' : '密钥加密保存在此设备，不会再次显示。';
-    });
+    $('api-url').addEventListener('input', renderEditor);
     $('api-select-none').addEventListener('click', () => { selected.clear(); renderDiscovery(); });
     $('api-select-all').addEventListener('click', () => {
       const query = $('api-filter').value.toLowerCase().trim();
@@ -316,12 +335,22 @@
       $('api-key').value = ''; $('api-import-json').value = '';
       resetDiscovery();
     });
+    document.addEventListener('mobilecodex:languagechange', () => {
+      draw(); renderEditor();
+      if (!$('api-discovery').hidden) renderDiscovery();
+      status(statusKey, $('api-status').classList.contains('api-error'));
+      discoveryStatus(discoveryKey, $('api-discovery-status').classList.contains('api-error'), discoveryArgs);
+      renderMigration(!$('api-migration').hidden);
+    });
     installed = true; clear(); draw();
+  }
+  function renderMigration(failed) {
+    $('api-migration').hidden = !failed;
+    $('api-migration').textContent = failed ? t('旧版 API 配置未能迁移，原配置已保留。请重新添加服务商。') : '';
   }
   function render(state) {
     if (!installed) return;
-    $('api-migration').hidden = !state.apiMigrationError;
-    $('api-migration').textContent = state.apiMigrationError ? '旧版 API 配置未能迁移，原配置已保留。请重新添加服务商。' : '';
+    renderMigration(!!state.apiMigrationError);
     profiles = Array.isArray(state.apiProviders) ? state.apiProviders : [];
     active = state.apiDefault ?? state.apiActive ?? '';
     draw();

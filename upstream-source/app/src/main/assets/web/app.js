@@ -5,7 +5,7 @@
   const appearance = window.MobileCodexAppearance;
   const LEGACY_PRO_MODEL = 'chatgpt-web:gpt-6-pro';
   const $ = id => document.getElementById(id), C = window.UiCore;
-  const pending = new Map(), requestQueue = new Map();
+  const pending = new Map(), requestQueue = new Map(), requestForms = new Map();
   let agentUi = null;
   let apiProvidersUi = window.MobileCodexApiProviders;
   const githubUi = window.MobileCodexGitHub;
@@ -30,9 +30,9 @@
   let textSizePercent = 100;
   function call(action, args = {}) {
     return new Promise((resolve, reject) => {
-      if (!window.Native) return reject(new Error(t('Android 앱에서 실행해 주세요.')));
+      if (!window.Native) return reject(new Error(t('请在 Android 应用内执行此操作。')));
       const id = String(++seq);
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error(t('요청 시간이 초과되었습니다. 상태를 확인하고 다시 시도해 주세요.'))); }, ['files.mutate','recovery.restore','updates.install'].includes(action) ? 610000 : 150000);
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(t('请求超时，请检查状态后重试。'))); }, ['files.mutate','recovery.restore','updates.install'].includes(action) ? 610000 : 150000);
       pending.set(id, {resolve, reject, timer});
       window.Native.postMessage(JSON.stringify({id, action, args}));
     });
@@ -44,7 +44,7 @@
   function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); const use = document.createElementNS(svg.namespaceURI, 'use'); use.setAttribute('href', '#i-' + name); svg.append(use); return svg; }
   // Network failures may contain a full HTML response or a multi-line diagnostic.
   // Keep those payloads out of user-facing status text.
-  function errorText(error, fallback = t('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.')) {
+  function errorText(error, fallback = t('无法完成请求，请稍后重试。')) {
     const message = String(error?.message ?? error ?? '').trim();
     return message && message.length <= 240 && !/[\r\n<>]/.test(message)
       && !/(?:bearer\s|gh[pousr]_|github_pat_|access_token|refresh_token|client_secret)/i.test(message) ? message : fallback;
@@ -71,23 +71,23 @@
     };
     const failure = state.conversationFailure;
     $('conversation-failure').hidden = !failure || !!state.busy;
-    $('conversation-failure-message').textContent = failure ? (messages[failure.code] || '本次请求失败。请检查连接与服务商状态后重试，原对话记录已保留。') : '';
+    $('conversation-failure-message').textContent = failure ? t(messages[failure.code] || '本次请求失败。请检查连接与服务商状态后重试，原对话记录已保留。') : '';
     $('conversation-failure-new').disabled = !!state.busy || !!sending;
   }
 
   function ensureNotificationSettings() {
-    const toggle = $('theme')?.closest('.settings-row');
-    if (!toggle) return;
-    const make = (id, title, description) => { const row = node('div', null, 'settings-row'), copy = node('span'), strong = node('strong', title), small = node('small', description), label = node('label', null, 'toggle-switch'), input = node('input'); input.id = id; input.type = 'checkbox'; input.setAttribute('role', 'switch'); input.checked = localStorage.getItem(id) !== 'off'; input.addEventListener('change', () => { try { localStorage.setItem(id, input.checked ? 'on' : 'off'); } catch {} call('notifications.configure', {enabled: $('notifications-toggle')?.checked !== false, vibration: $('notification-vibration-toggle')?.checked !== false}).catch(error => toast(error.message)); }); label.append(input, node('span', null, 'toggle-track')); copy.append(strong, small); row.append(copy, label); return row; };
-    const parent = toggle.parentElement;
+    const parent = $('notification-settings');
+    if (!parent) return;
+    const make = (id, title, description) => { const row = node('div', null, 'settings-row'), copy = node('span'), strong = node('strong', title), small = node('small', description), label = node('label', null, 'toggle-switch'), input = node('input'); input.id = id; input.type = 'checkbox'; strong.id = id + '-title'; small.id = id + '-description'; input.setAttribute('role', 'switch'); input.setAttribute('aria-labelledby', strong.id); input.setAttribute('aria-describedby', small.id); input.checked = localStorage.getItem(id) !== 'off'; input.addEventListener('change', () => { try { localStorage.setItem(id, input.checked ? 'on' : 'off'); } catch {} call('notifications.configure', {enabled: $('notifications-toggle')?.checked !== false, vibration: $('notification-vibration-toggle')?.checked !== false}).catch(error => toast(error.message)); }); label.append(input, node('span', null, 'toggle-track')); copy.append(strong, small); row.append(copy, label); return row; };
     if (!$('notifications-toggle')) {
-      const notifications = make('notifications-toggle', t('작업 알림'), t('답변 완료와 승인 요청을 Android 상단 알림으로 알려줍니다.'));
-      const vibration = make('notification-vibration-toggle', t('알림 진동'), t('작업 알림이 도착할 때 진동합니다.'));
+      const notifications = make('notifications-toggle', '任务通知', '回复完成或需要审批时显示 Android 通知。');
+      const vibration = make('notification-vibration-toggle', '通知振动', '收到任务通知时振动。');
       const permission = node('div', null, 'settings-row notification-permission-row');
-      const copy = node('span'), title = node('strong', t('Android 알림 권한')), help = node('small', t('시스템 권한이 꺼져 있으면 상단 알림을 받을 수 없습니다.'));
-      const open = button(t('Android 알림 설정'), async () => { await call('notifications.openSettings'); setTimeout(refreshNotificationSettings, 250); }, 'secondary-button');
+      const copy = node('span'), title = node('strong', 'Android 通知权限'), help = node('small', '系统通知权限已关闭，无法显示状态栏通知。');
+      const open = button('Android 通知设置', async () => { await call('notifications.openSettings'); setTimeout(refreshNotificationSettings, 250); }, 'secondary-button');
       open.id = 'notification-settings-button'; copy.append(title, help); permission.append(copy, open);
-      parent.insertBefore(permission, toggle); parent.insertBefore(vibration, permission); parent.insertBefore(notifications, vibration);
+      parent.append(notifications, vibration, permission);
+      L.bind?.(parent);
     }
     function apply(value) {
       if (!value) return;
@@ -104,19 +104,39 @@
     sidebar(false);
     if (!$(id).open) { dialogs.push(id); $(id).showModal(); }
   }
-  function close(id) { $(id).close(); }
-  function dismiss(id) {
+  function close(id) {
+    const index = dialogs.lastIndexOf(id);
+    if (index !== -1) dialogs.splice(index, 1);
+    $(id).close();
+  }
+  let settleConfirmation;
+  function confirmAction(message) {
+    if (settleConfirmation) return Promise.resolve(false);
+    $('confirm-message').textContent = message;
+    show('confirm-dialog');
+    $('confirm-cancel').focus({preventScroll:true});
+    return new Promise(resolve => { settleConfirmation = resolve; });
+  }
+  function finishConfirmation(accepted) {
+    const settle = settleConfirmation;
+    settleConfirmation = null;
+    if ($('confirm-dialog').open) close('confirm-dialog');
+    settle?.(accepted);
+  }
+  window.MobileCodexConfirm = confirmAction;
+  async function dismiss(id) {
+    if (id === 'confirm-dialog') { finishConfirmation(false); return; }
     if (id === 'report-dialog' && reportsUi) { reportsUi.cancel(); return; }
     const dirty = (id === 'editor-dialog' && openedFile && $('editor').value !== openedFile.content)
       || (id === 'config-dialog' && $('config-editor').value !== configOriginal)
       || (id === 'settings-dialog' && instructionsLoaded && $('instructions-editor').value !== instructionsOriginal);
-    if (dirty && !confirm(t('저장하지 않은 변경 사항을 닫을까요?'))) return;
+    if (dirty && !await confirmAction(t('放弃未保存的更改并关闭？'))) return;
+    if (!$(id).open) return;
     if (id === 'editor-dialog' && openedFile) {
       fileDrafts.delete(fileDraftKey(openedFile.context, openedFile.path));
       $('editor').value = openedFile.content;
     }
-    // Keep the request in the queue; selecting its conversation can show it again.
-    if (id === 'request-dialog') displayedRequest = null;
+    if (id === 'request-dialog') { hideRequest(); $('resume-request').focus({preventScroll:true}); return; }
     close(id);
   }
   function wireSheetGestures() {
@@ -174,12 +194,15 @@
     }
     document.querySelectorAll('.sidebar-toggle').forEach(b => b.setAttribute('aria-expanded', String(open)));
   }
-  function syncThemeChoices(choice) {
-    for (const radio of $('theme-choices').querySelectorAll('input')) radio.checked = radio.value === choice;
+  function selectSegment(group, value) {
+    for (const [index, radio] of [...group.querySelectorAll('input')].entries()) {
+      radio.checked = radio.value === value;
+      if (radio.checked) group.dataset.segment = String(index);
+    }
   }
   function setTheme() {
     const choice = $('theme').value;
-    syncThemeChoices(choice);
+    selectSegment($('theme-choices'), choice);
     try { localStorage.setItem('theme', choice); } catch {}
     appearance.applyTheme(choice);
     syncNativeTheme();
@@ -190,22 +213,23 @@
   function setupInterfaceStyle() {
     const root = document.documentElement;
     const composerWrap = $('composer').parentElement;
-    function updateGlassInset() {
-      if (!root.hasAttribute('data-liquid-glass')) return;
-      root.style.setProperty('--glass-composer-height', composerWrap.offsetHeight + 'px');
+    function updateComposerInset() {
+      root.style.setProperty('--composer-height', composerWrap.offsetHeight + 'px');
     }
-    $('appearance-' + (root.hasAttribute('data-liquid-glass') ? 'glass' : 'classic')).checked = true;
-    updateGlassInset();
+    const appearanceGroup = $('appearance-classic').closest('.appearance-choices');
+    selectSegment(appearanceGroup, root.hasAttribute('data-liquid-glass') ? 'glass' : 'classic');
+    updateComposerInset();
     if (window.ResizeObserver) {
-      const observer = new ResizeObserver(() => { updateGlassInset(); if (root.hasAttribute('data-liquid-glass')) followLatest(); });
+      const observer = new ResizeObserver(() => { updateComposerInset(); followLatest(); });
       observer.observe(composerWrap);
     }
     for (const choice of document.querySelectorAll('[name="interface-style"]')) {
       choice.addEventListener('change', () => {
         const anchor = readingPosition();
         root.toggleAttribute('data-liquid-glass', choice.value === 'glass');
+        selectSegment(appearanceGroup, choice.value);
         try { localStorage.setItem('interfaceStyle', choice.value); } catch {}
-        updateGlassInset();
+        updateComposerInset();
         syncNativeTheme();
         if (following) followLatest(); else restoreReadingPosition(anchor);
         composerMeasureKey = '';
@@ -227,9 +251,9 @@
   function ensureTextSizeSettings() {
     const themeRow = $('theme').closest('.settings-row');
     const row = node('div', null, 'settings-row text-size-row'), label = node('label');
-    label.htmlFor = 'text-size'; label.append(node('strong', t('글자 크기')), node('small', t('폰과 태블릿의 앱 화면에 적용됩니다.')));
-    const select = node('select'); select.id = 'text-size'; select.setAttribute('aria-label', t('글자 크기'));
-    for (const value of [75,85,100,115,130,150]) select.append(new Option(value === 100 ? t('기본 · 100%') : value + '%', String(value)));
+    label.htmlFor = 'text-size'; label.append(node('strong', t('文字大小')), node('small', t('适用于手机和平板上的应用界面。')));
+    const select = node('select'); select.id = 'text-size'; select.setAttribute('aria-label', t('文字大小'));
+    for (const value of [75,85,100,115,130,150]) select.append(new Option(value === 100 ? t('默认 · 100%') : value + '%', String(value)));
     row.append(label, select); themeRow.after(row);
     try { applyTextSize(JSON.parse(window.Native?.textSize?.() || '{}').percent); } catch {}
     applyTextSize(textSizePercent);
@@ -239,7 +263,7 @@
       select.disabled = true;
       try {
         const result = await call('ui.textSize', {percent:requested});
-        if (result.percent !== requested) throw new Error(t('글자 크기를 저장하지 못했습니다.'));
+        if (result.percent !== requested) throw new Error(t('无法保存文字大小设置。'));
         applyTextSize(result.percent); viewportChanged();
       } catch (error) { applyTextSize(previous); toast(error.message); }
       finally { select.disabled = false; }
@@ -304,7 +328,7 @@
       if (localStorage.getItem(contextScope(targetScope)) === null) {
         const context = restoreContext(sourceScope), safe = {attachments:context.attachments, mentions:[], skills:context.skills};
         if (safe.attachments.length || safe.skills.length) localStorage.setItem(contextScope(targetScope), JSON.stringify(safe));
-        if (context.mentions.length) toast(t('프로젝트 파일 멘션은 원래 초안에 남겨 두었습니다.'));
+        if (context.mentions.length) toast(t('项目文件引用仍保留在原草稿中。'));
       }
     } catch {}
   }
@@ -315,14 +339,14 @@
   function renderDraftContext() {
     const target = $('draft-context'); target.replaceChildren();
     const items = [
-      ...(draftContext.attachments || []).map(item => ({type:'attachments', value:item, label:item.name || t('첨부 파일')})),
+      ...(draftContext.attachments || []).map(item => ({type:'attachments', value:item, label:item.name || t('附件')})),
       ...(draftContext.mentions || []).map(item => ({type:'mentions', value:item, label:'@' + (item.name || item.path)})),
       ...(draftContext.skills || []).map(item => ({type:'skills', value:item, label:'$' + item.name}))
     ];
     for (const item of items) {
       const chip = node('span', null, 'context-chip'), image = item.value.image || item.value;
-      if (item.type === 'attachments' && C.safeImageUrl(image.url)) { const preview = button('', () => previewImage(image), 'context-image'); preview.setAttribute('aria-label', item.label + t(' 미리 보기')); const img = node('img'); img.src = image.url; img.alt = item.label; preview.append(img); chip.append(preview); }
-      chip.append(node('span', item.label)); const remove = button('×', () => removeContext(item.type, item.value.id || item.value.path || item.value.name), 'chip-remove'); remove.setAttribute('aria-label', item.label + t(' 제거')); chip.append(remove); target.append(chip);
+      if (item.type === 'attachments' && C.safeImageUrl(image.url)) { const preview = button('', () => previewImage(image), 'context-image'); preview.setAttribute('aria-label', item.label + t(' 预览')); const img = node('img'); img.src = image.url; img.alt = item.label; preview.append(img); chip.append(preview); }
+      chip.append(node('span', item.label)); const remove = button('×', () => removeContext(item.type, item.value.id || item.value.path || item.value.name), 'chip-remove'); remove.setAttribute('aria-label', item.label + t(' 移除')); chip.append(remove); target.append(chip);
     }
     target.hidden = !items.length;
     updateComposerExpansion();
@@ -349,7 +373,7 @@
   const projectWorkBusy = () => !!state.busy || (state.sessions || []).some(session => !!session.busy);
   const generalFolderAvailable = (workspace = state.workspace) => !workspace?.selected && (workspace?.hasLocalFolder === true || workspace?.available === true);
   const workspaceFilesAvailable = (workspace = state.workspace) => workspace?.selected ? workspace.available !== false : generalFolderAvailable(workspace);
-  const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('작업 폴더 선택')) : (workspace.name || L.brand('Codex'));
+  const workspaceFolderLabel = (workspace = state.workspace) => workspace?.selected ? (workspace.name || t('选择工作文件夹')) : (workspace.name || L.brand('Codex'));
   function updateSend() {
     renderConversationFailure();
     $('voice-input').disabled = !draftScope || voiceStarting || voiceActive || !!sending;
@@ -359,8 +383,8 @@
     const steering = state.busy && !!state.turnId;
     $('stop').hidden = !state.busy || hasDraft;
     $('send').hidden = !$('stop').hidden;
-    $('send').setAttribute('aria-label', steering ? t('진행 중인 작업에 추가 지시') : t('메시지 보내기'));
-    $('send').title = steering ? t('추가 지시') : t('보내기'); $('composer-attach').disabled = !!sending;
+    $('send').setAttribute('aria-label', steering ? t('向当前任务追加指令') : t('发送消息'));
+    $('send').title = steering ? t('追加指令') : t('发送'); $('composer-attach').disabled = !!sending;
   }
   function closeComposerAddMenu(restoreFocus = true) {
     if ($('composer-add-menu').hidden) return false;
@@ -388,9 +412,7 @@
   }
   function followLatest() { if (following && !chatTouch) scrollLatest(); }
   function chatReadingTop() {
-    return document.documentElement.hasAttribute('data-liquid-glass')
-      ? document.querySelector('.topbar').getBoundingClientRect().bottom
-      : $('chat-scroll').getBoundingClientRect().top;
+    return Math.max(document.querySelector('.topbar').getBoundingClientRect().bottom, $('chat-scroll').getBoundingClientRect().top);
   }
   function readingPosition() { return following ? null : visibleMessageAnchor(); }
   function toggleInPlace(control, toggle) {
@@ -479,7 +501,7 @@
       document.documentElement.style.setProperty('--app-height', height + 'px');
       // Resize the composer in this viewport frame so the keyboard cannot leave it one frame behind.
       updateSend(); measureComposer(); positionModelPicker();
-      if (document.documentElement.hasAttribute('data-liquid-glass')) followLatest();
+      followLatest();
       if (!matchMedia('(max-width:760px)').matches) {
         document.body.classList.remove('sidebar-open'); $('scrim').hidden = true;
         $('sidebar').inert = false; document.querySelector('main').inert = false;
@@ -491,21 +513,25 @@
   }
   function optionsSummary() {
 
-    const model = $('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요');
-    const effort = $('effort').selectedOptions[0]?.textContent || t('추론 설정 정보 없음');
-    const approval = $('approval-mode').selectedOptions[0]?.textContent || t('자동 검토');
+    const model = $('model').selectedOptions[0]?.textContent || t('需要刷新模型列表');
+    const effort = $('effort').selectedOptions[0]?.textContent || t('无法获取推理设置');
+    const approval = $('approval-mode').selectedOptions[0]?.textContent || t('自动审查');
     $('model-summary').textContent = shortModelName(model);
     $('effort-summary').textContent = $('effort').value ? effort : '';
-    $('composer-options').setAttribute('aria-label', t('작업 설정: ') + model + t(', 추론 ') + effort + t(', 승인 ') + approval);
+    $('composer-options').setAttribute('aria-label', t('任务设置：') + model + t('，推理强度 ') + effort + t('，权限 ') + approval);
     $('composer-options').title = model + ' · ' + effort;
-    $('approval-mode').title = t('Codex 승인 방식') + ': ' + approval;
-    $('approval-mode').setAttribute('aria-label', t('Codex 승인 방식'));
-    $('permission-help').textContent = state.busy ? t('작업이 끝나면 권한을 변경할 수 있습니다.') : ({'read-only':t('파일을 읽고 검토합니다.'), 'workspace-write':t('선택한 프로젝트의 파일을 수정할 수 있습니다.'), 'danger-full-access':t('앱에 허용된 기기 파일과 명령에 접근할 수 있습니다.')}[$('permissions').value] || '');
+    $('approval-mode').title = t('Codex 审批方式') + ': ' + approval;
+    $('approval-mode').setAttribute('aria-label', t('Codex 审批方式'));
+    $('permission-help').textContent = state.busy ? t('任务完成后可以更改权限。') : ({'read-only':t('读取并审查文件。'), 'workspace-write':t('允许修改所选项目的文件。'), 'danger-full-access':t('允许访问 Android 应用权限范围内的设备文件和命令。')}[$('permissions').value] || '');
     syncReasoningPicker();
   }
   function positionModelPicker() {
     const picker = $('model-picker'); if (!picker.open) return;
-    const anchor = $('composer-options').getBoundingClientRect(), viewport = window.visualViewport;
+    if (matchMedia('(max-width:760px)').matches) {
+      for (const property of ['left', 'top', 'bottom', 'max-height']) picker.style.removeProperty(property);
+      return;
+    }
+    const anchor = $('add-attachment').getBoundingClientRect(), viewport = window.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
     const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
     const availableAbove = anchor.top - top - 20, availableBelow = top + height - anchor.bottom - 20;
@@ -526,7 +552,7 @@
     $('reasoning-panel').inert = models; $('model-panel').inert = !models;
     $('reasoning-panel').setAttribute('aria-hidden', String(models)); $('model-panel').setAttribute('aria-hidden', String(!models));
     $('model-picker-model').setAttribute('aria-expanded', String(models));
-    $('model-picker-title').textContent = t(models ? '모델' : '설정');
+    $('model-picker-title').textContent = t(models ? '模型' : '设置');
     sizeModelPicker();
     if (focus) (models ? $('model-list').querySelector('input:checked, input') || $('model-picker-back') : $('model-picker-model')).focus({preventScroll:true});
   }
@@ -536,7 +562,7 @@
     $('reasoning-control').dataset.effort = option?.value || '';
     if (option && $('effort').value) $('effort-heading').textContent = option.textContent;
     [...$('effort-levels').children].forEach((level, index) => level.classList.toggle('selected', index === Number(slider.value)));
-    slider.setAttribute('aria-valuetext', option?.textContent || t('추론 강도 조절 미지원'));
+    slider.setAttribute('aria-valuetext', option?.textContent || t('当前模型不支持调整思考强度'));
     slider.style.setProperty('--effort-fill', (options.length > 1 ? Number(slider.value) / (options.length - 1) * 100 : 0) + '%');
   }
   let reasoningSignature = '';
@@ -545,7 +571,7 @@
     const signature = JSON.stringify([state.models, $('model').value, $('effort').value, L.language()]);
     if (signature === reasoningSignature) return;
     reasoningSignature = signature;
-    $('model-heading').textContent = shortModelName($('model').selectedOptions[0]?.textContent || t('모델 목록 조회 필요'));
+    $('model-heading').textContent = shortModelName($('model').selectedOptions[0]?.textContent || t('需要刷新模型列表'));
     $('effort-heading').textContent = $('effort').value;
     slider.max = String(Math.max(0, options.length - 1));
     slider.value = String(Math.max(0, options.findIndex(option => option.value === $('effort').value)));
@@ -564,12 +590,12 @@
   }
   function refreshPickerModels() {
     const generation = ++modelRefreshGeneration, status = $('model-refresh-status');
-    status.textContent = t('모델 목록 확인 중…'); status.hidden = false;
+    status.textContent = t('正在检查可用模型…'); status.hidden = false;
     call('models.refresh').then(() => {
       if (generation === modelRefreshGeneration) status.hidden = true;
     }).catch(() => {
       if (generation !== modelRefreshGeneration) return;
-      status.textContent = t('모델 목록을 갱신하지 못했습니다. 이전 목록을 표시합니다.');
+      status.textContent = t('无法刷新模型，正在显示上次的列表。');
     });
   }
   function syncPermissionControls(mode, disabled = !!state.busy) {
@@ -622,7 +648,7 @@
   }
   function drawAutocomplete(items, messages = []) {
     const target = $('autocomplete'); target.replaceChildren(); autocomplete.items = items; autocomplete.index = items.length ? 0 : -1;
-    target.append(node('div', autocomplete.type === '$' ? t('스킬') : t('파일 및 앱'), 'autocomplete-heading'));
+    target.append(node('div', autocomplete.type === '$' ? t('Skills 技能') : t('文件与应用'), 'autocomplete-heading'));
     for (const [index, item] of items.entries()) {
       const row = button('', () => chooseAutocomplete(item), 'autocomplete-item'); row.setAttribute('role', 'option');
       row.id = 'context-option-' + index; row.dataset.index = String(index);
@@ -643,31 +669,31 @@
     const type = match[1], query = directory ? '' : match[2], version = ++autocomplete.version, scope = draftScope;
     autocomplete.type = type; autocomplete.token = type + query;
     const current = () => version === autocomplete.version && scope === draftScope;
-    const retry = {label:t('다시 불러오기'), detail:t('사용 가능한 목록을 새로 확인합니다.'), run:() => queryAutocomplete(directory)};
-    drawAutocomplete([], [t('사용 가능한 ') + (type === '$' ? t('스킬') : t('파일 및 앱')) + t('을 불러오는 중…')]);
+    const retry = {label:t('重新加载'), detail:t('再次检查可用列表。'), run:() => queryAutocomplete(directory)};
+    drawAutocomplete([], [t('正在加载可用的 ') + (type === '$' ? t('Skills 技能') : t('文件与应用')) + t('…')]);
     if (type === '$') {
       try {
         const result = await rpc('skills/list', {cwds:state.cwd ? [state.cwd] : [], forceReload:true});
         if (!current()) return;
         const items = [], seen = new Set(), messages = [];
         for (const group of result.data || []) {
-          for (const error of group.errors || []) messages.push(error.message || t('일부 스킬을 읽지 못했습니다.'));
+          for (const error of group.errors || []) messages.push(error.message || t('部分技能无法读取。'));
           for (const skill of group.skills || []) {
             if (skill.enabled === false || !skill.name || !skill.path || seen.has(skill.path)) continue;
             if (query && !(skill.name + ' ' + (skill.description || '')).toLowerCase().includes(query.toLowerCase())) continue;
             seen.add(skill.path); items.push({kind:'skill', name:skill.name, path:skill.path, label:'$' + skill.name, detail:skill.description || skill.path});
           }
         }
-        if (!items.length) messages.push(query ? t('일치하는 스킬이 없습니다.') : t('사용 가능한 스킬이 없습니다. 스킬 폴더를 가져와 추가하세요.'));
-        drawAutocomplete([...items, {label:t('스킬 가져오기'), detail:t('SKILL.md가 들어 있는 폴더 선택'), run:() => { hideAutocomplete(); $('skill-import').click(); }}], messages);
+        if (!items.length) messages.push(query ? t('没有匹配的技能。') : t('暂无可用技能。导入技能文件夹即可添加。'));
+        drawAutocomplete([...items, {label:t('导入技能'), detail:t('选择包含 SKILL.md 的文件夹'), run:() => { hideAutocomplete(); $('skill-import').click(); }}], messages);
       } catch (error) {
-        if (current()) drawAutocomplete([retry], [t('스킬 목록을 불러오지 못했습니다. ') + error.message]);
+        if (current()) drawAutocomplete([retry], [t('无法加载技能：') + error.message]);
       }
       return;
     }
-    const sections = {files:[], apps:[]}, messages = {files:t('파일을 불러오는 중…'), apps:t('앱을 불러오는 중…')};
+    const sections = {files:[], apps:[]}, messages = {files:t('正在加载文件…'), apps:t('正在加载应用…')};
     // Calling a participant is plain text in the message; Engine reads it to pick who answers.
-    const people = directory ? [] : (agentUi?.mentionChoices(query) || []).map(p => ({label:'@' + p.id, detail:p.id === 'all' ? t('참가자 모두 호출') : t('{name} 호출', {name:p.name}), run:() => insertParticipant(p.id)}));
+    const people = directory ? [] : (agentUi?.mentionChoices(query) || []).map(p => ({label:'@' + p.id, detail:p.id === 'all' ? t('呼叫所有参与者') : t('呼叫 {name}', {name:p.name}), run:() => insertParticipant(p.id)}));
     const render = () => { if (current()) drawAutocomplete([...people, ...sections.files, ...sections.apps], Object.values(messages).filter(Boolean)); };
     // Render each source when ready: a slow app connection must not hide local files.
     const filesRequest = state.workspace?.selected
@@ -676,18 +702,18 @@
     filesRequest.then(result => {
       if (!current()) return;
       sections.files = (result.entries || []).filter(x => x.path).map(x => x.directory
-        ? {label:x.name + '/', detail:t('폴더 열기'), run:() => queryAutocomplete(x.path)}
-        : {kind:'mention', name:x.name || C.basename(x.path), path:x.path, label:'@' + (x.name || C.basename(x.path)), detail:t('파일 · ') + x.path});
-      if (directory && !query) sections.files.unshift({label:t('상위 폴더'), detail:directory, run:() => queryAutocomplete(directory.split('/').slice(0,-1).join('/'))});
-      messages.files = !state.workspace?.selected ? t('프로젝트를 선택하면 파일 목록도 표시됩니다.') : sections.files.length ? '' : t('일치하는 파일이 없습니다.');
+        ? {label:x.name + '/', detail:t('打开文件夹'), run:() => queryAutocomplete(x.path)}
+        : {kind:'mention', name:x.name || C.basename(x.path), path:x.path, label:'@' + (x.name || C.basename(x.path)), detail:t('文件 · ') + x.path});
+      if (directory && !query) sections.files.unshift({label:t('上级文件夹'), detail:directory, run:() => queryAutocomplete(directory.split('/').slice(0,-1).join('/'))});
+      messages.files = !state.workspace?.selected ? t('选择一个项目以查看文件。') : sections.files.length ? '' : t('没有匹配的文件。');
       render();
-    }).catch(error => { if (current()) { messages.files = t('파일 목록을 불러오지 못했습니다. ') + error.message; sections.files = [retry]; render(); } });
+    }).catch(error => { if (current()) { messages.files = t('无法加载文件：') + error.message; sections.files = [retry]; render(); } });
     rpc('app/list', {}).then(result => {
       if (!current()) return;
       sections.apps = (result.data || result.apps || []).filter(x => x.isAccessible && x.isEnabled && (!query || (x.name || x.id || '').toLowerCase().includes(query.toLowerCase())))
-        .map(x => ({kind:'mention', name:x.name || x.id, path:'app://' + x.id, label:'@' + (x.name || x.id), detail:t('연결된 앱')}));
-      messages.apps = sections.apps.length ? '' : t('사용 가능한 연결 앱이 없습니다.'); render();
-    }).catch(error => { if (current()) { messages.apps = t('앱 목록을 불러오지 못했습니다. ') + error.message; if (!sections.files.includes(retry)) sections.apps = [retry]; render(); } });
+        .map(x => ({kind:'mention', name:x.name || x.id, path:'app://' + x.id, label:'@' + (x.name || x.id), detail:t('已连接的应用')}));
+      messages.apps = sections.apps.length ? '' : t('没有可用的已连接应用。'); render();
+    }).catch(error => { if (current()) { messages.apps = t('无法加载应用：') + error.message; if (!sections.files.includes(retry)) sections.apps = [retry]; render(); } });
   }
   async function chooseAttachment() {
     const key = draftKeyFor(), result = await call('attachments.pick', {draftKey:key});
@@ -700,7 +726,7 @@
     const scope = 'draft:' + key, context = scope === draftScope ? draftContext : restoreContext(scope), ids = new Set(context.attachments.map(x => x.id));
     context.attachments.push(...(result.attachments || []).filter(x => x?.id && !ids.has(x.id)));
     try { if (context.attachments.length || context.mentions.length || context.skills.length) localStorage.setItem(contextScope(scope), JSON.stringify(context)); }
-    catch { toast(t('첨부 초안을 저장할 공간이 부족합니다. 첨부를 줄인 뒤 다시 시도해 주세요.')); return; }
+    catch { toast(t('保存附件草稿的空间不足，请删除部分附件后重试。')); return; }
     if (scope === draftScope) { draftContext = context; renderDraftContext(); updateSend(); }
     if (result.errors?.length && !result.cancelled) toast(result.errors.join('\n'));
     if (receipt) { handledReceipts.add(receipt); call('attachments.ack', {receiptId:receipt}).catch(() => {}); }
@@ -718,7 +744,7 @@
     const phase = dictationState.phase || 'idle', active = phase !== 'idle';
     $('dictation').hidden = !active;
     $('prompt').readOnly = active;
-    $('dictation-status').textContent = ({permission:t('마이크 권한 확인 중'), starting:t('마이크 준비 중…'), listening:t('듣고 있어요…'), transcribing:t('음성을 텍스트로 바꾸는 중…')})[phase] || '';
+    $('dictation-status').textContent = ({permission:t('等待麦克风权限'), starting:t('正在准备麦克风…'), listening:t('正在聆听…'), transcribing:t('正在转写…')})[phase] || '';
     $('dictation-preview').textContent = dictationState.partial || '';
     $('dictation-level').value = Number(dictationState.level) || 0;
     $('dictation-done').disabled = phase !== 'listening';
@@ -754,11 +780,11 @@
         localStorage.setItem(marker, JSON.stringify({done:true}));
         if (scope === draftScope) { $('prompt').value = merged; sizeComposer(); }
         if (result.error) toast(result.error);
-        else if (result.text && scope !== draftScope) toast(t('원래 대화의 음성 초안을 저장했습니다.'));
+        else if (result.text && scope !== draftScope) toast(t('语音草稿已保存到原对话。'));
       }
       handledVoiceReceipts.add(result.receiptId);
       call('voice.ack', {receiptId:result.receiptId}).then(() => localStorage.removeItem(marker)).catch(() => {});
-    } catch { toast(t('음성 초안을 저장하지 못했습니다. 저장 공간을 확인한 뒤 앱을 다시 열어 주세요.')); }
+    } catch { toast(t('无法保存语音草稿，请检查存储空间并重新打开应用。')); }
   }
   async function recoverVoiceInput() {
     const generation = ++voiceRecoveryGeneration;
@@ -774,16 +800,16 @@
     if (!value || (Number.isFinite(value.revision) && value.revision < (updateState.revision || 0))) return;
     updateState = value;
     const busy = !!value.busy || updateRequestPending, release = value.candidate;
-    if (value.versionName) { $('update-current').textContent = t('현재 ') + value.versionName + t(' · 빌드 ') + value.versionCode; $('app-version').textContent = value.versionName; }
+    if (value.versionName) { $('update-current').textContent = t('当前 ') + value.versionName + t(' · 构建版本 ') + value.versionCode; $('app-version').textContent = value.versionName; }
     if (!updateSourceDirty) { if (value.repository) $('update-repository').value = value.repository; if (typeof value.prereleases === 'boolean') $('update-prereleases').checked = value.prereleases; }
     $('update-repository').disabled = busy; $('update-prereleases').disabled = busy; $('update-check').disabled = busy;
-    $('update-status').textContent = value.message || t('업데이트 확인을 누르면 공개 릴리스를 조회합니다.');
+    $('update-status').textContent = value.message || t('检查更新以获取公开发布的版本信息。');
     $('update-cancel').hidden = !value.canCancel; $('update-cancel').disabled = updateRequestPending;
     $('update-progress').hidden = !['downloading','verifying'].includes(value.status);
     const percent = release?.size ? Math.max(0, Math.min(100, 100 * (value.received || 0) / release.size)) : 0;
     $('update-progress').value = percent;
     $('update-release').hidden = !release;
-    $('update-version').textContent = release ? t('공개 릴리스 ') + release.versionName : '';
+    $('update-version').textContent = release ? t('公开发行版 ') + release.versionName : '';
     $('update-size').textContent = release ? (release.size / 1048576).toFixed(1) + ' MiB' + (value.status === 'downloading' ? ' · ' + Math.floor(percent) + '%' : '') : '';
     $('update-notes').textContent = release?.notes || '';
     $('update-download').hidden = !value.available || !!value.ready; $('update-download').disabled = busy || updateSourceDirty;
@@ -846,17 +872,17 @@
   }
   function imageCard(attachment, label = '', gallery = [attachment], group = null) {
     const figure = node('figure', null, 'image-card');
-    if (!C.safeImageUrl(attachment.url)) { figure.append(node('p', t('이미지 주소를 읽을 수 없습니다.'), 'muted')); return figure; }
+    if (!C.safeImageUrl(attachment.url)) { figure.append(node('p', t('无法读取图片链接。'), 'muted')); return figure; }
     const open = button('', () => previewImage(attachment, gallery, group), 'image-open');
-    open.setAttribute('aria-label', (label || attachment.name || t('생성 이미지')) + t(' 크게 보기'));
-    const img = node('img'); img.src = attachment.url; img.alt = label || attachment.name || t('생성 이미지'); img.loading = 'lazy'; img.decoding = 'async';
+    open.setAttribute('aria-label', (label || attachment.name || t('生成的图片')) + t(' 放大'));
+    const img = node('img'); img.src = attachment.url; img.alt = label || attachment.name || t('生成的图片'); img.loading = 'lazy'; img.decoding = 'async';
     if (attachment.width && attachment.height) { img.width = attachment.width; img.height = attachment.height; }
-    const error = node('p', t('이미지를 불러오지 못했습니다.'), 'muted'); error.hidden = true;
+    const error = node('p', t('无法加载图片。'), 'muted'); error.hidden = true;
     img.addEventListener('load', followLatest);
     img.addEventListener('error', () => { error.hidden = false; });
     open.append(img); figure.append(open, error);
-    const caption = node('figcaption'); caption.append(node('span', attachment.name || label || t('이미지')));
-    if (attachment.id) caption.append(button(t('저장'), () => call('images.export', {id:attachment.id, name:attachment.name})));
+    const caption = node('figcaption'); caption.append(node('span', attachment.name || label || t('图片')));
+    if (attachment.id) caption.append(button(t('保存'), () => call('images.export', {id:attachment.id, name:attachment.name})));
     figure.append(caption); return figure;
   }
   function previewImage(attachment, gallery = [attachment], group = null) {
@@ -866,15 +892,15 @@
   }
   function updateViewer(reset = true) {
     const attachment = viewerImages[viewerIndex]; if (!attachment) return; openedImage = attachment;
-    $('image-title').textContent = attachment.name || t('이미지'); $('image-preview').src = attachment.url;
-    $('image-preview').alt = attachment.name || t('이미지'); $('image-save').hidden = !attachment.id;
+    $('image-title').textContent = attachment.name || t('图片'); $('image-preview').src = attachment.url;
+    $('image-preview').alt = attachment.name || t('图片'); $('image-save').hidden = !attachment.id;
     $('image-counter').textContent = (viewerIndex + 1) + ' / ' + viewerImages.length;
     $('image-navigation').hidden = viewerImages.length < 2;
     $('image-prev').disabled = viewerIndex === 0; $('image-next').disabled = viewerIndex === viewerImages.length - 1;
     $('image-thumbnails').replaceChildren(); $('image-thumbnails').hidden = viewerImages.length < 2;
     viewerImages.forEach((item, i) => {
       const b = button('', () => { viewerIndex = i; updateViewer(); }, 'image-thumbnail');
-      b.setAttribute('aria-label', (i+1) + t('번째 이미지')); b.setAttribute('aria-current', String(i === viewerIndex));
+      b.setAttribute('aria-label', (i+1) + t(' 图片')); b.setAttribute('aria-current', String(i === viewerIndex));
       const img = node('img'); img.src = item.url; img.alt = ''; img.loading = 'lazy'; b.append(img); $('image-thumbnails').append(b);
     });
     if (reset) { $('image-stage').classList.remove('zoomed'); $('image-stage').scrollTop = 0; $('image-stage').scrollLeft = 0; $('image-zoom').setAttribute('aria-pressed', 'false'); }
@@ -886,7 +912,7 @@
   }
   function imageGallery(attachments, group) {
     const gallery = node('div', null, 'image-gallery'); gallery.classList.toggle('multiple', attachments.length > 1);
-    gallery.setAttribute('aria-label', t('이미지 ') + attachments.length + t('장'));
+    gallery.setAttribute('aria-label', t('图片：') + attachments.length + t(' 共'));
     for (const attachment of attachments) gallery.append(imageCard(attachment, '', attachments, group));
     if (viewerGroup === group && $('image-dialog').open) {
       viewerImages = attachments.filter(a => C.safeImageUrl(a.url));
@@ -899,7 +925,7 @@
     for (const attachment of attachments || []) {
       if (attachment.image?.url || attachment.url) wrap.append(imageCard(attachment.image || attachment, attachment.name));
       else {
-        const b = button(attachment.name || t('첨부 파일'), () => call('attachments.export', {id:attachment.id, name:attachment.name}), 'attachment-download');
+        const b = button(attachment.name || t('附件'), () => call('attachments.export', {id:attachment.id, name:attachment.name}), 'attachment-download');
         b.prepend(icon('file')); wrap.append(b);
       }
     }
@@ -910,7 +936,7 @@
     let gallery = target.lastElementChild;
     if (!gallery?.classList.contains('markdown-gallery')) { gallery = node('div', null, 'image-gallery markdown-gallery'); gallery.attachments = []; target.append(gallery); }
     const index = gallery.attachments.length; gallery.attachments.push(null); gallery.classList.toggle('multiple', gallery.attachments.length > 1);
-    const placeholder = node('div', t('이미지 불러오는 중…'), 'image-placeholder'); gallery.append(placeholder);
+    const placeholder = node('div', t('正在加载图片…'), 'image-placeholder'); gallery.append(placeholder);
     const key = (state.workspace.key || state.cwd || '') + '\n' + path;
     if (!imageReads.has(key)) {
       const request = call('images.read', {path}); imageReads.set(key, request);
@@ -918,9 +944,9 @@
     }
     imageReads.get(key).then(attachment => {
       if (placeholder.isConnected) { gallery.attachments[index] = attachment; placeholder.replaceWith(imageCard(attachment, label, gallery.attachments)); }
-    }).catch(e => { if (placeholder.isConnected) placeholder.textContent = t('이미지를 불러오지 못했습니다: ') + e.message; });
+    }).catch(e => { if (placeholder.isConnected) placeholder.textContent = t('无法加载图片：') + e.message; });
   }
-  async function copyText(text, btn, normalText = t('복사'), copiedText = t('복사됨!')) {
+  async function copyText(text, btn, normalText = t('复制'), copiedText = t('已复制！')) {
     const finish = () => {
       btn.textContent = copiedText;
       setTimeout(() => {
@@ -952,7 +978,7 @@
       if (!copied) throw new Error('Clipboard unavailable');
       finish();
     } catch {
-      toast(t('클립보드에 복사하지 못했습니다.'));
+      toast(t('无法复制到剪贴板。'));
     }
   }
   function codeCard(lang, codeText, allowCopy) {
@@ -961,8 +987,8 @@
     const langSpan = node('span', (lang || 'code').trim().toLowerCase(), 'code-lang');
     head.append(langSpan);
     if (allowCopy && codeText) {
-      const copy = button(t('복사'), () => copyText(codeText, copy), 'code-copy-btn');
-      copy.title = t('코드 복사');
+      const copy = button(t('复制'), () => copyText(codeText, copy), 'code-copy-btn');
+      copy.title = t('复制代码');
       copy.prepend(icon('copy'));
       head.append(copy);
     }
@@ -1154,14 +1180,14 @@
     const visible = !document.hidden;
     if (!valid || !visible) {
       clearInterval(progressTimer); progressTimer = 0;
-      if (visible) $('activity-details').title = t('작업 기록');
+      if (visible) $('activity-details').title = t('活动');
       return;
     }
     if (!progressTimer) progressTimer = setInterval(drawTurnProgress, 1000);
     const age = stamp => Math.max(0, Math.floor((Date.now() - stamp) / 1000));
     const quiet = age(p.lastEventAt);
-    const phase = state.streamRetrying ? '响应流中断，正在重连' : !state.ready ? '本机引擎未连接' :
-      quiet >= 30 ? '等待新的任务进展' : p.phase === 'waiting' ? '等待下一步' : taskActivityLabel(p.phase === 'reasoning' ? 'thinking' : p.phase);
+    const phase = state.streamRetrying ? t('响应流中断，正在重连') : !state.ready ? t('本机引擎未连接') :
+      quiet >= 30 ? t('等待新的任务进展') : p.phase === 'waiting' ? t('等待下一步') : taskActivityLabel(p.phase === 'reasoning' ? 'thinking' : p.phase);
     const pendingApproval = [...requestQueue.values()].some(r => requestThread(r) === state.threadId &&
       (!r.params?.turnId || r.params.turnId === state.turnId) && String(r.method).includes('requestApproval'));
     const label = pendingApproval && !state.streamRetrying ? taskActivityLabel('approval') : phase;
@@ -1170,7 +1196,7 @@
       (L.language() === 'en' ? ` · ${sinceVisible}s since activity` : ` · 思考 ${sinceVisible} 秒了`) : '';
     const status = $('activity-text');
     if (status.textContent !== label + timer) status.textContent = label + timer;
-    const engine = !state.ready ? '本机引擎未连接' : !p.engineReplyAt ? '等待本机引擎回应' : `本机引擎 ${age(p.engineReplyAt)} 秒前有回应`;
+    const engine = !state.ready ? t('本机引擎未连接') : !p.engineReplyAt ? t('等待本机引擎回应') : t('本机引擎 {seconds} 秒前有回应', {seconds:age(p.engineReplyAt)});
     $('activity-details').title = engine;
   }
   function showTaskActivity(activity, data) {
@@ -1191,10 +1217,10 @@
       if (activity.append || activity.approval) return;
       const anchor = readingPosition();
       const label = taskActivityLabel(activity.kind);
-      const status = activity.failed ? label + ' · ' + t('작업 실패') : label;
+      const status = activity.failed ? label + ' · ' + t('任务失败') : label;
       $('activity-text').textContent = status;
       if (activity.kind !== 'thinking' && activity.kind !== 'responding') {
-        logEvent(activity.completed && !activity.failed ? label + ' · ' + t('완료') : status,
+        logEvent(activity.completed && !activity.failed ? label + ' · ' + t('完成') : status,
           [activity.detail, activity.output].filter(Boolean).join('\n\n').slice(0, 24000));
       }
       if (following) followLatest(); else restoreReadingPosition(anchor);
@@ -1239,8 +1265,8 @@
   }
   function activityRowStatus(row, completed = false) {
     const label = taskActivityLabel(row.approval ? 'approval' : row.kind);
-    return label + (row.interrupted ? ' · ' + t('작업 중지됨') : row.failed ? ' · ' + t('작업 실패') :
-      row.completed && completed ? ' · ' + t('완료') : '');
+    return label + (row.interrupted ? ' · ' + t('任务已停止') : row.failed ? ' · ' + t('任务失败') :
+      row.completed && completed ? ' · ' + t('完成') : '');
   }
   function resolveTaskActivity(key) {
     for (const [id, row] of taskActivities) if (row.approval === key) {
@@ -1341,12 +1367,12 @@
     const hadHistory = view.loaded;
     view.loading = true; view.loaded = true;
     updateHistoryControl();
-    historyStatus(t('이전 대화 불러오는 중…'));
+    historyStatus(t('正在加载更早的消息…'));
     try {
       const result = await call('chat.history', {threadId:state.threadId, beforeId:view.beforeId, limit:40});
       if (view !== historyView || view.threadId !== state.threadId) return;
       if (result.threadId !== state.threadId || !Array.isArray(result.messages) || !result.messageHistory)
-        throw new Error(t('이전 대화를 불러오지 못했습니다. 위로 올려 다시 시도해 주세요.'));
+        throw new Error(t('无法加载更早的消息，请上滑重试。'));
       // Capture at response time so scrolling while the request is pending is respected.
       const area = $('chat-scroll');
       const revealEarlier = revealOnShortPage && area.scrollHeight <= area.clientHeight;
@@ -1488,8 +1514,8 @@
     details.lastElementChild.textContent = [detail, output].filter(Boolean).join('\n\n');
   }
   function legacySummaryNotice(m) {
-    return m.summary?.status === 'failed' ? t('작업 실패') : m.summary?.status === 'interrupted' ? t('작업 중지됨') :
-      m.summary?.missingReply ? t('작업이 끝났지만 최종 답변을 받지 못했습니다.') : '';
+    return m.summary?.status === 'failed' ? t('任务失败') : m.summary?.status === 'interrupted' ? t('任务已停止') :
+      m.summary?.missingReply ? t('任务已结束，但没有收到最终回复。') : '';
   }
   function drawMessages(dirtyIds = null, preserveReading = true) {
     const anchor = preserveReading ? readingPosition() : null;
@@ -1591,10 +1617,10 @@
           const date = messageDate(m.createdAt); el.classList.toggle('has-date', !!date); if (date) bubble.append(date);
           if (m.attachments?.length) bubble.append(sentAttachments(m.attachments));
           if (text.trim()) {
-            const copy = button(t('복사'), () => copyText(text, copy), 'msg-copy-btn');
-            copy.setAttribute('aria-label', t('메시지 복사')); copy.prepend(icon('copy')); el.append(copy);
+            const copy = button(t('复制'), () => copyText(text, copy), 'msg-copy-btn');
+            copy.setAttribute('aria-label', t('复制消息')); copy.prepend(icon('copy')); el.append(copy);
           }
-          if (['not_sent','uncertain','failed'].includes(m.status)) bubble.append(node('p', m.status === 'uncertain' ? t('전송 상태를 확인해야 합니다. 같은 메시지를 다시 보내기 전에 ChatGPT 웹 대화를 확인하세요.') : (m.error || t('보내지 못했습니다.')), 'message-transport-status'));
+          if (['not_sent','uncertain','failed'].includes(m.status)) bubble.append(node('p', m.status === 'uncertain' ? t('需要确认发送状态。再次发送相同消息前，请先查看 ChatGPT 网页对话。') : (m.error || t('发送失败。')), 'message-transport-status'));
         }
         else {
           if (incremental) {
@@ -1607,10 +1633,10 @@
             renderMessageIconTags(el, streaming);
           }
           if (grouped) el.prepend(agentSpeaker(m));
-          if (m.agent && m.status === 'streaming' && !m.text) el.append(node('p', t('응답 중…'), 'agent-pending'));
-          if (m.agent && ['error','interrupted'].includes(m.status)) el.append(node('p', m.status === 'interrupted' ? t('중단된 응답입니다.') + (m.error ? ' ' + m.error : '') : (m.error || t('답하지 못했습니다.')), 'message-transport-status'));
+          if (m.agent && m.status === 'streaming' && !m.text) el.append(node('p', t('正在回复…'), 'agent-pending'));
+          if (m.agent && ['error','interrupted'].includes(m.status)) el.append(node('p', m.status === 'interrupted' ? t('此回答已中断。') + (m.error ? ' ' + m.error : '') : (m.error || t('无法回答。')), 'message-transport-status'));
           if (m.images?.length) el.append(imageGallery(m.images, m.id));
-          if (m.imageStatus === 'generating') el.append(node('p', t('이미지 생성 중…'), 'image-placeholder'));
+          if (m.imageStatus === 'generating') el.append(node('p', t('正在生成图片…'), 'image-placeholder'));
           if (m.imageError) el.append(node('p', m.imageError, 'image-error'));
         }
       }
@@ -1635,15 +1661,15 @@
     const provider = $('picker-provider'), profiles = (state.apiProviders || []).filter(profile => profile.hasKey);
     const rebind = state.apiCanRebind === true;
     $('picker-provider-row').hidden = profiles.length === 0;
-    const choicesKey = JSON.stringify([rebind, profiles.map(profile => [profile.id, profile.name])]);
+    const choicesKey = JSON.stringify([L.language(), rebind, profiles.map(profile => [profile.id, profile.name])]);
     if (provider.dataset.choices !== choicesKey) {
       provider.dataset.choices = choicesKey;
-      provider.replaceChildren(new Option(rebind ? '重新绑定 API' : '选择 API', ''), ...profiles.map(profile => new Option(profile.name || profile.id, profile.id)));
+      provider.replaceChildren(new Option(t(rebind ? '重新绑定 API' : '选择 API'), ''), ...profiles.map(profile => new Option(profile.name || profile.id, profile.id)));
       provider.options[0].disabled = true;
     }
     provider.value = rebind ? '' : state.apiActive || '';
     provider.disabled = (!!state.threadId && !rebind) || !!state.busy || !!sending || providerSwitchPending;
-    provider.title = rebind ? '为此聊天重新绑定 API' : state.threadId ? '此聊天已绑定服务商。可在新聊天选择其他 API。' : '选择此聊天的 API';
+    provider.title = t(rebind ? '为此聊天重新绑定 API' : state.threadId ? '此聊天已绑定服务商。可在新聊天选择其他 API。' : '选择此聊天的 API');
     $('header-api').disabled = (!!state.threadId && !rebind) || providerSwitchPending;
     $('model-list').inert = providerSwitchPending;
     const signature = JSON.stringify([state.models, $('model').value, L.language()]);
@@ -1652,8 +1678,8 @@
     const target = $('model-list'), focused = target.contains(document.activeElement) ? document.activeElement.value : null;
     target.replaceChildren();
     const choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL).map(m => ({id:m.model || m.id, label:m.displayName || m.model || m.id}));
-    if ($('model').value && !choices.some(m => m.id === $('model').value)) target.append(node('p', $('model').value + ' · ' + t('목록 확인 필요'), 'muted'));
-    if (!choices.length) target.append(node('p',t('모델 목록을 새로고침해 주세요.'),'muted'));
+    if ($('model').value && !choices.some(m => m.id === $('model').value)) target.append(node('p', $('model').value + ' · ' + t('检查模型列表'), 'muted'));
+    if (!choices.length) target.append(node('p',t('请刷新模型列表。'),'muted'));
     for (const choice of choices) {
       const label = node('label', null, 'model-choice'); const input = node('input'); input.type = 'radio'; input.name = 'model-choice'; input.value = choice.id; input.checked = $('model').value === choice.id;
       input.addEventListener('change', () => { $('model').value = choice.id; $('model').dispatchEvent(new Event('change')); showModelPanel(false); });
@@ -1669,73 +1695,73 @@
     const info = state.devtools;
     const versions = $('devtools-versions'); versions.replaceChildren();
     if (!info || typeof info !== 'object') {
-      $('devtools-status').textContent = t('개발 도구 정보를 제공하지 않는 앱 버전입니다. 실행 확인으로 현재 상태를 점검할 수 있습니다.');
-      $('terminal-tools-note').textContent = t('현재 프로젝트 폴더에서 셸 명령을 실행합니다. 개발 도구 상태는 설정 > 도구에서 확인하세요.');
+      $('devtools-status').textContent = t('此应用版本未提供开发工具信息。请运行工具检查。');
+      $('terminal-tools-note').textContent = t('在当前项目文件夹中运行 Shell 命令。请在“设置 > 工具”中检查开发工具。');
     } else {
-      if (info.error) $('devtools-status').textContent = t('준비 오류: ') + info.error;
-      else if (!info.bundled) $('devtools-status').textContent = t('번들 개발 도구가 없습니다.');
-      else if (info.prepared) $('devtools-status').textContent = t('번들 준비 완료. 아래 실행 확인으로 현재 상태를 검증하세요.');
-      else $('devtools-status').textContent = t('번들 개발 도구가 준비 중이거나 아직 확인되지 않았습니다.');
+      if (info.error) $('devtools-status').textContent = t('设置错误：') + info.error;
+      else if (!info.bundled) $('devtools-status').textContent = t('未捆绑开发工具。');
+      else if (info.prepared) $('devtools-status').textContent = t('工具已准备好。请运行下方检查以验证。');
+      else $('devtools-status').textContent = t('开发工具包正在准备中，或尚未检查。');
       for (const tool of Array.isArray(info.tools) ? info.tools : []) {
-        const row = node('span', (tool?.name || t('도구')) + (tool?.version ? ' ' + tool.version : t(' 버전 확인 전')), 'devtools-version');
+        const row = node('span', (tool?.name || t('工具')) + (tool?.version ? ' ' + tool.version : t(' 版本尚未检查')), 'devtools-version');
         versions.append(row);
       }
       const names = (Array.isArray(info.tools) ? info.tools.map(tool => tool?.name).filter(Boolean) : []).join(' · ');
       $('terminal-tools-note').textContent = info.bundled
-        ? t('현재 프로젝트 폴더에서 {tools} 명령을 실행합니다.', {tools:names || 'Python · Node.js · Git · npm · pip'})
-        : t('현재 프로젝트 폴더에서 셸 명령을 실행합니다. 번들 개발 도구는 사용할 수 없습니다.');
+        ? t('在当前项目文件夹中运行 {tools} 命令。', {tools:names || 'Python · Node.js · Git · npm · pip'})
+        : t('在当前项目文件夹中运行 Shell 命令。未提供捆绑开发工具。');
     }
     if (devtoolsCheckSummary) $('devtools-status').textContent = devtoolsCheckSummary;
     const output = $('devtools-output');
     output.hidden = !devtoolsCheckResult;
     output.textContent = devtoolsCheckResult || '';
     $('devtools-check').disabled = devtoolsChecking;
-    $('devtools-check').textContent = devtoolsChecking ? t('실행 확인 중…') : t('도구 실행 확인');
+    $('devtools-check').textContent = devtoolsChecking ? t('正在检查工具…') : t('检查工具执行情况');
   }
   function linuxStatus(value) {
     return value && typeof value === 'object' ? value : null;
   }
   function linuxBytes(value) { return Number.isFinite(Number(value)) && Number(value) >= 0 ? C.size(Number(value)) : ''; }
   function linuxPhase(info) {
-    const phases = {not_installed:t('설치되지 않음'), downloading:t('다운로드 중…'), verifying:t('검증 중…'), extracting:t('압축 해제 중…'), checking:t('확인 중…'), ready:t('준비됨'), error:t('설치 실패'), cancelled:t('설치 취소됨')};
+    const phases = {not_installed:t('未安装'), downloading:t('正在下载…'), verifying:t('正在验证…'), extracting:t('正在解压…'), checking:t('正在检查…'), ready:t('已就绪'), error:t('安装失败'), cancelled:t('安装已取消')};
     return phases[info?.state] || '';
   }
   function ensureLinuxUi() {
     if ($('linux-environment-card')) return;
     const tools = document.querySelector('[data-settings-panel="tools"]'); if (!tools) return;
     const card = node('section', null, 'devtools-card linux-environment-card'); card.id = 'linux-environment-card';
-    const heading = node('div', null, 'card-heading'); const copy = node('span'), title = node('strong', t('Linux 환경')), description = node('small', t('필요할 때만 내려받아 Codex와 터미널 명령에 사용합니다. 프로젝트 파일은 그대로 유지됩니다.')); title.id = 'linux-environment-title'; description.id = 'linux-environment-description'; copy.append(title, description); heading.append(copy);
+    const heading = node('div', null, 'card-heading'); const copy = node('span'), title = node('strong', t('Linux 环境')), description = node('small', t('仅在 Codex 和终端命令需要时下载，不会更改项目文件。')); title.id = 'linux-environment-title'; description.id = 'linux-environment-description'; copy.append(title, description); heading.append(copy);
     const details = node('p', '', 'muted'); details.id = 'linux-environment-details';
     const status = node('p', '', 'muted'); status.id = 'linux-environment-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-    const progress = node('progress'); progress.id = 'linux-environment-progress'; progress.hidden = true; progress.setAttribute('aria-label', t('Linux 환경 설치 진행률'));
+    const progress = node('progress'); progress.id = 'linux-environment-progress'; progress.hidden = true; progress.setAttribute('aria-label', t('Linux 环境安装进度'));
     const actions = node('div', null, 'linux-environment-actions');
-    const install = node('button', t('설치'), 'primary-button'); install.id = 'linux-install'; install.type = 'button';
-    const cancel = node('button', t('취소'), 'secondary-button'); cancel.id = 'linux-cancel'; cancel.type = 'button'; cancel.hidden = true;
-    const remove = node('button', t('Linux 환경 삭제'), 'secondary-button subtle-danger'); remove.id = 'linux-remove'; remove.type = 'button'; remove.hidden = true;
+    const install = node('button', t('安装'), 'primary-button'); install.id = 'linux-install'; install.type = 'button';
+    const cancel = node('button', t('取消'), 'secondary-button'); cancel.id = 'linux-cancel'; cancel.type = 'button'; cancel.hidden = true;
+    const remove = node('button', t('移除 Linux 环境'), 'secondary-button subtle-danger'); remove.id = 'linux-remove'; remove.type = 'button'; remove.hidden = true;
     actions.append(install, cancel, remove);
     const enabled = node('input'); enabled.id = 'linux-enabled'; enabled.type = 'checkbox'; enabled.setAttribute('role', 'switch');
     const toggle = node('label', null, 'toggle-switch linux-environment-toggle'); toggle.append(enabled, node('span', null, 'toggle-track'));
-    const enableRow = node('div', null, 'settings-row linux-enable-row'); const enableCopy = node('span'), enableTitle = node('strong', t('Linux 환경 사용')), enableDescription = node('small', t('Codex와 기본 터미널에서 Linux 명령을 실행합니다.')); enableTitle.id = 'linux-enable-title'; enableDescription.id = 'linux-enable-description'; enableCopy.append(enableTitle, enableDescription); enableRow.append(enableCopy, toggle);
+    const enableRow = node('div', null, 'settings-row linux-enable-row'); const enableCopy = node('span'), enableTitle = node('strong', t('使用 Linux 环境')), enableDescription = node('small', t('在 Codex 和主终端中运行 Linux 命令。')); enableTitle.id = 'linux-enable-title'; enableDescription.id = 'linux-enable-description'; enableCopy.append(enableTitle, enableDescription); enableRow.append(enableCopy, toggle);
     card.append(heading, details, status, progress, actions, enableRow); tools.append(card);
-    install.addEventListener('click', async () => { if (linuxRequestPending) return; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); const result = await call('linux.install'); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message || t('Linux 환경을 설치하지 못했습니다. 다시 시도해 주세요.'); } finally { linuxRequestPending = false; renderLinux(); } });
+    install.addEventListener('click', async () => { if (linuxRequestPending) return; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); const result = await call('linux.install'); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message || t('无法安装 Linux 环境，请重试。'); } finally { linuxRequestPending = false; renderLinux(); } });
     cancel.addEventListener('click', async () => { try { await call('linux.cancel'); } catch (error) { linuxStatusError = error.message; renderLinux(); } });
-    enabled.addEventListener('change', async () => { if (linuxRequestPending) return; const wanted = enabled.checked; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); enabled.checked = wanted; const result = await call('linux.enable', {enabled:wanted}); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message || t('Linux 환경을 전환하지 못했습니다.'); } finally { linuxRequestPending = false; renderLinux(); } });
-    remove.addEventListener('click', async () => { if (linuxRequestPending || !confirm(t('Linux 환경과 설치된 패키지를 삭제할까요? 프로젝트 파일은 유지됩니다.'))) return; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); const result = await call('linux.remove'); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message; } finally { linuxRequestPending = false; renderLinux(); } });
+    enabled.addEventListener('change', async () => { if (linuxRequestPending) return; const wanted = enabled.checked; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); enabled.checked = wanted; const result = await call('linux.enable', {enabled:wanted}); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message || t('无法修改 Linux 环境设置。'); } finally { linuxRequestPending = false; renderLinux(); } });
+    remove.addEventListener('click', async () => { if (linuxRequestPending || !await confirmAction(t('移除 Linux 环境和已安装的软件包？项目文件将保留。'))) return; linuxRequestPending = true; try { linuxStatusError = ''; renderLinux(); const result = await call('linux.remove'); if (linuxStatus(result)) state.linux = result; } catch (error) { linuxStatusError = error.message; } finally { linuxRequestPending = false; renderLinux(); } });
   }
   function renderLinux() {
     ensureLinuxUi(); const card = $('linux-environment-card'); if (!card) return;
     const info = linuxStatus(state.linux), supported = !!info && info.supported !== false;
     card.hidden = false;
     const details = $('linux-environment-details'), status = $('linux-environment-status'), progress = $('linux-environment-progress'), install = $('linux-install'), cancel = $('linux-cancel'), remove = $('linux-remove'), enabled = $('linux-enabled'), enableRow = card.querySelector('.linux-enable-row');
-    $('linux-environment-title').textContent = t('Linux 환경'); $('linux-environment-description').textContent = t('필요할 때만 내려받아 Codex와 터미널 명령에 사용합니다. 프로젝트 파일은 그대로 유지됩니다.'); $('linux-enable-title').textContent = t('Linux 환경 사용'); $('linux-enable-description').textContent = t('Codex와 기본 터미널에서 Linux 명령을 실행합니다.'); cancel.textContent = t('취소'); remove.textContent = t('Linux 환경 삭제');
+    $('linux-environment-title').textContent = t('Linux 环境'); $('linux-environment-description').textContent = t('仅在 Codex 和终端命令需要时下载，不会更改项目文件。'); $('linux-enable-title').textContent = t('使用 Linux 环境'); $('linux-enable-description').textContent = t('在 Codex 和主终端中运行 Linux 命令。'); cancel.textContent = t('取消'); remove.textContent = t('移除 Linux 环境');
     if (!supported) {
-      details.textContent = t('이 앱 버전에서는 Linux 환경을 사용할 수 없습니다.'); status.textContent = info?.error || ''; status.classList.toggle('error', !!info?.error); progress.hidden = true; install.hidden = true; cancel.hidden = true; remove.hidden = true; enableRow.hidden = true; return;
+      details.textContent = t('此应用版本不支持 Linux 环境。'); status.textContent = info?.error || ''; status.classList.toggle('error', !!info?.error); progress.hidden = true; install.hidden = true; cancel.hidden = true; remove.hidden = true; enableRow.hidden = true; return;
     }
     const total = Number(info.totalBytes ?? info.downloadBytes), downloaded = Number(info.downloadedBytes);
-    const parts = [info.label || t('Linux 환경')];
-    if (Number.isFinite(total) && total > 0) parts.push(t('다운로드 {size}', {size:linuxBytes(total)}));
-    if (Number.isFinite(Number(info.requiredFreeBytes))) parts.push(t('필요 공간 {size}', {size:linuxBytes(info.requiredFreeBytes)}));
-    if (Number.isFinite(Number(info.availableBytes))) parts.push(t('사용 가능 {size}', {size:linuxBytes(info.availableBytes)}));
+    const parts = [info.label || t('Linux 环境')];
+    if (Number.isFinite(total) && total > 0) parts.push(t('下载 {size}', {size:linuxBytes(total)}));
+    if (Number.isFinite(Number(info.requiredFreeBytes))) parts.push(t('需要空间 {size}', {size:linuxBytes(info.requiredFreeBytes)}));
+    if (Number.isFinite(Number(info.availableBytes))) parts.push(t('可用空间 {size}', {size:linuxBytes(info.availableBytes)}));
     details.textContent = parts.join(' · ');
     const busy = !!info.busy, ready = !!info.installed && info.state === 'ready';
     const progressState = ['downloading','verifying','extracting','checking'].includes(info.state);
@@ -1744,20 +1770,20 @@
     status.textContent = linuxStatusError || info.error || linuxPhase(info);
     status.classList.toggle('error', !!(linuxStatusError || info.error || info.state === 'error'));
     install.hidden = !!info.installed || busy;
-    install.textContent = info.state === 'error' || info.state === 'cancelled' ? t('다시 시도') : t('설치');
+    install.textContent = info.state === 'error' || info.state === 'cancelled' ? t('重试') : t('安装');
     install.disabled = busy || linuxRequestPending;
     cancel.hidden = !busy; cancel.disabled = !busy;
     remove.hidden = !info.installed && !info.hasFiles; remove.disabled = busy || linuxRequestPending;
     enableRow.hidden = !ready; enabled.checked = !!info.enabled; enabled.disabled = !ready || busy || linuxRequestPending;
     $('terminal-tools-note').textContent = info.enabled && ready
-      ? t('{label}에서 현재 프로젝트 폴더로 Linux 명령을 실행합니다.', {label:info.label || t('Linux 환경')})
+      ? t('使用 {label} 在当前项目文件夹中运行 Linux 命令。', {label:info.label || t('Linux 环境')})
       : terminalDefaultNote();
   }
   function terminalDefaultNote() {
     const info = state.devtools;
-    if (!info || typeof info !== 'object') return t('현재 프로젝트 폴더에서 셸 명령을 실행합니다. 개발 도구 상태는 설정 > 도구에서 확인하세요.');
+    if (!info || typeof info !== 'object') return t('在当前项目文件夹中运行 Shell 命令。请在“设置 > 工具”中检查开发工具。');
     const names = (Array.isArray(info.tools) ? info.tools.map(tool => tool?.name).filter(Boolean) : []).join(' · ');
-    return info.bundled ? t('현재 프로젝트 폴더에서 {tools} 명령을 실행합니다.', {tools:names || 'Python · Node.js · Git · npm · pip'}) : t('현재 프로젝트 폴더에서 셸 명령을 실행합니다. 번들 개발 도구는 사용할 수 없습니다.');
+    return info.bundled ? t('在当前项目文件夹中运行 {tools} 命令。', {tools:names || 'Python · Node.js · Git · npm · pip'}) : t('在当前项目文件夹中运行 Shell 命令。未提供捆绑开发工具。');
   }
   async function refreshLinuxStatus() {
     if (!linuxStatus(state.linux) || state.linux.supported === false) return;
@@ -1770,12 +1796,12 @@
       const result = await call('devtools.check');
       const checks = Array.isArray(result?.checks) ? result.checks : [];
       devtoolsCheckResult = checks.length
-        ? checks.map(check => `${check?.ok ? '✓' : '✕'} ${check?.name || t('도구')}\n${check?.output || ''}`).join('\n\n')
-        : (result?.ok ? t('도구 실행 확인이 완료되었습니다.') : t('실행 결과를 받지 못했습니다. 다시 시도해 주세요.'));
-      devtoolsCheckSummary = result?.ok ? t('도구 실행 확인을 완료했습니다.') : t('일부 도구를 실행하지 못했습니다. 출력에서 원인을 확인한 뒤 다시 시도해 주세요.');
+        ? checks.map(check => `${check?.ok ? '✓' : '✕'} ${check?.name || t('工具')}\n${check?.output || ''}`).join('\n\n')
+        : (result?.ok ? t('工具检查已完成。') : t('未收到执行结果，请重试。'));
+      devtoolsCheckSummary = result?.ok ? t('工具检查完成。') : t('部分工具无法运行，请查看输出详情后重试。');
     } catch (error) {
-      devtoolsCheckResult = t('실행 확인 실패\n') + (error?.message || t('알 수 없는 오류'));
-      devtoolsCheckSummary = t('실행 확인에 실패했습니다. 다시 시도할 수 있습니다.');
+      devtoolsCheckResult = t('工具检查失败\n') + (error?.message || t('未知错误'));
+      devtoolsCheckSummary = t('工具检查失败，可重试。');
     } finally {
       devtoolsChecking = false; renderDevtools();
     }
@@ -1784,7 +1810,7 @@
     const status = $('chat-switch-status');
     const switching = !!chatSelection;
     status.parentElement.classList.toggle('chat-switching', switching);
-    for (const control of ['conversation', 'file-panel', 'header-project', 'header-api', 'files-toggle']) $(control).inert = switching;
+    for (const control of ['conversation', 'file-panel', 'header-more', 'header-new-chat', 'header-project', 'header-api', 'files-toggle']) $(control).inert = switching;
     status.hidden = !switching;
     status.textContent = switching ? (L.language() === 'en' ? 'Opening conversation…' : '正在切换对话…') : '';
     updateSend();
@@ -1818,28 +1844,28 @@
     if (!trigger || projectRemovalBusy(project)) return;
     $('project-remove-card')?.remove();
     const card = node('div', null, 'session-card'); card.id = 'project-remove-card';
-    const question = project.bindings?.length > 1 ? t('기본 로컬 연결을 해제할까요? 다른 연결과 파일은 그대로 유지됩니다.') : t('프로젝트를 제거할까요? 대화는 일반 대화로 이동해요.\n파일은 그대로 유지됩니다.');
+    const question = project.bindings?.length > 1 ? t('要取消关联默认本地文件夹吗？其他关联和文件保持不变。') : t('要移除此项目吗？对话将移至普通对话，文件保持不变。');
     const actions = node('div', null, 'session-card-actions');
-    const cancel = button(t('취소'), () => { card.remove(); trigger.focus({preventScroll:true}); });
-    const remove = button(t(project.bindings?.length > 1 ? '기본 로컬 연결 해제' : '프로젝트 목록에서 제거'), async () => {
+    const cancel = button(t('取消'), () => { card.remove(); trigger.focus({preventScroll:true}); });
+    const remove = button(t(project.bindings?.length > 1 ? '取消关联默认本地文件夹' : '从项目列表中移除'), async () => {
       if (!card.isConnected || projectRemovalBusy(project)) return;
       cancel.disabled = true;
       try {
         await call('projects.remove', {key:project.key}); card.remove();
-        toast(t(project.bindings?.length > 1 ? '로컬 연결을 해제했습니다.' : '프로젝트를 제거했습니다. 대화는 일반 대화에 있습니다.'));
+        toast(t(project.bindings?.length > 1 ? '已取消本地文件夹关联。' : '项目已移除，对话已移至普通聊天。'));
       } finally { cancel.disabled = false; }
     }, 'secondary-button danger');
     actions.append(cancel, remove); card.append(node('p', question), actions); trigger.closest('.project-row').after(card);
     cancel.focus({preventScroll:true}); card.scrollIntoView?.({block:'nearest'});
   }
   async function renameProject(project) {
-    const name = await input(t('프로젝트 이름 변경'), t('새 프로젝트 표시 이름을 입력하세요.'), project.name || '');
+    const name = await input(t('重命名项目'), t('请输入此项目的新显示名称。'), project.name || '');
     if (!name || !name.trim() || (name.trim() === project.name && !project.nameConflicts?.length)) return;
     const result = await call('projects.rename', {key:project.key, name:name.trim()});
     const projects = (state.projects || []).map(value => value.key === project.key ? {...value, name:result.name || name.trim(), nameConflicts:[]} : value);
     const workspace = projectKeys(project).includes(state.workspace?.key) ? {...state.workspace, name:result.name || name.trim()} : state.workspace;
     render({...state, projects, workspace});
-    toast(t('프로젝트 이름을 변경했습니다.'));
+    toast(t('项目名称已更改。'));
   }
   function projectKeys(project) { return project.workspaceKeys || [project.key]; }
   function sessionWorkBusy(session) {
@@ -1913,24 +1939,24 @@
   }
   function rootProjectChoices() {
     return [
-      {label:t('프로젝트 가져오기'), action:'import', run:importProjects},
+      {label:t('导入项目'), action:'import', run:importProjects},
       {label:t('Android 选择其他文件夹'), action:'pick', whileBusy:true, run:async view => {
         const result = await pickFolder();
         if (result && !result.cancelled && currentProjectLink(view)) close('project-link-dialog');
       }},
-      {label:t('폴더 없이 프로젝트 만들기'), action:'metadata', whileBusy:true, run:createProjectFromChoice}
+      {label:t('创建不含文件夹的项目'), action:'metadata', whileBusy:true, run:createProjectFromChoice}
     ];
   }
   async function createProjectFromChoice(view, path) {
-    const title = path === undefined ? t('프로젝트 만들기') : t('新建项目文件夹');
-    const name = (await input(title, t('프로젝트 이름을 입력하세요.')))?.trim();
+    const title = path === undefined ? t('创建项目') : t('新建项目文件夹');
+    const name = (await input(title, t('请输入项目名称。')))?.trim();
     if (!name || !currentProjectLink(view)) return;
     if (path === undefined) await call('projects.create', {name});
     else await call('projects.createWorkspaceFolder', {path, name});
     if (currentProjectLink(view)) close('project-link-dialog');
   }
   async function loadProjectFolders(path, view, initial = false) {
-    const title = t('프로젝트 추가');
+    const title = t('添加项目');
     let listing;
     try {
       listing = await call('projects.workspaceFolders', {path});
@@ -1938,7 +1964,7 @@
     } catch (error) {
       if (!currentProjectLink(view)) return;
       if (initial) projectChoices(title, t('无法加载文件夹'), [
-        {label:t('다시 시도'), action:'retry', whileBusy:true, run:current => loadProjectFolders('', current, true)},
+        {label:t('重试'), action:'retry', whileBusy:true, run:current => loadProjectFolders('', current, true)},
         ...rootProjectChoices()
       ]);
       toast(error.message);
@@ -1963,7 +1989,7 @@
   }
   function addProject() {
     if (projectLinkPending || $('project-link-dialog').open) return;
-    const view = projectChoices(t('프로젝트 추가'), t('正在加载文件夹…'), []);
+    const view = projectChoices(t('添加项目'), t('正在加载文件夹…'), []);
     return loadProjectFolders('', view, true);
   }
   async function importProjects(view) {
@@ -1973,23 +1999,23 @@
     const preview = await call('projects.import.preview', {content:picked.content});
     if (!currentProjectLink(view)) return;
     const summary = preview.result.summary;
-    const names = summary.projects.map(p => p.name + (p.nameConflicts?.length ? '\n' + t('이름 충돌') + ': ' + p.nameConflicts.join(' / ') : '')).join('\n');
-    projectChoices(t('프로젝트 가져오기'), t('새 변경 {count}개 · 병합 이력 {links}개', {count:preview.result.addedEvents, links:summary.linkCount}) + '\n\n' + names, [
-      {label:t('가져오기'), detail:t('프로젝트 ID가 같으면 기존 항목을 갱신합니다. 포함된 병합 이력도 적용됩니다.'), run:async () => {
+    const names = summary.projects.map(p => p.name + (p.nameConflicts?.length ? '\n' + t('名称冲突') + ': ' + p.nameConflicts.join(' / ') : '')).join('\n');
+    projectChoices(t('导入项目'), t('{count} 项新更改 · {links} 次合并记录', {count:preview.result.addedEvents, links:summary.linkCount}) + '\n\n' + names, [
+      {label:t('导入'), detail:t('项目 ID 相同时会更新已有项目，同时应用包含的合并记录。'), run:async () => {
         if (projectWorkBusy()) return;
         const result = await call('projects.import.apply', {content:picked.content, token:preview.token});
-        render({...state, ...result}); close('project-link-dialog'); toast(t('프로젝트 정보를 가져왔습니다.'));
+        render({...state, ...result}); close('project-link-dialog'); toast(t('项目资料已导入。'));
       }}
     ]);
   }
   async function exportProject(project) {
     const bundle = await call('projects.export', {key:project.key});
-    if (!confirm(t('“{name}”의 프로젝트 ID, 이름, 병합 이력을 내보낼까요?\n\n대화, 파일, 로컬 경로, 인증정보는 포함되지 않습니다.', {name:project.name}))) return;
+    if (!await confirmAction(t('是否导出“{name}”的项目 ID、名称和合并记录？\n\n不包含对话、文件、本地路径或凭据。', {name:project.name}))) return;
     await call('ui.projects.exportFile', {content:JSON.stringify(bundle)});
   }
   function resolveProjectName(project) {
     if (projectLinkPending || projectWorkBusy()) return;
-    projectChoices(t('이름 충돌 해결'), t('다른 기기에서 동시에 변경된 이름입니다. 사용할 이름을 선택하세요.'), project.nameConflicts.map(name => ({label:name, run:async () => {
+    projectChoices(t('解决名称冲突'), t('这些名称在不同设备上被同时修改，请选择保留哪个名称。'), project.nameConflicts.map(name => ({label:name, run:async () => {
       if (projectWorkBusy()) return;
       await call('projects.rename', {key:project.key, name}); close('project-link-dialog');
     }})), project.key);
@@ -1997,25 +2023,26 @@
   function mergeProject(project) {
     if (projectLinkPending || projectWorkBusy()) return;
     const candidates = (state.projects || []).filter(p => p.projectId && p.projectId !== project.projectId);
-    projectChoices(t('프로젝트 병합'), t('같은 프로젝트로 묶을 항목을 선택하세요. 폴더와 파일은 그대로 유지됩니다.'), candidates.map(target => ({
+    projectChoices(t('合并项目'), t('选择要关联为同一项目的条目，文件夹和文件保持不变。'), candidates.map(target => ({
       label:target.name,
-      detail:(target.bindings || []).map(b => b.uri || t('로컬 폴더 없음')).join('\n'),
+      detail:(target.bindings || []).map(b => b.uri || t('未关联本地文件夹')).join('\n'),
       run:async view => {
         if (projectWorkBusy()) return;
-        if (!confirm(t('“{source}”와 “{target}”을 같은 프로젝트로 묶을까요?\n\n대상 프로젝트의 이름과 기본 폴더를 사용합니다. 기존 대화는 각자의 폴더에 연결된 채 유지됩니다.', {source:project.name, target:target.name}))) return;
+        if (!await confirmAction(t('是否将“{source}”和“{target}”关联为同一项目？\n\n将使用目标项目的名称和默认文件夹。已有对话仍保留各自关联的文件夹。', {source:project.name, target:target.name}))) return;
+        if (!currentProjectLink(view) || projectWorkBusy()) return;
         const result = await call('projects.merge', {sourceKey:project.key, targetKey:target.key});
         if (result.projects) render({...state, projects:result.projects});
         view.returnKey = target.key;
         if (currentProjectLink(view)) close('project-link-dialog');
-        toast(t('프로젝트를 병합했습니다.'));
+        toast(t('项目已合并。'));
       }
     })), project.key);
   }
   function chooseProjectBinding(project) {
     if (projectLinkPending || projectWorkBusy()) return;
-    projectChoices(t('기본 로컬 폴더'), t('새 대화에서 사용할 폴더를 선택하세요. 기존 대화의 폴더는 바뀌지 않습니다.'), (project.bindings || []).map(binding => ({
+    projectChoices(t('默认本地文件夹'), t('选择新对话使用的文件夹，已有对话不受影响。'), (project.bindings || []).map(binding => ({
       label:binding.name,
-      detail:(binding.uri || t('로컬 폴더 없음')) + (binding.key === project.key ? '\n' + t('기본 폴더') : ''),
+      detail:(binding.uri || t('未关联本地文件夹')) + (binding.key === project.key ? '\n' + t('默认文件夹') : ''),
       run:async view => {
         if (projectWorkBusy()) return;
         const result = await call('projects.prefer', {key:binding.key});
@@ -2037,15 +2064,15 @@
     const card = node('div', null, 'session-card'); card.id = 'project-actions';
     const action = (label, fn, cls, blocked = projectWorkBusy) => { const item = button(label, async () => { if (blocked()) return; closeProjectCard(); await fn(); }, cls); item.disabled = blocked(); return item; };
     const actions = [
-      action(t('이름 변경'), () => renameProject(project), undefined, () => false)
+      action(t('重命名'), () => renameProject(project), undefined, () => false)
     ];
-    if (project.projectId) actions.push(action(t('프로젝트 내보내기'), () => exportProject(project), undefined, () => false));
-    if (project.nameConflicts?.length) actions.push(action(t('이름 충돌 해결'), () => resolveProjectName(project)));
-    if (project.available !== false) actions.unshift(action(t('새 대화'), () => newChat(project.key), undefined, () => false));
-    if (project.available === false) actions.push(action(t(project.hasLocalFolder === false ? '로컬 폴더 연결' : '폴더 다시 연결'), () => pickFolder(project.key)));
-    if (project.projectId && (state.projects || []).some(p => p.projectId && p.projectId !== project.projectId)) actions.push(action(t('프로젝트 병합'), () => mergeProject(project)));
-    if (project.bindings?.length > 1) actions.push(action(t('기본 로컬 폴더'), () => chooseProjectBinding(project)));
-    actions.push(action(t(project.bindings?.length > 1 ? '기본 로컬 연결 해제' : '프로젝트 목록에서 제거'), () => removeProject(project), 'secondary-button danger', () => projectRemovalBusy(project)));
+    if (project.projectId) actions.push(action(t('导出项目'), () => exportProject(project), undefined, () => false));
+    if (project.nameConflicts?.length) actions.push(action(t('解决名称冲突'), () => resolveProjectName(project)));
+    if (project.available !== false) actions.unshift(action(t('新建对话'), () => newChat(project.key), undefined, () => false));
+    if (project.available === false) actions.push(action(t(project.hasLocalFolder === false ? '关联本地文件夹' : '重新关联文件夹'), () => pickFolder(project.key)));
+    if (project.projectId && (state.projects || []).some(p => p.projectId && p.projectId !== project.projectId)) actions.push(action(t('合并项目'), () => mergeProject(project)));
+    if (project.bindings?.length > 1) actions.push(action(t('默认本地文件夹'), () => chooseProjectBinding(project)));
+    actions.push(action(t(project.bindings?.length > 1 ? '取消关联默认本地文件夹' : '从项目列表中移除'), () => removeProject(project), 'secondary-button danger', () => projectRemovalBusy(project)));
     const row = node('div', null, 'project-inline-actions'); row.append(...actions); card.append(row);
     trigger.closest('.project-row').after(card); trigger.setAttribute('aria-expanded','true'); actions[0]?.focus({preventScroll:true});
   }
@@ -2111,7 +2138,7 @@
     const card = node('div', null, 'session-card');
     card.id = 'session-card';
     card.setAttribute('role', 'group');
-    card.setAttribute('aria-label', session.title || t('대화 관리'));
+    card.setAttribute('aria-label', session.title || t('管理对话'));
     const scroller = $('sidebar').querySelector('.sidebar-scroll');
     sessionCard = {id:session.id, card, menu, mode:'actions', scroller, originalScrollTop:scroller.scrollTop};
     row.append(card);
@@ -2125,7 +2152,7 @@
     if (!session) { closeSessionCard(); return; }
     const {card, mode, id} = selected;
     const actions = node('div', null, 'session-card-actions');
-    const cancel = button(t('취소'), () => closeSessionCard(true));
+    const cancel = button(t('取消'), () => closeSessionCard(true));
     const change = next => {
       const scrollTop = selected.scroller.scrollTop;
       if (Math.abs(scrollTop - selected.cardScrollTop) >= 1) selected.originalScrollTop = scrollTop;
@@ -2145,10 +2172,10 @@
       try {
         if (mode === 'delete') {
           const result = await call('chat.delete', {id});
-          toast(result.deletionPending ? t('삭제 요청을 저장했습니다. Codex에 연결되면 원본 기록도 삭제합니다.') : t('대화를 삭제했습니다.'));
+          toast(result.deletionPending ? t('删除请求已保存。Codex 连接后将删除原始记录。') : t('对话已删除。'));
         } else {
           await call('chat.rename', {id, title});
-          toast(t('대화 이름을 변경했습니다.'));
+          toast(t('对话已重命名。'));
         }
         if (selected === sessionCard) closeSessionCard(true);
       } catch (error) {
@@ -2165,7 +2192,7 @@
       const list = node('div', null, 'folder-destinations');
       if (state.projects?.length) list.append(node('strong', '已有项目'));
       for (const project of state.projects || []) {
-        const choice = button(project.name || t('이름 없는 프로젝트'), async () => {
+        const choice = button(project.name || t('未命名项目'), async () => {
           if (selected !== sessionCard || sessionEdits.has(id)) return;
           sessionEdits.add(id);
           try {
@@ -2195,23 +2222,23 @@
         moveToFolder(id, name);
       };
       field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); move(); } });
-      actions.append(button(t('취소'), () => change('folder')), button('确定', move)); card.append(field, actions); field.focus({preventScroll:true}); reveal(); return;
+      actions.append(button(t('取消'), () => change('folder')), button('确定', move)); card.append(field, actions); field.focus({preventScroll:true}); reveal(); return;
     }
     if (mode === 'rename') {
       const field = node('input');
-      field.setAttribute('aria-label', t('대화 이름 변경'));
+      field.setAttribute('aria-label', t('重命名对话'));
       field.value = session.title || '';
       const save = () => { const title = field.value.trim(); if (title) return submit(title); field.focus(); };
       field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); save(); } });
-      actions.append(cancel, button(t('저장'), save));
+      actions.append(cancel, button(t('保存'), save));
       card.append(field, actions);
       field.focus({preventScroll:true}); field.select(); reveal();
       return;
     }
     const confirm = mode === 'delete';
-    if (confirm) card.append(node('p', t('“{title}” 대화를 삭제할까요?', {title:session.title || t('대화')})));
-    const first = confirm ? cancel : button(t('이름 변경'), () => change('rename'));
-    const remove = node('button', t('대화 삭제'), 'secondary-button danger');
+    if (confirm) card.append(node('p', t('删除“{title}”？', {title:session.title || t('对话')})));
+    const first = confirm ? cancel : button(t('重命名'), () => change('rename'));
+    const remove = node('button', t('删除对话'), 'secondary-button danger');
     remove.type = 'button';
     remove.addEventListener('click', confirm ? () => submit() : () => change('delete'));
     remove.dataset.sessionDelete = '';
@@ -2234,14 +2261,14 @@
     const b = node('button', '', 'session');
     b.type = 'button';
     b.addEventListener('click', () => openChat(session.id));
-    b.append(node('span', session.title || t('제목 없는 대화'), 'session-title'));
+    b.append(node('span', session.title || t('未命名对话'), 'session-title'));
     if (session.approvalPending) b.append(node('span', '!', 'session-approval-indicator'));
     else if (session.busy) b.append(node('span', '', 'session-progress-indicator'));
-    b.title = session.workspace || t('일반 대화');
+    b.title = session.workspace || t('普通聊天');
     row.dataset.sessionId = session.id;
     const menu = button('', () => openSessionCard(session, row, menu), 'icon-button session-more');
     menu.setAttribute('aria-expanded', 'false');
-    menu.setAttribute('aria-label', (session.title || t('대화')) + t(' 관리'));
+    menu.setAttribute('aria-label', (session.title || t('对话')) + t(' 操作'));
     menu.append(icon('more'));
     row.append(b, menu);
     sessionRows.set(session.id, row);
@@ -2256,29 +2283,35 @@
       const expandedKey = 'project-expanded:' + (project.projectId || project.key), expanded = localStorage.getItem(expandedKey) !== 'false';
       const section = node('section', null, 'project-tree' + (project.selected ? ' selected' : ''));
       const row = node('div', null, 'project-row');
-      const toggle = button('', () => { const expandedNow = section.classList.toggle('collapsed') === false; localStorage.setItem(expandedKey, String(expandedNow)); toggle.setAttribute('aria-expanded', String(expandedNow)); }, 'tree-toggle'); toggle.setAttribute('aria-label', project.name + t(' 대화 펼치기')); toggle.setAttribute('aria-expanded', String(expanded)); toggle.append(icon('down'));
-      const select = button('', () => selectProject(project.key), 'project-button'); select.append(icon('folder'), node('span', project.name || t('이름 없는 프로젝트'))); select.setAttribute('aria-current', String(!!project.selected));
-       const menu = button('', () => projectAction(project, menu), 'icon-button project-more'); menu.setAttribute('aria-label', project.name + t(' 메뉴')); menu.dataset.projectMenuKey = project.key; menu.append(icon('more'));
-       const projectNew = button('', () => newChat(project.key), 'icon-button project-new'); projectNew.disabled = project.available === false; projectNew.setAttribute('aria-label', project.name + t(' 새 대화')); projectNew.append(icon('plus'));
+      const toggle = button('', () => { const expandedNow = section.classList.toggle('collapsed') === false; localStorage.setItem(expandedKey, String(expandedNow)); toggle.setAttribute('aria-expanded', String(expandedNow)); }, 'tree-toggle'); toggle.setAttribute('aria-label', project.name + t(' 展开对话')); toggle.setAttribute('aria-expanded', String(expanded)); toggle.append(icon('down'));
+      const select = button('', () => selectProject(project.key), 'project-button'); select.append(icon('folder'), node('span', project.name || t('未命名项目'))); select.setAttribute('aria-current', String(!!project.selected));
+       const menu = button('', () => projectAction(project, menu), 'icon-button project-more'); menu.setAttribute('aria-label', project.name + t(' 菜单')); menu.dataset.projectMenuKey = project.key; menu.append(icon('more'));
+       const projectNew = button('', () => newChat(project.key), 'icon-button project-new'); projectNew.disabled = project.available === false; projectNew.setAttribute('aria-label', project.name + t(' 新对话')); projectNew.append(icon('plus'));
        row.append(toggle, select, projectNew, menu); section.append(row);
       const children = node('div', null, 'project-sessions');
-      if (project.nameConflicts?.length) { const resolve = button(t('이름 충돌 해결'), () => resolveProjectName(project), 'new-thread'); resolve.disabled = workBusy; children.append(resolve); }
-      if (project.available === false) { const bind = button(t(project.hasLocalFolder === false ? '로컬 폴더 연결' : '폴더 다시 연결'), () => pickFolder(project.key), 'new-thread'); bind.disabled = workBusy; children.append(bind); }
-      if (project.bindings?.length > 1) { const choose = button(t('기본 로컬 폴더'), () => chooseProjectBinding(project), 'new-thread'); choose.disabled = workBusy; children.append(choose); }
+      if (project.nameConflicts?.length) { const resolve = button(t('解决名称冲突'), () => resolveProjectName(project), 'new-thread'); resolve.disabled = workBusy; children.append(resolve); }
+      if (project.available === false) { const bind = button(t(project.hasLocalFolder === false ? '关联本地文件夹' : '重新关联文件夹'), () => pickFolder(project.key), 'new-thread'); bind.disabled = workBusy; children.append(bind); }
+      if (project.bindings?.length > 1) { const choose = button(t('默认本地文件夹'), () => chooseProjectBinding(project), 'new-thread'); choose.disabled = workBusy; children.append(choose); }
       for (const session of (state.sessions || []).filter(s => projectKeys(project).includes(s.workspaceKey) && !folderFor(s.id))) children.append(sessionRow(session));
       section.append(children); if (!expanded) section.classList.add('collapsed'); target.append(section);
     }
-    if (!projects.length && !generalFolderAvailable()) target.append(button(t('작업 폴더 선택'), pickFolder, 'project-button'));
+    if (!projects.length && !generalFolderAvailable()) target.append(button(t('选择工作文件夹'), pickFolder, 'project-button'));
   }
   function renderPhone() {
     const phone = state.phone || {};
-    $('phone-status').textContent = phone.status || t('접근성 설정에서 Mobile Codex 휴대폰 제어를 켜 주세요.');
+    $('phone-status').textContent = phone.status || t('请在无障碍设置中启用 Mobile Codex 手机控制。');
     $('phone-enable').disabled = !phone.connected || !!phone.enabled; $('floating-chat').disabled = !phone.connected;
     $('phone-enable').hidden = !!phone.enabled;
     $('phone-disable').hidden = !phone.enabled;
-    $('phone-stop-banner').hidden = !phone.enabled;
+    const stopBanner = $('phone-stop-banner');
+    if (stopBanner.hidden === Boolean(phone.enabled)) {
+      const anchor = readingPosition();
+      stopBanner.hidden = !phone.enabled;
+      if (anchor) restoreReadingPosition(anchor);
+      else followLatest();
+    }
     $('phone-thread-note').hidden = state.phoneToolsAvailable !== false;
-    $('phone-screenshot-note').textContent = phone.screenshotsSupported === false ? t('Android 10에서는 화면 요소를 읽어 조작합니다. 스크린샷은 Android 11 이상에서 지원합니다.') : t('화면 위의 중지 버튼으로 즉시 끌 수 있습니다. 앱 프로세스가 다시 시작되면 제어는 꺼집니다.');
+    $('phone-screenshot-note').textContent = phone.screenshotsSupported === false ? t('Android 10 使用屏幕元素进行控制。截图需要 Android 11 或更高版本。') : t('你可以随时使用屏幕上的停止按钮。应用进程重启后，控制会自动关闭。');
   }
   async function enablePhone() {
     const result = await call('ui.phoneEnable');
@@ -2286,7 +2319,7 @@
   }
   async function stopPhone() {
     await call('phone.stop');
-    state.phone = {...state.phone, enabled:false, status:t('휴대폰 제어 꺼짐')}; renderPhone();
+    state.phone = {...state.phone, enabled:false, status:t('手机控制已关闭')}; renderPhone();
   }
   function configuredApi() { return state.authState !== 'unconfigured' && !!(state.apiActive && (state.apiProviders || []).some(p => p.id === state.apiActive && p.hasKey)); }
   let navigationSignature = '';
@@ -2305,36 +2338,37 @@
     githubUi?.render(state);
     state.models ||= []; state.messages ||= []; state.projects ||= []; state.accounts ||= []; state.workspace ||= {}; state.account ||= {}; state.rateLimits ||= {};
     const logged = configuredApi(), selected = state.workspace.selected;
-    const name = selected ? state.workspace.name : t('일반 대화');
+    const name = selected ? state.workspace.name : t('普通聊天');
     $('project-label').textContent = workspaceFolderLabel(); $('header-project-label').textContent = name;
-    $('header-title').textContent = (state.sessions || []).find(s => s.id === state.threadId)?.title || t('새 대화');
+    $('header-title').textContent = (state.sessions || []).find(s => s.id === state.threadId)?.title || t('新建对话');
     const apiName = (state.apiProviders || []).find(profile => profile.id === state.apiActive)?.name;
-    $('header-api').textContent = state.apiCanRebind ? 'API · 重新绑定' : 'API · ' + (apiName || (state.threadId ? '不可用' : '未选择')) + (apiName && !logged ? '（不可用）' : '');
+    $('header-api').textContent = state.apiCanRebind ? t('API · 重新绑定') : 'API · ' +
+      (apiName ? (logged ? apiName : t('{provider}（不可用）', {provider:apiName})) : t(state.threadId ? '不可用' : '未选择'));
     $('header-api').title = $('header-api').textContent;
     $('welcome').hidden = state.messages.length > 0; $('onboarding').hidden = logged; $('suggestions').hidden = !logged;
-    const generalPrompts = [t('작업을 계획하고 필요한 정보를 정리해줘.'),t('아이디어를 구조화하고 다음 단계를 제안해줘.'),t('무엇을 도와줄 수 있는지 알려줘.')];
-    document.querySelectorAll('[data-prompt]').forEach((button, i) => { button.dataset.prompt = selected ? [t('이 폴더에 어떤 파일이 있는지 살펴보고 정리해줘.'),t('이 프로젝트를 살펴보고 실행 방법과 개선할 부분을 알려줘.'),t('이 프로젝트의 변경 사항을 검토하고 버그가 있는지 찾아줘.')][i] : generalPrompts[i]; if (button.lastChild?.nodeType === Node.TEXT_NODE) button.lastChild.textContent = selected ? [t('폴더 살펴보기'),t('프로젝트 이해하기'),t('변경 사항 검토')][i] : [t('작업 계획하기'),t('아이디어 정리하기'),t('도움말 보기')][i]; });
+    const generalPrompts = [t('规划任务并整理所需信息。'),t('梳理想法并提出下一步建议。'),t('告诉我你能帮我做什么。')];
+    document.querySelectorAll('[data-prompt]').forEach((button, i) => { button.dataset.prompt = selected ? [t('浏览此文件夹中的文件并进行总结。'),t('检查此项目，说明如何运行以及可改进的地方。'),t('审查此项目的更改并寻找潜在错误。')][i] : generalPrompts[i]; if (button.lastChild?.nodeType === Node.TEXT_NODE) button.lastChild.textContent = selected ? [t('浏览文件夹'),t('了解项目'),t('检查更改')][i] : [t('规划任务'),t('整理思路'),t('了解我的能力')][i]; });
     $('api-step').textContent = logged ? '✓' : '1'; $('api-step').classList.toggle('done', logged);
     const folderReady = workspaceFilesAvailable();
     $('folder-step').textContent = folderReady ? '✓' : '2'; $('folder-step').classList.toggle('done', folderReady);
-    $('settings-status').textContent = state.status; $('settings-indicator').textContent = state.ready ? t('연결됨') : t('연결 안 됨'); $('settings-indicator').classList.toggle('online', !!state.ready);
+    $('settings-status').textContent = state.status; $('settings-indicator').textContent = state.ready ? t('已连接') : t('已断开连接'); $('settings-indicator').classList.toggle('online', !!state.ready);
     const pendingDeletes = Number(state.pendingDeletionCount) || 0;
     $('pending-deletions').hidden = pendingDeletes === 0;
-    $('pending-deletions').textContent = pendingDeletes ? t('원본 삭제 대기 {count}건. 아래 ‘Codex 시작 / 다시 연결’을 누르면 다시 시도합니다.', {count:pendingDeletes}) : '';
+    $('pending-deletions').textContent = pendingDeletes ? t('有 {count} 条原始聊天等待删除。请点击下方“启动 / 重新连接 Codex”重试。', {count:pendingDeletes}) : '';
     const anyBusy = !!state.busy;
     $('stream-retry').hidden = !(anyBusy && state.streamRetrying);
     const usage = state.subagentUsage, counter = $('subagent-usage');
     const liveUsage = anyBusy && usage && usage.turnId === state.turnId;
     const totalAgents = liveUsage || !anyBusy ? usage?.total || 0 : 0;
     counter.hidden = totalAgents === 0;
-    const countLabel = counter.hidden ? '' : t('이번 작업에서 시작한 하위 에이전트: {count}', {count:totalAgents}) +
-      (liveUsage && totalAgents && Number.isInteger(usage.running) ? ' · ' + t('실행 중: {count}', {count:usage.running}) : '');
+    const countLabel = counter.hidden ? '' : t('本轮已启动子代理：{count}', {count:totalAgents}) +
+      (liveUsage && totalAgents && Number.isInteger(usage.running) ? ' · ' + t('运行中：{count}', {count:usage.running}) : '');
     if (counter.textContent !== countLabel) counter.textContent = countLabel;
     $('activity').hidden = !anyBusy;
     updateComposerExpansion();
     if (!anyBusy || changedThread || changedTurn || !wasBusy) {
       resetTaskActivities();
-      $('activity-text').textContent = t('Codex 작업 중');
+      $('activity-text').textContent = t('Codex 正在工作');
       if (anyBusy) for (const request of requestQueue.values()) if (requestThread(request) === state.threadId)
         showTaskActivity(C.taskActivity('server.request', request), request);
     }
@@ -2342,13 +2376,13 @@
     drawTurnProgress();
     $('terminal-cwd').textContent = state.cwd || '';
     if (state.terminal) renderTerminal(state.terminal);
-    $('storage-status').textContent = state.directWorkspace ? t('선택한 폴더에서 셸 명령을 실행합니다.') : t('폴더의 셸 접근은 기기 파일 권한이 필요합니다. 문서 제공자 폴더는 파일 도구로 접근합니다.');
-    $('storage-access').textContent = state.allFilesAccess ? t('기기 파일 접근 설정') : t('기기 파일 접근 허용');
+    $('storage-status').textContent = state.directWorkspace ? t('在所选文件夹中运行 Shell 命令。') : t('Shell 访问需要设备文件权限。文档提供方的文件夹请使用文件工具。');
+    $('storage-access').textContent = state.allFilesAccess ? t('设备文件访问设置') : t('允许访问设备文件');
     renderDevtools();
     renderLinux();
     renderPhone();
-    if (changesScope !== reviewScope()) { changesGeneration++; changesScope = reviewScope(); selectedChange = null; $('change-preview').hidden = true; $('change-restore').disabled = true; $('changes-list').replaceChildren(); if ($('changes-dialog').open) $('changes-status').textContent = t('대화 또는 프로젝트가 바뀌었습니다. 새로고침해 주세요.'); }
-    $('changes-turn-diff').textContent = state.turnDiff || t('이 대화에 기록된 작업 diff가 없습니다.');
+    if (changesScope !== reviewScope()) { changesGeneration++; changesScope = reviewScope(); selectedChange = null; $('change-preview').hidden = true; $('change-restore').disabled = true; $('changes-list').replaceChildren(); if ($('changes-dialog').open) $('changes-status').textContent = t('对话或项目已变更，请刷新。'); }
+    $('changes-turn-diff').textContent = state.turnDiff || t('此对话没有记录任务差异。');
     if (selectedChange) $('change-restore').disabled = restoringChange || !selectedChange.data.canRestore || !!state.busy || state.permissions === 'read-only';
     readChatFolders();
     const navigationKey = JSON.stringify([folderScope, state.projects, state.sessions, !state.projects.length && generalFolderAvailable(), projectWorkBusy(), L.language()]);
@@ -2364,7 +2398,7 @@
       const projectWorkspaceKeys = new Set((state.projects || []).flatMap(projectKeys));
       const sessionWorkspaceKey = session => session.workspaceKey || (typeof session.workspace === 'string' ? session.workspace : '');
       for (const session of (state.sessions || []).filter(session => !projectWorkspaceKeys.has(sessionWorkspaceKey(session)) && !folderFor(session.id))) $('sessions').append(sessionRow(session));
-      if (!state.sessions?.length) $('sessions').append(node('p', t('대화를 시작하면 여기에 표시됩니다.'), 'sidebar-empty'));
+      if (!state.sessions?.length) $('sessions').append(node('p', t('你的对话将显示在这里。'), 'sidebar-empty'));
       if (sessionCard) {
         const current = (state.sessions || []).find(session => session.id === sessionCard.id);
         const row = current && sessionRows.get(current.id);
@@ -2395,9 +2429,9 @@
     if (key !== modelKey) {
       modelKey = key; const value = draftOptions.model || $('model').value, choices = state.models.filter(m => (m.model || m.id) !== LEGACY_PRO_MODEL);
       $('model').replaceChildren(); for (const m of choices) $('model').add(new Option(m.displayName || m.model || m.id, m.model || m.id));
-      if (!choices.length) $('model').add(new Option(t('모델 목록 조회 필요'), ''));
+      if (!choices.length) $('model').add(new Option(t('需要刷新模型列表'), ''));
       const savedMissing = draftOptions.model && value !== LEGACY_PRO_MODEL && !choices.some(m => (m.model || m.id) === value);
-      if (savedMissing) $('model').add(new Option(value + ' · ' + t('목록 확인 필요'), value));
+      if (savedMissing) $('model').add(new Option(value + ' · ' + t('检查模型列表'), value));
       $('model').value = savedMissing || choices.some(m => (m.model || m.id) === value) ? value : ((choices.find(m => m.isDefault)?.model || choices.find(m => m.isDefault)?.id) || choices[0]?.model || choices[0]?.id || '');
       efforts(draftOptions.effort || $('effort').value);
     }
@@ -2410,7 +2444,7 @@
     drawMessages(null, false);
     agentUi?.render();
     restoreReadingPosition(anchor);
-    $('prompt').placeholder = agentUi?.grouped() ? t('모두에게 보내기 · @로 한 명만 부르기') : t('Codex에게 물어보기');
+    $('prompt').placeholder = agentUi?.grouped() ? t('发送给所有人 · 用 @ 指定成员') : t('询问 Codex');
     // A request can arrive while another conversation is visible. Once the
     // selected session is restored, show only that session's pending request.
     nextRequest(); syncSubagentControls();
@@ -2426,7 +2460,7 @@
   }
   function fileContext() { return {scope:fileWorkspaceScope(), workspaceKey:state.workspace?.key || '', generation:fileContextGeneration}; }
   function sameFileContext(context) { return !!context && context.scope === fileWorkspaceScope() && context.generation === fileContextGeneration; }
-  function requireFileContext(context) { if (!sameFileContext(context)) throw new Error(t('프로젝트가 바뀌었습니다. 다시 열어 주세요.')); }
+  function requireFileContext(context) { if (!sameFileContext(context)) throw new Error(t('项目已变更，请重新打开。')); }
   function fileDraftKey(context, path) { return JSON.stringify([context.scope, path]); }
   function rememberFileDraft() {
     if (!openedFile) return;
@@ -2450,7 +2484,7 @@
     rememberFileDraft(); fileContextGeneration++; fileSeq++; fileReadSeq++;
     clearTimeout(searchTimer); folder = ''; $('file-query').value = '';
     $('breadcrumbs').textContent = ''; $('file-up').disabled = true; $('file-list').replaceChildren();
-    openedFile = null; $('editor').value = ''; $('editor-title').textContent = t('파일');
+    openedFile = null; $('editor').value = ''; $('editor-title').textContent = t('文件');
     if ($('editor-dialog').open) close('editor-dialog');
     if ($('file-actions-dialog').open) close('file-actions-dialog');
     if (fileInputContext && $('input-dialog').open) close('input-dialog');
@@ -2475,20 +2509,20 @@
   }
   async function listFiles(query = '') {
     const context = fileContext(), requestedFolder = folder, version = ++fileSeq;
-    if (!workspaceFilesAvailable()) { $('file-list').replaceChildren(button(t('작업 폴더 선택'), pickFolder)); return; }
-    $('file-list').replaceChildren(node('p', t('불러오는 중…'), 'empty-note'));
+    if (!workspaceFilesAvailable()) { $('file-list').replaceChildren(button(t('选择工作文件夹'), pickFolder)); return; }
+    $('file-list').replaceChildren(node('p', t('正在加载…'), 'empty-note'));
     const result = await call(query ? 'files.search' : 'files.list', {workspaceKey:context.workspaceKey, ...(query ? {query} : {path:requestedFolder})});
     if (version !== fileSeq || !sameFileContext(context)) return;
-    $('breadcrumbs').textContent = query ? t('검색: ') + query : workspaceFolderLabel() + (requestedFolder ? ' / ' + requestedFolder : '');
+    $('breadcrumbs').textContent = query ? t('搜索：') + query : workspaceFolderLabel() + (requestedFolder ? ' / ' + requestedFolder : '');
     $('file-up').disabled = !requestedFolder || !!query; $('file-list').replaceChildren();
     for (const entry of result.entries || []) {
       const row = node('div', null, 'file-entry');
       const b = button('', async () => { requireFileContext(context); if (entry.directory) { folder = entry.path; $('file-query').value = ''; await listFiles(); } else await openFile(entry.path, context); }, 'file-row');
       b.append(icon(entry.directory ? 'folder' : 'file'), node('span', entry.name), node('small', entry.directory ? '' : C.size(entry.size))); row.append(b);
-      const menu = button('⋯', () => fileAction(entry, context), 'icon-button'); menu.setAttribute('aria-label', entry.name + t(' 관리')); row.append(menu); $('file-list').append(row);
+      const menu = button('⋯', () => fileAction(entry, context), 'icon-button'); menu.setAttribute('aria-label', entry.name + t(' 操作')); row.append(menu); $('file-list').append(row);
     }
-    if (!result.entries?.length) $('file-list').append(node('p', t('항목이 없습니다.'), 'empty-note'));
-    if (result.truncated) $('file-list').append(node('p', t('일부 검색 결과입니다. 더 구체적인 이름으로 검색하세요.'), 'empty-note'));
+    if (!result.entries?.length) $('file-list').append(node('p', t('没有内容。'), 'empty-note'));
+    if (result.truncated) $('file-list').append(node('p', t('仅显示部分搜索结果，请输入更具体的名称。'), 'empty-note'));
   }
   async function openFile(path, context = fileContext()) {
     requireFileContext(context); const version = ++fileReadSeq;
@@ -2519,7 +2553,7 @@
     requireFileContext(context);
     const result = await call('files.mutate', {operation, arguments:args, workspaceKey:context.workspaceKey});
     if (applied) applied(result);
-    requireFileContext(context); toast(t('적용했습니다.'));
+    requireFileContext(context); toast(t('已应用。'));
     if (!$('file-panel').hidden) {
       try { await listFiles($('file-query').value.trim()); }
       catch (error) { if (sameFileContext(context)) toast(error.message); }
@@ -2532,15 +2566,15 @@
     $('file-actions-title').textContent = entry.name;
     const action = (label, fn, cls) => button(label, async () => { close('file-actions-dialog'); await fn(); }, cls);
     $('file-actions').replaceChildren(
-      action(t('이름 변경'), async () => { const name = await fileInput(context, t('이름 변경'), t('새 이름'), entry.name); if (name) await mutate('mobile_rename', {path:entry.path, name}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(C.parent(entry.path), name))); }),
-      action(t('이동'), async () => { const destination = await fileInput(context, t('이동'), t('작업 폴더 기준 대상 폴더 경로 (루트는 빈칸)')); if (destination !== null) await mutate('mobile_move', {path:entry.path, destination}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(destination, C.basename(entry.path)))); }),
-      action(t('삭제'), () => mutate('mobile_delete', {path:entry.path}, context), 'secondary-button danger'),
-      ...(!entry.directory ? [action(t('다른 앱으로 열기'), () => openFileWithApp(entry.path, context, true))] : [])
+      action(t('重命名'), async () => { const name = await fileInput(context, t('重命名'), t('新名称'), entry.name); if (name) await mutate('mobile_rename', {path:entry.path, name}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(C.parent(entry.path), name))); }),
+      action(t('移动'), async () => { const destination = await fileInput(context, t('移动'), t('相对于工作区的目标文件夹（留空表示根目录）')); if (destination !== null) await mutate('mobile_move', {path:entry.path, destination}, context, result => relocateFileDraft(context, entry.path, result.path || C.join(destination, C.basename(entry.path)))); }),
+      action(t('移除'), () => mutate('mobile_delete', {path:entry.path}, context), 'secondary-button danger'),
+      ...(!entry.directory ? [action(t('选择其他应用打开'), () => openFileWithApp(entry.path, context, true))] : [])
     );
     show('file-actions-dialog');
   }
   function currentEditor() {
-    if (!openedFile) throw new Error(t('파일을 읽을 수 없습니다.'));
+    if (!openedFile) throw new Error(t('无法读取文件。'));
     requireFileContext(openedFile.context); return openedFile;
   }
   async function saveEditor() {
@@ -2553,7 +2587,7 @@
   }
   async function relocateEditor(operation) {
     const file = currentEditor();
-    const value = await fileInput(file.context, t(operation === 'mobile_rename' ? '이름 변경' : '이동'), t(operation === 'mobile_rename' ? '새 파일 이름' : '대상 폴더 경로 (루트는 빈칸)'), operation === 'mobile_rename' ? C.basename(file.path) : '');
+    const value = await fileInput(file.context, t(operation === 'mobile_rename' ? '重命名' : '移动'), t(operation === 'mobile_rename' ? '新文件名' : '目标文件夹路径（留空表示根目录）'), operation === 'mobile_rename' ? C.basename(file.path) : '');
     if (value === null || (operation === 'mobile_rename' && !value)) return;
     if (openedFile !== file) return;
     const args = operation === 'mobile_rename' ? {path:file.path, name:value} : {path:file.path, destination:value};
@@ -2569,28 +2603,28 @@
   }
   async function loadInstructions() {
     if (instructionsSaving) return;
-    if (instructionsLoaded && $('instructions-editor').value !== instructionsOriginal && !confirm(t('저장하지 않은 지침을 다시 불러올까요?'))) return;
-    $('instructions-status').textContent = t('지침을 불러오는 중…');
+    if (instructionsLoaded && $('instructions-editor').value !== instructionsOriginal && !await confirmAction(t('重新加载指令并放弃未保存的更改？'))) return;
+    $('instructions-status').textContent = t('正在加载指令…');
     $('instructions-editor').disabled = true; $('instructions-save').disabled = true;
     try {
       const result = await call('instructions.read');
       instructionsOriginal = result.content || ''; $('instructions-editor').value = instructionsOriginal;
-      instructionsLoaded = true; $('instructions-path').textContent = t('저장 위치: ') + (result.activePath || result.path || '.codex/AGENTS.md');
-      $('instructions-status').textContent = result.notice || t('저장된 지침을 편집할 수 있습니다.');
-    } catch (error) { $('instructions-status').textContent = t('지침을 불러오지 못했습니다. ') + error.message; }
+      instructionsLoaded = true; $('instructions-path').textContent = t('保存位置：') + (result.activePath || result.path || '.codex/AGENTS.md');
+      $('instructions-status').textContent = result.notice || t('可以编辑已保存的指令。');
+    } catch (error) { $('instructions-status').textContent = t('无法加载指令：') + error.message; }
     finally { $('instructions-editor').disabled = !instructionsLoaded; $('instructions-save').disabled = !instructionsLoaded; }
   }
   async function saveInstructions() {
     if (!instructionsLoaded || instructionsSaving) return;
     const content = $('instructions-editor').value; instructionsSaving = true;
-    $('instructions-save').disabled = true; $('instructions-status').textContent = t('저장 중…');
+    $('instructions-save').disabled = true; $('instructions-status').textContent = t('正在保存…');
     try {
       const result = await call('instructions.save', {content});
       instructionsOriginal = typeof result.content === 'string' ? result.content : content;
       if ($('instructions-editor').value === content) $('instructions-editor').value = instructionsOriginal;
-      if (result.activePath || result.path) $('instructions-path').textContent = t('저장 위치: ') + (result.activePath || result.path);
-      $('instructions-status').textContent = t('저장했습니다. 다음 요청부터 적용됩니다.') + (result.notice ? ' ' + result.notice : '');
-    } catch (error) { $('instructions-status').textContent = t('저장하지 못했습니다. 작성 내용은 그대로 남아 있습니다. ') + error.message; }
+      if (result.activePath || result.path) $('instructions-path').textContent = t('保存位置：') + (result.activePath || result.path);
+      $('instructions-status').textContent = t('已保存，将从下次请求开始生效。') + (result.notice ? ' ' + result.notice : '');
+    } catch (error) { $('instructions-status').textContent = t('无法保存，更改仍保留在这里：') + error.message; }
     finally { instructionsSaving = false; $('instructions-save').disabled = false; }
   }
   async function config() { const result = await call('config.read'); configOriginal = result.content; $('config-editor').value = result.content; show('config-dialog'); }
@@ -2599,66 +2633,67 @@
   const reviewArgs = extra => ({workspaceKey:state.workspace?.key || '', ...extra});
   function showFileDiff(before, after) {
     const diff=C.fileDiff(before,after),box=$('change-diff');box.replaceChildren();
-    if(diff.identical){box.textContent=t('내용 차이가 없습니다.');return;}
+    if(diff.identical){box.textContent=t('文件内容没有差异。');return;}
     for(const hunk of diff.hunks){
       box.append(node('span',`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@\n`,'diff-context'));
       for(const line of hunk.lines){
         if(line.kind==='omitted'){box.append(node('span',`… ${line.count} …\n`,'diff-context'));continue;}
         const oldNumber=line.kind==='+'?'':String(line.oldLine),newNumber=line.kind==='-'?'':String(line.newLine);
         box.append(node('span',oldNumber.padStart(5)+' '+newNumber.padStart(5)+' '+line.kind+' '+line.text+'\n',line.kind==='-'?'diff-removed':line.kind==='+'?'diff-added':'diff-context'));
-        if(line.noNewline)box.append(node('span',t('\\ 마지막 줄에 줄바꿈 없음')+'\n','diff-context'));
+        if(line.noNewline)box.append(node('span',t('\\ 文件末尾没有换行符')+'\n','diff-context'));
       }
     }
-    if(diff.approximate)box.append(node('span',t('큰 변경 구간은 간략히 비교했습니다. 표시된 문맥 밖의 변경도 확인하세요.')+'\n','diff-context'));
-    if(diff.truncated)box.append(node('span',t('… 일부 변경 내용은 생략했습니다. 파일 탐색기에서 전체 내용을 확인하세요.')+'\n','diff-context'));
+    if(diff.approximate)box.append(node('span',t('大段更改已以精简形式显示，请同时检查显示范围以外的更改。')+'\n','diff-context'));
+    if(diff.truncated)box.append(node('span',t('…部分更改已省略。请在文件管理器中查看完整内容。')+'\n','diff-context'));
   }
   async function previewChange(kind, value) {
     const generation=++changesGeneration, scope=reviewScope(), args=reviewArgs(kind==='git'?{path:value}:{id:value});
-    selectedChange=null; $('change-restore').disabled=true; $('changes-status').textContent=t('파일 내용을 확인하는 중…');
+    selectedChange=null; $('change-restore').disabled=true; $('changes-status').textContent=t('正在检查文件内容…');
     const action=kind==='git'?'changes.preview':kind==='backup'?'changes.backupPreview':'recovery.preview';
     try {
       const data=await call(action,args); if(generation!==changesGeneration || scope!==reviewScope())return;
       selectedChange={kind,data,workspaceKey:args.workspaceKey};
       $('change-path').textContent=data.path; $('change-note').textContent=data.note || '';
-      if (data.previewLimited) $('change-diff').textContent = t('텍스트 전체를 표시할 수 없는 파일입니다.\n이전: ') + data.before + '\nSHA-256: ' + data.beforeSha256 + t('\n현재: ') + data.after + '\nSHA-256: ' + data.afterSha256;
+      if (data.previewLimited) $('change-diff').textContent = t('无法完整显示此文件。\n原内容：') + data.before + '\nSHA-256: ' + data.beforeSha256 + t('\n当前：') + data.after + '\nSHA-256: ' + data.afterSha256;
       else showFileDiff(data.before,data.after);
       $('change-preview').hidden=false;
-      $('change-restore').textContent=data.actionLabel || t('복원'); $('change-restore').disabled=!data.canRestore || state.busy || state.permissions==='read-only';
-      $('changes-status').textContent=(data.beforeExists===false?t('이전 파일 없음 · '):'')+(data.afterExists===false?t('현재 파일 없음'):'');
+      $('change-restore').textContent=data.actionLabel || t('恢复'); $('change-restore').disabled=!data.canRestore || state.busy || state.permissions==='read-only';
+      $('changes-status').textContent=(data.beforeExists===false?t('没有之前的文件 · '):'')+(data.afterExists===false?t('没有当前文件'):'');
     } catch(error) { if(generation===changesGeneration) $('changes-status').textContent=error.message; }
   }
   async function loadChanges(history=false) {
     const generation=++changesGeneration, scope=reviewScope(), args=reviewArgs({}); changesScope=scope;
     selectedChange=null; $('change-preview').hidden=true; $('change-restore').disabled=true;
-    show('changes-dialog'); sidebar(false); $('changes-list').replaceChildren(); $('changes-status').textContent=t('불러오는 중…');
+    show('changes-dialog'); sidebar(false); $('changes-list').replaceChildren(); $('changes-status').textContent=t('正在加载…');
     try {
       const result=await call(history?'changes.history':'changes.list',args);
       if(generation!==changesGeneration || scope!==reviewScope())return;
-      $('changes-status').textContent=result.note || (history?t('파일 복원 직전의 사본입니다. 이후 수정된 파일은 자동으로 덮어쓰지 않습니다.'):'');
+      $('changes-status').textContent=result.note || (history?t('这是恢复前保存的副本。之后更改过的文件不会自动被覆盖。'):'');
       for(const entry of result.entries || []) {
         const row=node('div',null,'recovery-item'), desc=node('div'); desc.append(node('strong',entry.path),node('small',history?new Date(entry.timestamp).toLocaleString(L.language()):entry.status));
-        row.append(desc,button(t('비교'),()=>previewChange(history?'backup':'git',history?entry.id:entry.path))); $('changes-list').append(row);
+        row.append(desc,button(t('比较'),()=>previewChange(history?'backup':'git',history?entry.id:entry.path))); $('changes-list').append(row);
       }
-      if(!result.entries?.length) $('changes-list').append(node('p',history?t('복원 사본이 없습니다.'):t('현재 Git 변경 사항이 없습니다.'),'empty-note'));
-    } catch(error) { if(generation===changesGeneration) $('changes-status').textContent=error.message+t(' 문서 제공자 파일은 복구 사본에서 확인할 수 있습니다.'); }
+      if(!result.entries?.length) $('changes-list').append(node('p',history?t('没有恢复副本。'):t('没有 Git 更改。'),'empty-note'));
+    } catch(error) { if(generation===changesGeneration) $('changes-status').textContent=error.message+t(' 请在恢复副本中检查文档提供方的文件。'); }
   }
   async function restoreChange() {
     const selected=selectedChange; if(!selected || !selected.data.canRestore || restoringChange)return;
-    if(selected.workspaceKey!==(state.workspace?.key || ''))throw new Error(t('프로젝트가 바뀌었습니다.'));
-    if(!confirm(selected.data.path+'\n'+(selected.data.actionLabel || t('복원'))+t('할까요?')))return;
+    if(selected.workspaceKey!==(state.workspace?.key || ''))throw new Error(t('项目已变更。'));
+    if(!await confirmAction(selected.data.path+'\n'+(selected.data.actionLabel || t('恢复'))+t('？')))return;
+    if (selectedChange !== selected || selected.workspaceKey !== (state.workspace?.key || '') || restoringChange) return;
     restoringChange=true; $('change-restore').disabled=true;
     try {
       const args={workspaceKey:selected.workspaceKey};
       if(selected.kind==='saf')args.id=selected.data.id;else args.token=selected.data.token;
       await call(selected.kind==='saf'?'recovery.restore':'changes.restore',args);
-      toast(t('파일 내용을 복원했습니다.'));
+      toast(t('文件内容已恢复。'));
       if(selected.workspaceKey===(state.workspace?.key || '')) { if(selected.kind==='saf'){close('changes-dialog');await recovery();}else await loadChanges(); if(!$('file-panel').hidden)await listFiles(); }
     } finally { restoringChange=false; if(selectedChange===selected)$('change-restore').disabled=false; }
   }
   async function recovery() {
     show('recovery-dialog'); const {entries} = await call('recovery.list'); $('recovery-list').replaceChildren();
-    for (const entry of entries || []) { const row = node('div', null, 'recovery-item'), desc = node('div'); desc.append(node('strong', entry.path), node('small', new Date(entry.timestamp).toLocaleString(L.language()))); row.append(desc, button(t('비교 / 복원'), async () => { close('recovery-dialog'); show('changes-dialog'); await previewChange('saf',entry.id); }), button(t('다른 위치에 저장'), () => call('recovery.export', {id: entry.id, name: C.basename(entry.path)}))); $('recovery-list').append(row); }
-    if (!entries?.length) $('recovery-list').append(node('p', t('저장된 복구 사본이 없습니다.'), 'empty-note'));
+    for (const entry of entries || []) { const row = node('div', null, 'recovery-item'), desc = node('div'); desc.append(node('strong', entry.path), node('small', new Date(entry.timestamp).toLocaleString(L.language()))); row.append(desc, button(t('比较 / 恢复'), async () => { close('recovery-dialog'); show('changes-dialog'); await previewChange('saf',entry.id); }), button(t('另存到其他位置'), () => call('recovery.export', {id: entry.id, name: C.basename(entry.path)}))); $('recovery-list').append(row); }
+    if (!entries?.length) $('recovery-list').append(node('p', t('没有已保存的恢复副本。'), 'empty-note'));
   }
   let toolsScope = "", toolsGeneration = 0, toolsTab = 0, toolsQuery = "";
   const currentToolsScope = () => JSON.stringify([state.cwd, state.threadId, state.apiActive]);
@@ -2671,7 +2706,6 @@
       else button.removeAttribute('aria-current');
     });
     document.querySelectorAll('[data-settings-panel]').forEach(panel => panel.hidden = panel.dataset.settingsPanel !== name);
-    $('settings-dialog').scrollTop = 0;
     const content = document.querySelector('.settings-content'); if (content) content.scrollTop = 0;
     frame(() => {
       const selected = document.querySelector('.settings-nav button.active'), nav = selected?.parentElement;
@@ -2686,22 +2720,32 @@
     $('files-toggle').setAttribute('aria-controls', 'file-panel');
     $('files-toggle').setAttribute('aria-expanded', String(open));
   }
-  function openProviderSettings() { selectSettingsTab('providers'); show('settings-dialog'); sidebar(false); }
+  function openProviderSettings() {
+    $('settings-advanced').open = true;
+    selectSettingsTab('providers'); show('settings-dialog');
+    $('settings-advanced').scrollIntoView?.({block:'start'});
+  }
+  async function toggleFilePanel() {
+    if ($('header-menu-dialog').open) close('header-menu-dialog');
+    setFilePanelOpen($('file-panel').hidden);
+    sidebar(false);
+    if (!$('file-panel').hidden) { $('file-close').focus({preventScroll:true}); await listFiles(); }
+  }
   async function loadTools(force = false) {
     show('tools-dialog'); const target = $('tools-list');
     const scope = currentToolsScope(), generation = ++toolsGeneration;
     if (toolsScope !== scope) { toolCache.fill(null); toolsScope = scope; }
-    if (!toolCache.some(Boolean)) target.replaceChildren(node('p', t('불러오는 중…'), 'muted'));
+    if (!toolCache.some(Boolean)) target.replaceChildren(node('p', t('正在加载…'), 'muted'));
     const cwds = state.cwd ? [state.cwd] : [];
     const results = await Promise.allSettled([rpc('plugin/list', {cwds, ...(force ? {forceRefetch:true} : {})}), rpc('skills/list', {cwds, ...(force ? {forceReload:true} : {})}), rpc('mcpServerStatus/list', {limit: 100, ...(state.threadId ? {threadId: state.threadId} : {})})]);
     if (generation !== toolsGeneration || scope !== currentToolsScope()) return;
     target.replaceChildren();
     // Plugins, skills and MCP servers each get a tab; long lists stay searchable instead of one long scroll.
-    const titles = [t('플러그인'), t('스킬'), t('MCP 서버')], counts = [0, 0, 0];
-    const tabs = node('div', null, 'tools-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', t('도구 종류'));
-    const search = node('input', null, 'tools-search'); search.type = 'search'; search.placeholder = t('이름 또는 설명 검색'); search.setAttribute('aria-label', t('도구 검색')); search.value = toolsQuery;
+    const titles = [t('插件'), t('Skills 技能'), t('MCP 服务器')], counts = [0, 0, 0];
+    const tabs = node('div', null, 'tools-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', t('工具类型'));
+    const search = node('input', null, 'tools-search'); search.type = 'search'; search.placeholder = t('搜索名称或说明'); search.setAttribute('aria-label', t('搜索工具')); search.value = toolsQuery;
     const panels = titles.map((title, i) => { const panel = node('section', null, 'tools-panel'); panel.dataset.toolsPanel = String(i); panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-label', title); return panel; });
-    const empty = node('p', t('검색 결과가 없습니다.'), 'empty-note tools-no-match'); empty.hidden = true;
+    const empty = node('p', t('没有匹配结果。'), 'empty-note tools-no-match'); empty.hidden = true;
     const card = (name, description, parent) => {
       const c = node('div', null, 'tool-card'), main = node('div', null, 'tool-card-main');
       main.append(node('strong', name), node('p', description || '', 'muted')); c.append(main); parent.append(c); return c;
@@ -2712,7 +2756,7 @@
       const panel = panels[i], result = results[i];
       if (result.status === 'fulfilled') toolCache[i] = result.value;
       const data = result.status === 'fulfilled' ? result.value : toolCache[i];
-      if (result.status === 'rejected') { card(t('불러오지 못했습니다'), errorText(result.reason) + (data ? t(' 이전 목록을 표시합니다.') : ''), panel).classList.add('tool-card-notice'); if (!data) return; }
+      if (result.status === 'rejected') { card(t('无法加载'), errorText(result.reason) + (data ? t(' 正在显示上次的列表。') : ''), panel).classList.add('tool-card-notice'); if (!data) return; }
       if (i === 0) {
         for (const market of data.marketplaces || []) {
           const parent = group(market.interface?.displayName || market.name, panel);
@@ -2721,43 +2765,43 @@
             const c = card(plugin.interface?.displayName || plugin.name, plugin.interface?.shortDescription || plugin.id, parent);
             if (plugin.installed) c.classList.add(plugin.enabled ? 'is-enabled' : 'is-disabled');
             const params = {pluginName: plugin.name, ...(market.path ? {marketplacePath: market.path} : {remoteMarketplaceName: market.name})};
-            actions(c, button(t('상세'), async () => { const detail = await rpc('plugin/read', params); logEvent(t('플러그인: ') + plugin.name, detail.plugin); show('activity-dialog'); }));
+            actions(c, button(t('详情'), async () => { const detail = await rpc('plugin/read', params); logEvent(t('插件：') + plugin.name, detail.plugin); show('activity-dialog'); }));
             if (plugin.installed) {
-              actions(c, button(plugin.enabled ? t('비활성화') : t('활성화'), async () => { await rpc('config/value/write', {keyPath: 'plugins.' + JSON.stringify(plugin.id) + '.enabled', value: !plugin.enabled, mergeStrategy: 'replace'}); await loadTools(); }),
-                button(t('제거'), async () => { if (!confirm(plugin.name + t(' 플러그인을 제거할까요?'))) return; await rpc('plugin/uninstall', {pluginId: plugin.id}); await loadTools(); }, 'secondary-button subtle-danger'));
-            } else actions(c, button(t('설치'), async () => {
+              actions(c, button(plugin.enabled ? t('停用') : t('启用'), async () => { await rpc('config/value/write', {keyPath: 'plugins.' + JSON.stringify(plugin.id) + '.enabled', value: !plugin.enabled, mergeStrategy: 'replace'}); await loadTools(); }),
+                button(t('移除'), async () => { if (!await confirmAction(plugin.name + t(' ——要移除此插件吗？'))) return; await rpc('plugin/uninstall', {pluginId: plugin.id}); await loadTools(); }, 'secondary-button subtle-danger'));
+            } else actions(c, button(t('安装'), async () => {
               const detail = await rpc('plugin/read', params);
               const summary = detail.plugin;
-              if (!confirm(plugin.name + t(' 설치\n\n') + (summary.description || '') + t('\n\n스킬 ') + (summary.skills?.length || 0) + t('개 · MCP ') + (summary.mcpServers?.length || 0) + t('개 · 훅 ') + (summary.hooks?.length || 0) + t('개'))) return;
+              if (!await confirmAction(plugin.name + t(' ——安装\n\n') + (summary.description || '') + t('\n\n技能：') + (summary.skills?.length || 0) + t(' · MCP：') + (summary.mcpServers?.length || 0) + t(' · 钩子：') + (summary.hooks?.length || 0) + t(' 总计'))) return;
               const result = await rpc('plugin/install', params);
-              for (const app of result.appsNeedingAuth || []) if (app.installUrl) { const c = card(app.name + t(' 계정 연결'), t('플러그인을 사용하려면 계정 연결이 필요합니다.'), panel); actions(c, button(t('연결'), () => call('ui.externalBrowser', {url: app.installUrl}))); }
-              toast(t('플러그인을 설치했습니다.')); if (!result.appsNeedingAuth?.length) await loadTools();
+              for (const app of result.appsNeedingAuth || []) if (app.installUrl) { const c = card(app.name + t(' 账号连接'), t('连接账号后才能使用此插件。'), panel); actions(c, button(t('连接'), () => call('ui.externalBrowser', {url: app.installUrl}))); }
+              toast(t('插件已安装。')); if (!result.appsNeedingAuth?.length) await loadTools();
             }, 'primary-button'));
           }
         }
-        for (const e of data.marketplaceLoadErrors || []) card(t('마켓플레이스 오류'), errorText(e.message), panel).classList.add('tool-card-notice');
-        if (!data.marketplaces?.length) card(t('등록된 플러그인이 없습니다'), t('마켓플레이스를 추가하거나 계정 연결 상태를 확인하세요.'), panel).classList.add('tool-card-notice');
+        for (const e of data.marketplaceLoadErrors || []) card(t('插件市场错误'), errorText(e.message), panel).classList.add('tool-card-notice');
+        if (!data.marketplaces?.length) card(t('未注册插件'), t('添加插件市场或检查账号连接。'), panel).classList.add('tool-card-notice');
       } else if (i === 1) {
         for (const entry of data.data || []) {
           for (const skill of entry.skills || []) {
             counts[1]++; const c = card(skill.interface?.displayName || skill.name, skill.description, panel);
             c.classList.add(skill.enabled === false ? 'is-disabled' : 'is-enabled');
             c.querySelector('.tool-card-main').append(node('small', skill.path, 'tool-card-path'));
-            actions(c, button(t('대화에 사용'), () => { $('prompt').value += '$' + skill.name + ' '; close('tools-dialog'); $('prompt').focus(); }),
-              button(skill.enabled ? t('비활성화') : t('활성화'), async () => { await rpc('skills/config/write', {path: skill.path, enabled: !skill.enabled}); await loadTools(); }));
+            actions(c, button(t('在聊天中使用'), () => { $('prompt').value += '$' + skill.name + ' '; close('tools-dialog'); $('prompt').focus(); }),
+              button(skill.enabled ? t('停用') : t('启用'), async () => { await rpc('skills/config/write', {path: skill.path, enabled: !skill.enabled}); await loadTools(); }));
           }
-          for (const e of entry.errors || []) card(t('스킬 로드 오류'), errorText(e.message), panel).classList.add('tool-card-notice');
+          for (const e of entry.errors || []) card(t('技能加载错误'), errorText(e.message), panel).classList.add('tool-card-notice');
         }
-        if (!counts[1]) card(t('설치된 스킬이 없습니다'), t('SKILL.md가 들어 있는 스킬 폴더를 가져오거나 Codex에게 스킬 생성을 요청하세요.'), panel).classList.add('tool-card-notice');
+        if (!counts[1]) card(t('未安装技能'), t('导入包含 SKILL.md 的文件夹，或让 Codex 创建技能。'), panel).classList.add('tool-card-notice');
       } else {
         for (const server of data.data || []) {
           counts[2]++;
-          const c = card(server.name, (server.runtimeStatus?.status || server.authStatus) + t(' · 도구 ') + Object.keys(server.tools || {}).length + t('개'), panel);
+          const c = card(server.name, (server.runtimeStatus?.status || server.authStatus) + t(' · 工具：') + Object.keys(server.tools || {}).length + t(' 总计'), panel);
           if (server.toolsError) c.querySelector('.tool-card-main').append(node('p', errorText(server.toolsError), 'muted tool-card-error'));
-          actions(c, button(t('도구 보기'), () => { logEvent('MCP: ' + server.name, server); show('activity-dialog'); }), button(t('로그인'), async () => { const r = await rpc('mcpServer/oauth/login', {name: server.name}); await call('ui.externalBrowser', {url: r.authorizationUrl}); }));
+          actions(c, button(t('查看工具'), () => { logEvent('MCP: ' + server.name, server); show('activity-dialog'); }), button(t('登录'), async () => { const r = await rpc('mcpServer/oauth/login', {name: server.name}); await call('ui.externalBrowser', {url: r.authorizationUrl}); }));
         }
-        if (!data.data?.length) card(t('설정된 MCP 서버가 없습니다'), t('서버 설정에서 HTTP 또는 stdio 서버를 추가할 수 있습니다.'), panel).classList.add('tool-card-notice');
-        if (data.nextCursor) panel.append(node('p', t('표시된 서버: 처음 100개'), 'muted'));
+        if (!data.data?.length) card(t('尚未配置 MCP 服务器'), t('请在服务器设置中添加 HTTP 或 stdio 服务器。'), panel).classList.add('tool-card-notice');
+        if (data.nextCursor) panel.append(node('p', t('显示前 100 台服务器'), 'muted'));
       }
     });
     const tabButtons = titles.map((title, i) => {
@@ -2790,7 +2834,7 @@
         box.append(label); read = elicitationForm(spec, box);
       } else {
         if (choices) {
-          field = node('select'); field.add(new Option(t('선택하세요'), ''));
+          field = node('select'); field.add(new Option(t('选择一个选项'), ''));
           choices.forEach((value, i) => field.add(new Option(spec.enumNames?.[i] || spec.oneOf?.[i]?.title || String(value), String(i))));
           if (spec.default !== undefined) field.value = String(choices.indexOf(spec.default));
           read = () => field.value === '' ? undefined : choices[Number(field.value)];
@@ -2803,7 +2847,7 @@
             for (const option of field.options) option.selected = (spec.default || []).includes(values[Number(option.value)]);
             read = () => [...field.selectedOptions].map(o => values[Number(o.value)]);
           } else {
-            field = node('textarea'); field.placeholder = t('항목마다 한 줄씩 입력하세요'); field.value = (spec.default || []).join('\n');
+            field = node('textarea'); field.placeholder = t('每行输入一项'); field.value = (spec.default || []).join('\n');
             read = () => field.value.split('\n').filter(value => value.length > 0);
           }
         } else {
@@ -2824,66 +2868,77 @@
     return () => {
       const entries = [];
       for (const entry of fields) {
-        if (entry.field && !entry.field.reportValidity()) throw new Error(t('입력 내용을 확인해 주세요.'));
+        if (entry.field && !entry.field.reportValidity()) throw new Error(t('请检查输入内容。'));
         const value = entry.read(); if (value !== undefined) entries.push([entry.key, value]);
       }
       return Object.fromEntries(entries);
     };
   }
   function requestThread(req) { return String(req?.params?.threadId || ''); }
-  function closeBackgroundRequest() {
-    if (!displayedRequest) return;
-    const req = requestQueue.get(displayedRequest), thread = requestThread(req);
-    if (chatSelection || (thread && thread !== state.threadId)) {
-      displayedRequest = null;
-      if ($('request-dialog').open) close('request-dialog');
-    }
+  function currentRequest() {
+    if (chatSelection) return;
+    return [...requestQueue].find(([, req]) => !requestThread(req) || requestThread(req) === state.threadId);
+  }
+  function hideRequest(keepForm = true) {
+    if (displayedRequest === null) return;
+    const fields = $('request-fields'), actions = $('request-actions');
+    if (keepForm) requestForms.set(displayedRequest, {fields:[...fields.childNodes], actions:[...actions.childNodes]});
+    fields.replaceChildren(); actions.replaceChildren(); displayedRequest = null;
+    if ($('request-dialog').open) close('request-dialog');
+    $('resume-request').hidden = !currentRequest();
+  }
+  function resolveRequest(key) {
+    requestQueue.delete(key); requestForms.delete(key);
+    if (displayedRequest === key) hideRequest(false);
+    nextRequest();
   }
   function nextRequest() {
-    closeBackgroundRequest();
-    if (chatSelection || displayedRequest || !requestQueue.size) return;
-    let entry;
-    for (const candidate of requestQueue.entries()) {
-      const thread = requestThread(candidate[1]);
-      if (!thread || thread === state.threadId) { entry = candidate; break; }
-    }
-    if (!entry) return;
+    const thread = requestThread(requestQueue.get(displayedRequest));
+    if (displayedRequest !== null && (chatSelection || (thread && thread !== state.threadId))) hideRequest();
+    const entry = currentRequest();
+    $('resume-request').hidden = !entry || displayedRequest !== null;
+    if (!entry || displayedRequest !== null) return;
     const [key, req] = entry; displayedRequest = key;
-    $('request-title').textContent = req.method.includes('requestUserInput') ? t('Codex 질문') : req.method.includes('requestApproval') ? t('작업 승인') : t('Codex 요청');
+    $('request-title').textContent = req.method.includes('requestUserInput') ? t('Codex 提问') : req.method.includes('requestApproval') ? t('批准操作') : t('Codex 请求');
     $('request-reason').textContent = req.params.reason || req.params.message || req.method;
     $('request-detail').textContent = JSON.stringify(req.params, null, 2); $('request-fields').replaceChildren(); $('request-actions').replaceChildren();
+    $('resume-request').hidden = true;
+    const form = requestForms.get(key);
+    if (form) {
+      requestForms.delete(key);
+      $('request-fields').append(...form.fields); $('request-actions').append(...form.actions);
+      show('request-dialog'); return;
+    }
     const complete = async result => {
       result = await result;
       await call('rpc.respond', {key, result});
-      requestQueue.delete(key);
-      if (displayedRequest === key) { displayedRequest = null; close('request-dialog'); }
-      nextRequest();
+      resolveRequest(key);
     };
     const add = (text, result, cls) => $('request-actions').append(button(text, () => complete(typeof result === 'function' ? result() : result), cls));
     if (req.method === 'item/commandExecution/requestApproval' || req.method === 'item/fileChange/requestApproval') {
-      add(t('거절'), {decision: 'decline'}); add(t('이번 대화에 허용'), {decision: 'acceptForSession'}); add(t('허용'), {decision: 'accept'}, 'primary-button');
+      add(t('拒绝'), {decision: 'decline'}); add(t('本次对话始终允许'), {decision: 'acceptForSession'}); add(t('允许'), {decision: 'accept'}, 'primary-button');
     } else if (req.method === 'item/permissions/requestApproval') {
-      add(t('거절'), {permissions: {}, scope: 'turn'}); add(t('허용'), {permissions: req.params.permissions, scope: 'turn'}, 'primary-button');
+      add(t('拒绝'), {permissions: {}, scope: 'turn'}); add(t('允许'), {permissions: req.params.permissions, scope: 'turn'}, 'primary-button');
     } else if (req.method === 'item/tool/requestUserInput') {
       const answers = [];
       for (const question of req.params.questions || []) {
         const wrap = node('div', null, 'question'), label = node('label', question.question), field = node('input'); field.type = question.isSecret ? 'password' : 'text'; field.setAttribute('aria-label', question.question); label.append(field); wrap.append(label);
-        if (question.options?.length) { const select = node('select'); select.setAttribute('aria-label', question.header || question.question); select.add(new Option(t('선택 또는 직접 입력'), '')); for (const o of question.options) select.add(new Option(o.label + (o.description ? ' — ' + o.description : ''), o.label)); select.addEventListener('change', () => field.value = select.value); wrap.append(select); }
+        if (question.options?.length) { const select = node('select'); select.setAttribute('aria-label', question.header || question.question); select.add(new Option(t('选择或输入回答'), '')); for (const o of question.options) select.add(new Option(o.label + (o.description ? ' — ' + o.description : ''), o.label)); select.addEventListener('change', () => field.value = select.value); wrap.append(select); }
         answers.push([question.id, field]); $('request-fields').append(wrap);
       }
-      add(t('답변 보내기'), () => ({answers: Object.fromEntries(answers.map(([id, field]) => [id, {answers: [field.value]}]))}), 'primary-button');
+      add(t('提交答案'), () => ({answers: Object.fromEntries(answers.map(([id, field]) => [id, {answers: [field.value]}]))}), 'primary-button');
     } else if (req.method === 'mcpServer/elicitation/request') {
-      add(t('취소'), {action: 'decline'});
+      add(t('取消'), {action: 'decline'});
       if (req.params.mode === 'url') {
-        $('request-fields').append(button(t('연결 페이지 열기'), () => call('ui.externalBrowser', {url: req.params.url})));
-        add(t('완료'), {action: 'accept'}, 'primary-button');
+        $('request-fields').append(button(t('打开连接页面'), () => call('ui.externalBrowser', {url: req.params.url})));
+        add(t('完成'), {action: 'accept'}, 'primary-button');
       } else {
         const read = elicitationForm(req.params.requestedSchema || {}, $('request-fields'));
-        add(t('전송'), () => ({action: 'accept', content: read()}), 'primary-button');
+        add(t('提交'), () => ({action: 'accept', content: read()}), 'primary-button');
       }
     } else {
-      const field = node('textarea'); field.setAttribute('aria-label', t('프로토콜 응답 JSON')); field.value = '{}'; $('request-fields').append(node('p', t('확장 프로토콜 요청입니다. 응답 JSON을 입력할 수 있습니다.'), 'muted'), field);
-      $('request-actions').append(button(t('작업 중지'), async () => { await call('chat.stop'); requestQueue.delete(key); displayedRequest = null; close('request-dialog'); nextRequest(); })); add(t('응답 전송'), () => JSON.parse(field.value), 'primary-button');
+      const field = node('textarea'); field.setAttribute('aria-label', t('协议响应 JSON')); field.value = '{}'; $('request-fields').append(node('p', t('这是扩展协议请求，你可以输入响应 JSON。'), 'muted'), field);
+      $('request-actions').append(button(t('停止任务'), async () => { await call('chat.stop'); resolveRequest(key); })); add(t('发送响应'), () => JSON.parse(field.value), 'primary-button');
     }
     show('request-dialog');
   }
@@ -2930,7 +2985,7 @@
       $('terminal-output').scrollTop = $('terminal-output').scrollHeight;
     }
     else if (name === 'server.request') { requestQueue.set(data.key, data); showTaskActivity(C.taskActivity(name, data), data); nextRequest(); }
-    else if (name === 'server.resolved') { requestQueue.delete(data.key); resolveTaskActivity(data.key); if (displayedRequest === data.key) { displayedRequest = null; close('request-dialog'); } nextRequest(); }
+    else if (name === 'server.resolved') { resolveTaskActivity(data.key); resolveRequest(data.key); }
     else if (name === 'viewport') { document.body.classList.toggle('keyboard-open', !!data.keyboardVisible); viewportChanged(); }
     else if (name === 'theme') document.documentElement.dataset.theme = data.theme === 'dark' ? 'dark' : 'light';
     else if (name === 'notification.open') { if (data.threadId) openChat(data.threadId); else nextRequest(); }
@@ -2970,12 +3025,18 @@
     d.addEventListener('pointercancel', () => { backdropPointer = null; });
     d.addEventListener('close', () => {
       backdropPointer = null;
+      if (d.open) return;
       const i = dialogs.indexOf(d.id); if (i !== -1) dialogs.splice(i, 1);
     });
     d.addEventListener('cancel', e => { e.preventDefault(); dismiss(d.id); });
   });
   wireSheetGestures();
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => dismiss(b.dataset.close)));
+  on('confirm-cancel', () => finishConfirmation(false));
+  on('confirm-accept', () => finishConfirmation(true));
+  $('confirm-dialog').addEventListener('close', () => {
+    if (!$('confirm-dialog').open && settleConfirmation) finishConfirmation(false);
+  });
   document.addEventListener('click', event => {
     if (!event.target.closest('#project-actions,#project-remove-card,.project-more')) closeProjectCard();
     if (sessionCard && !event.target.closest('.session-card, .session-more')) closeSessionCard();
@@ -2994,10 +3055,17 @@
     on(buttonId, () => { const expanded = button.getAttribute('aria-expanded') !== 'true'; apply(expanded); localStorage.setItem(key, expanded ? 'expanded' : 'collapsed'); });
   }
   on('scrim', () => sidebar(false)); on('new-chat', async () => newChat(''));
+  on('header-new-chat', () => newChat(state.workspace?.key || ''));
+  on('header-more', () => { show('header-menu-dialog'); $('header-more').setAttribute('aria-expanded', 'true'); });
+  $('header-menu-dialog').addEventListener('close', () => {
+    if (!$('header-menu-dialog').open) $('header-more').setAttribute('aria-expanded', 'false');
+  });
+  on('header-activity', () => { close('header-menu-dialog'); show('activity-dialog'); });
   on('conversation-failure-copy', () => copyText($('conversation-failure-message').textContent, $('conversation-failure-copy'), '复制说明', '已复制'));
   on('conversation-failure-new', () => newChat(state.workspace?.key || ''));
   on('add-project', addProject);
-  ['choose-folder', 'header-project'].forEach(id => on(id, () => pickFolder()));
+  on('choose-folder', () => pickFolder());
+  on('header-project', () => { if ($('header-menu-dialog').open) close('header-menu-dialog'); return pickFolder(); });
   $('project-link-dialog').addEventListener('close', () => {
     if ($('project-link-dialog').open) return;
     const key = projectLinkView?.returnKey;
@@ -3009,10 +3077,11 @@
   });
    const closeToolMenu = () => { if ($('tool-menu-dialog').open) close('tool-menu-dialog'); };
    setFilePanelOpen(false);
-   ['files-toggle'].forEach(id => on(id, async () => { closeToolMenu(); setFilePanelOpen($('file-panel').hidden); sidebar(false); if (!$('file-panel').hidden) await listFiles(); }));
+  on('files-toggle', toggleFilePanel);
+  on('composer-file-context', () => { closeComposerAddMenu(false); if ($('file-panel').hidden) return toggleFilePanel(); $('file-close').focus({preventScroll:true}); });
   on('file-close', () => setFilePanelOpen(false)); on('file-up', async () => { folder = C.parent(folder); await listFiles(); });
   on('file-query', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => listFiles($('file-query').value.trim()).catch(e => toast(e.message)), 300); }, 'input');
-  ['file-new', 'folder-new'].forEach(id => on(id, async () => { const context = fileContext(), destination = folder; const name = await fileInput(context, id === 'file-new' ? t('새 파일') : t('새 폴더'), t('이름을 입력하세요.')); if (name) await mutate(id === 'file-new' ? 'mobile_create' : 'mobile_mkdir', {path:C.join(destination, name), content:''}, context); }));
+  ['file-new', 'folder-new'].forEach(id => on(id, async () => { const context = fileContext(), destination = folder; const name = await fileInput(context, id === 'file-new' ? t('新建文件') : t('新建文件夹'), t('请输入名称。')); if (name) await mutate(id === 'file-new' ? 'mobile_create' : 'mobile_mkdir', {path:C.join(destination, name), content:''}, context); }));
   on('show-changes', () => { closeToolMenu(); return loadChanges(); }); on('changes-refresh', () => loadChanges()); on('changes-history', () => loadChanges(true)); on('change-restore', restoreChange);
   on('editor-save', saveEditor);
   on('editor-delete', async () => { const file = currentEditor(); await mutate('mobile_delete', {path:file.path}, file.context); if (openedFile === file) { fileDrafts.delete(fileDraftKey(file.context, file.path)); openedFile = null; close('editor-dialog'); } });
@@ -3024,17 +3093,17 @@
   on('composer', async () => {
     if (chatSelection || providerSwitchPending) return;
     if (!configuredApi()) {
-      if (state.apiCanRebind) { $('header-api').click(); toast('请为此聊天重新绑定 API。'); }
-      else { openProviderSettings(); toast('请先配置 API 服务商。'); }
+      if (state.apiCanRebind) { $('header-api').click(); toast(t('请为此聊天重新绑定 API。')); }
+      else { openProviderSettings(); toast(t('请先配置 API 服务商。')); }
       return;
     }
-    if (state.workspace?.selected && state.workspace.available === false) { toast(t('먼저 로컬 폴더를 연결해 주세요.')); return; }
+    if (state.workspace?.selected && state.workspace.available === false) { toast(t('请先关联本地文件夹。')); return; }
     const value = $('prompt').value, text = value.trim();
     if ((!text && !draftContext.attachments.length) || sending || voiceStarting || voiceActive) return;
-    if (!state.models.some(m => (m.model || m.id) === $('model').value)) { toast(t('모델 목록을 새로고침해 주세요.')); return; }
+    if (!state.models.some(m => (m.model || m.id) === $('model').value)) { toast(t('请刷新模型列表。')); return; }
     const chosenModel = state.models.find(m => (m.model || m.id) === $('model').value);
     if (!window.MobileCodexReasoning.validSelection($('effort').value, chosenModel, !!state.apiActive)) {
-      toast('当前模型不支持所选思考强度，已阻止发送。请重新选择思考档位。'); return;
+      toast(t('当前模型不支持所选思考强度，已阻止发送。请重新选择思考档位。')); return;
     }
     const steer = !!state.busy && !!state.turnId, expectedTurnId = state.turnId || '', expectedThreadId = state.threadId || '', workspaceKey = state.workspace?.key || '';
     const submitted = {value, context:JSON.parse(JSON.stringify(draftContext)), provider:draftProvider, scopes:new Set([draftScope])}; sending = submitted;
@@ -3120,7 +3189,7 @@
     historyView.top = top;
     if (top !== previous) {
       const atBottom = chatScroll.scrollHeight - top - chatScroll.clientHeight <= 2;
-      const clampedAtBottom = following && document.documentElement.hasAttribute('data-liquid-glass');
+      const clampedAtBottom = following;
       following = atBottom && !chatTouch?.towardHistory && (top > previous || clampedAtBottom);
     }
     updateJumpLatest();
@@ -3141,9 +3210,11 @@
     (showModels && !$('picker-provider').disabled ? $('picker-provider') : $('model-picker-model')).focus({preventScroll:true});
     refreshPickerModels();
   }
-  on('jump-latest', scrollLatest); on('composer-options', () => openModelPicker());
+  on('jump-latest', scrollLatest);
+  on('composer-options', () => { closeComposerAddMenu(true); openModelPicker(); });
   on('model-picker-model', () => { showModelPanel(true); refreshPickerModels(); });
   on('header-api', () => {
+    if ($('header-menu-dialog').open) close('header-menu-dialog');
     if (!(state.apiProviders || []).some(profile => profile.hasKey)) { openProviderSettings(); return; }
     openModelPicker(true);
   });
@@ -3155,14 +3226,15 @@
     const expectedThreadId = state.threadId || '', expectedApiScope = state.apiScope, workspaceKey = state.workspace?.key || '';
     if (rebind) {
       const name = (state.apiProviders || []).find(profile => profile.id === id)?.name || id;
-      if (!confirm(`将此聊天重新绑定到「${name}」？本地消息和项目会保留。新模型会从下一条消息开始建立上下文。`)) {
+      if (!await confirmAction(t('将此聊天重新绑定到「{provider}」？本地消息和项目会保留。新模型会从下一条消息开始建立上下文。', {provider:name}))) {
         renderModelList(); return;
       }
+      if (expectedThreadId !== (state.threadId || '') || expectedApiScope !== state.apiScope || workspaceKey !== (state.workspace?.key || '') || state.busy || sending || providerSwitchPending) return;
     }
     providerSwitchPending = true; saveDraft(); renderModelList(); updateSend();
     try {
       render(await call(rebind ? 'chat.provider.rebind' : 'chat.provider', {id, expectedThreadId, expectedApiScope, workspaceKey}));
-      if (rebind) toast('已重新绑定 API。');
+      if (rebind) toast(t('已重新绑定 API。'));
     }
     finally { providerSwitchPending = false; renderModelList(); updateSend(); }
   }, 'change');
@@ -3199,6 +3271,7 @@
     event.preventDefault();
     toggleInPlace(summary, () => { summary.parentElement.open = !summary.parentElement.open; });
   });
+  on('resume-request', nextRequest);
   on('activity-details', () => {
     if (!state.liveTaskActivity) { show('activity-dialog'); return; }
     const latest = $('task-activities').lastElementChild;
@@ -3231,7 +3304,7 @@
   if ($('api-effort-choice')) on('api-effort-choice', () => {
     const value = $('api-effort-choice').value;
     if (![...$('effort').options].some(o => o.value === value)) {
-      toast('该档位不可用，请重新选择。'); return;
+      toast(t('该档位不可用，请重新选择。')); return;
     }
     $('effort').value = value;
     $('effort').dispatchEvent(new Event('change', {bubbles:true}));
@@ -3268,7 +3341,7 @@
       const hits=[];
       for(let i=start+1;i<end;i++)if(re.test(lines[i]))hits.push(i);
       if(value===null){ for(const index of hits.reverse()){lines.splice(index,1);end--;} continue; }
-      if(hits.length>1)throw new Error('已有重复配置键：['+section+'] '+key+'。请先在配置编辑器处理。');
+      if(hits.length>1)throw new Error(t('已有重复配置键：[{section}] {key}。请先在配置编辑器处理。', {section,key}));
       if(hits.length)lines[hits[0]]=key+' = '+value;
       else {lines.splice(end,0,key+' = '+value);end++;}
     }
@@ -3277,7 +3350,7 @@
   let subagentBusy=false;
   function subagentPrerequisite() {
     if (!configuredApi()) return '请先配置并选择 API 服务商。';
-    if (!state.ready) return L.brand('请先启动 Codex 运行时。');
+    if (!state.ready) return '请先启动 Codex 运行时。';
     if (state.busy) return '当前任务结束后可更改配置。';
     const model = state.models.find(model => (model.model || model.id) === $('model').value);
     if (!model) return '请先选择可用模型。';
@@ -3289,7 +3362,13 @@
     $('subagents-save').disabled = blocked; $('subagents-test').disabled = blocked;
     $('subagents-enabled').disabled = subagentBusy || !!state.busy;
     $('subagents-limit').disabled = subagentBusy || !!state.busy;
-    $('subagents-save').title = reason; $('subagents-test').title = reason;
+    $('subagents-save').title = t(reason); $('subagents-test').title = t(reason);
+  }
+
+  let subagentStatus = [];
+  function setSubagentStatus(key, args) {
+    subagentStatus = [key, args];
+    $('subagents-status').textContent = t(key, args);
   }
 
   function cnReadAgentPrefs(content) {
@@ -3299,57 +3378,60 @@
     return {active:active&&agents.enabled!=='false',limit:[1,2,3,4].includes(n)?n:3};
   }
   async function cnLoadSubagents() {
-    const el=$('subagents-status');
-    el.textContent=L.brand('正在读取 Codex 本地配置…');
+    setSubagentStatus('正在读取 Codex 本地配置…');
     try{
       const cfg=await call('config.read');
       const prefs=cnReadAgentPrefs(cfg?.content||'');
       $('subagents-enabled').checked=prefs.active;
       $('subagents-limit').value=String(prefs.limit);
-      el.textContent=prefs.active?'配置中已启用多智能体；能否成功派遣仍需实际测试。':'当前未在配置中启用多智能体。';
-    }catch(error){el.textContent='读取失败：'+errorText(error);}
+      setSubagentStatus(prefs.active?'配置中已启用多智能体；能否成功派遣仍需实际测试。':'当前未在配置中启用多智能体。');
+    }catch(error){setSubagentStatus('读取失败：{error}', {error:errorText(error)});}
   }
   async function cnSaveSubagents() {
     const reason = subagentPrerequisite();
-    if (reason) { $('subagents-status').textContent = reason; return; }
+    if (reason) { setSubagentStatus(reason); return; }
     if(subagentBusy)return;
     subagentBusy=true; syncSubagentControls();
-    const save=$('subagents-save'),status=$('subagents-status');
-    save.disabled=true;status.textContent='正在保存本地配置…';
+    setSubagentStatus('正在保存本地配置…');
     try{
       const read=await call('config.read');
-      if(typeof read?.content!=='string')throw new Error('未能读取完整 config.toml，已中止保存。');
+      if(typeof read?.content!=='string')throw new Error(t('未能读取完整 config.toml，已中止保存。'));
       const enabled=$('subagents-enabled').checked;
       const limit=Number($('subagents-limit').value);
-      if(![1,2,3,4].includes(limit))throw new Error('并行数无效');
+      if(![1,2,3,4].includes(limit))throw new Error(t('并行数无效'));
       let content=cnSetTomlSection(read.content,'features',{multi_agent:String(enabled)});
       if(!enabled)content=cnSetTomlSection(content,'features',{multi_agent_v2:'false'});
       content=cnSetTomlSection(content,'agents',{enabled:String(enabled),max_concurrent_threads_per_session:null,max_threads:String(limit)});
-      if(content===read.content){status.textContent='设置没有变化；仍需实际发送任务验证。';return;}
+      if(content===read.content){setSubagentStatus('设置没有变化；仍需实际发送任务验证。');return;}
       await call('config.save',{content});
-      status.textContent=L.brand('配置已保存，正在重新连接 Codex…');
+      setSubagentStatus('配置已保存，正在重新连接 Codex…');
       await call('runtime.start');
       const check=await call('config.read');
       const actual=cnReadAgentPrefs(check?.content||'');
-      if(actual.active!==enabled||actual.limit!==limit)throw new Error('保存后复查结果不一致');
-      status.textContent=enabled?'已启用多智能体配置（最多 '+limit+' 个）。请使用测试任务验证 spawn_agent 是否可调用。':'已停用多智能体配置。';
-    }catch(error){status.textContent='未确认启用成功：'+errorText(error)+ L.brand('。可在「Codex 设置编辑」中检查。');}
+      if(actual.active!==enabled||actual.limit!==limit)throw new Error(t('保存后复查结果不一致'));
+      setSubagentStatus(enabled?'已启用多智能体配置（最多 {count} 个）。请使用测试任务验证 spawn_agent 是否可调用。':'已停用多智能体配置。', {count:limit});
+    }catch(error){setSubagentStatus('未确认启用成功：{error}。可在「Codex 设置编辑」中检查。', {error:errorText(error)});}
     finally{subagentBusy=false;syncSubagentControls();}
   }
   on('subagents-refresh',cnLoadSubagents);
   on('subagents-save',cnSaveSubagents);
   on('subagents-test',()=>{
-    const reason = subagentPrerequisite(); if (reason) { $('subagents-status').textContent = reason; return; }
-    const task=L.brand('请使用 Codex 原生 spawn_agent 派遣两个子智能体：一个检查当前项目的代码结构，一个只读检查潜在问题。等待它们完成并汇总结果。请报告是否真正调用了 spawn_agent；如果不可用，明确说明，不要假装创建了子智能体。');
+    const reason = subagentPrerequisite(); if (reason) { setSubagentStatus(reason); return; }
+    const task=t('请使用 Codex 原生 spawn_agent 派遣两个子智能体：一个检查当前项目的代码结构，一个只读检查潜在问题。等待它们完成并汇总结果。请报告是否真正调用了 spawn_agent；如果不可用，明确说明，不要假装创建了子智能体。');
     $('prompt').value=task;saveDraft();sizeComposer();close('settings-dialog');$('prompt').focus();
-    toast('测试提示词已填入，确认后手动点击发送。');
+    toast(t('测试提示词已填入，确认后手动点击发送。'));
   });
 
   on('restart', async () => { await call('runtime.stop'); await call('runtime.start'); });
   on('engine-stop', () => call('runtime.stop'));
   on('battery-settings', () => call('ui.batterySettings'));
-  selectSettingsTab('general');
-  on('configure-api', openProviderSettings); on('settings', () => { ensureNotificationSettings(); show('settings-dialog'); sidebar(false); });
+  selectSettingsTab('providers');
+  on('configure-api', openProviderSettings);
+  on('settings', () => {
+    ensureNotificationSettings();
+    $('settings-advanced').open = false;
+    show('settings-dialog'); $('settings-dialog').scrollTop = 0;
+  });
   document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.addEventListener('click', () => {
     const selected = tab.dataset.settingsTab; selectSettingsTab(selected);
     if (selected === 'personal' && !instructionsLoaded) loadInstructions();
@@ -3368,42 +3450,42 @@
     const choice = $('language').value;
     try { await call('ui.locale', {language:choice}); } catch (error) { $('language').value = L.choice(); throw error; }
     saveDraft(); saveOptions(); L.set(choice);
+    if (subagentStatus.length) setSubagentStatus(...subagentStatus);
     agentUi?.localize();
     const sizeRow = $('text-size').closest('.text-size-row');
-    sizeRow.querySelector('strong').textContent = t('글자 크기');
-    sizeRow.querySelector('small').textContent = t('폰과 태블릿의 앱 화면에 적용됩니다.');
-    $('text-size').setAttribute('aria-label', t('글자 크기')); $('text-size').options[0].textContent = t('기본 · 100%');
+    sizeRow.querySelector('strong').textContent = t('文字大小');
+    sizeRow.querySelector('small').textContent = t('适用于手机和平板上的应用界面。');
+    $('text-size').setAttribute('aria-label', t('文字大小')); $('text-size').options[0].textContent = t('默认 · 100%');
     updateReplyIndentLabels();
     modelKey = ''; render(await call('state')); renderDraftContext(); drawDictation(dictationState); await loadUpdates();
     if (!$('file-panel').hidden) await listFiles();
     if ($('tools-dialog').open) await loadTools(false);
   }, 'change');
   on('instructions-reload', loadInstructions); on('instructions-save', saveInstructions);
-  $('settings-dialog').addEventListener('cancel', event => { event.preventDefault(); dismiss('settings-dialog'); });
   on('storage-access', () => call('ui.storageAccess')); on('theme', setTheme, 'change');
   on('devtools-check', checkDevtools);
   on('floating-chat', () => call('ui.floatingChat')); on('phone-settings', () => call('ui.phoneSettings')); on('phone-enable', enablePhone);
   on('phone-disable', stopPhone); on('phone-stop-banner', stopPhone);
-  ['edit-config', 'tools-config'].forEach(id => on(id, config)); on('config-save', async () => { await call('config.save', {content: $('config-editor').value}); configOriginal = $('config-editor').value; await call('runtime.start'); close('config-dialog'); toast(t('설정을 적용했습니다.')); });
+  ['edit-config', 'tools-config'].forEach(id => on(id, config)); on('config-save', async () => { await call('config.save', {content: $('config-editor').value}); configOriginal = $('config-editor').value; await call('runtime.start'); close('config-dialog'); toast(t('设置已应用。')); });
   function terminalControls() {
     const running = terminalState.running, input = $('terminal-command');
     const inputFailed = running && !!terminalState.inputError;
-    $('terminal-submit').textContent = t(running ? '입력 전송' : '실행');
+    $('terminal-submit').textContent = t(running ? '发送输入' : '运行');
     $('terminal-submit').disabled = terminalSending || terminalState.stopping || inputFailed;
     $('terminal-stop').disabled = !running || terminalState.stopping;
     input.disabled = terminalSending || terminalState.stopping || inputFailed;
     input.type = running ? 'password' : 'text';
-    input.placeholder = t(running ? '입력 후 전송 · 빈 입력은 Enter' : '명령 입력');
-    input.setAttribute('aria-label', t(running ? '프로그램 입력' : '셸 명령'));
-    if (inputFailed && !terminalState.stopping) $('terminal-status').textContent = t('터미널에 입력을 보내지 못했습니다.');
+    input.placeholder = t(running ? '发送输入 · 留空表示回车' : '输入命令');
+    input.setAttribute('aria-label', t(running ? '程序输入' : 'Shell 命令'));
+    if (inputFailed && !terminalState.stopping) $('terminal-status').textContent = t('无法将输入发送到终端。');
   }
   function renderTerminal(value) {
     if (typeof value.revision !== 'number' || value.revision < terminalState.revision) return;
     if (value.id !== terminalState.id || value.running !== terminalState.running) $('terminal-command').value = '';
     terminalState = {...value};
-    $('terminal-output').textContent = (value.output || '') + (value.exitCode == null ? '' : t('\n[종료 코드 ') + value.exitCode + ']\n');
+    $('terminal-output').textContent = (value.output || '') + (value.exitCode == null ? '' : t('\n[退出代码 ') + value.exitCode + ']\n');
     $('terminal-output').scrollTop = $('terminal-output').scrollHeight;
-    $('terminal-status').textContent = t(value.stopping ? '중지하는 중…' : value.running ? '실행 중인 프로그램에 입력을 보냅니다.' : '');
+    $('terminal-status').textContent = t(value.stopping ? '正在停止…' : value.running ? '输入将发送到正在运行的程序。' : '');
     terminalControls();
   }
   on('show-recovery', () => { closeToolMenu(); return recovery(); });
@@ -3424,10 +3506,10 @@
             terminalState.inputError = result.reason;
             if (result.revision > terminalState.revision) terminalState.revision = result.revision;
           }
-          throw new Error(t(result.reason === 'input_queue_full' ? '터미널 입력 대기열이 가득 찼습니다. 잠시 후 다시 보내 주세요.' : '터미널에 입력을 보내지 못했습니다.'));
+          throw new Error(t(result.reason === 'input_queue_full' ? '终端输入队列已满，请稍后重试。' : '无法将输入发送到终端。'));
         }
         if (terminalState.inputError) return;
-        $('terminal-status').textContent = t('입력을 전송했습니다.');
+        $('terminal-status').textContent = t('输入已发送。');
       } else renderTerminal(await call('terminal.run', {command:text}));
       $('terminal-command').value = '';
     } catch (error) {
@@ -3437,11 +3519,11 @@
     } finally { terminalSending = false; terminalControls(); $('terminal-command').focus(); }
   }, 'submit');
   on('show-tools', () => show('tool-menu-dialog')); on('show-tools-panel', () => { closeToolMenu(); return loadTools(false); }); on('refresh-tools', () => loadTools(true));
-  on('marketplace-add', async () => { const source = await input(t('마켓플레이스 추가'), t('Git URL 또는 기기의 로컬 경로')); if (source) { const result = await rpc('marketplace/add', {source}); toast(result.marketplaceName + t(' 추가 완료')); await loadTools(); } });
-  on('skill-import', async () => { const r = await call('skills.import'); if (!r.cancelled) { toast(t('스킬 폴더를 가져왔습니다.')); await loadTools(); } });
+  on('marketplace-add', async () => { const source = await input(t('添加插件市场'), t('Git URL 或本机路径')); if (source) { const result = await rpc('marketplace/add', {source}); toast(result.marketplaceName + t(' 已添加')); await loadTools(); } });
+  on('skill-import', async () => { const r = await call('skills.import'); if (!r.cancelled) { toast(t('技能文件夹已导入。')); await loadTools(); } });
   $('request-dialog').addEventListener('cancel', e => e.preventDefault());
   $('theme').value = appearance.choice;
-  syncThemeChoices($('theme').value);
+  selectSegment($('theme-choices'), $('theme').value);
   $('theme-choices').addEventListener('change', event => {
     const select = $('theme');
     select.value = event.target.value;

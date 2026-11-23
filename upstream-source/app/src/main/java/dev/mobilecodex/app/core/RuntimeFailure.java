@@ -11,10 +11,10 @@ public final class RuntimeFailure {
 
     public static String classify(String stderrTail) {
         return switch (category(stderrTail)) {
-            case "native_link" -> t("네이티브 종속성 오류");
-            case "panic" -> t("런타임 내부 오류");
-            case "memory" -> t("메모리 부족");
-            case "config" -> t("설정 형식 오류");
+            case "native_link" -> t("原生依赖错误");
+            case "panic" -> t("内部运行时错误");
+            case "memory" -> t("内存不足");
+            case "config" -> t("配置格式错误");
             default -> "";
         };
     }

@@ -474,7 +474,7 @@ public class EngineOfflineSessionTest {
         Engine renamed = new Engine(context); handle(renamed, "chat.resume", obj("id", "s1")); renamed.setStateFileForTest(new File(parentFile, "sessions.json"));
         try { handle(renamed, "chat.rename", obj("id", "s1", "title", "Changed")); fail("expected durable write failure"); }
         catch (ExecutionException expected) {
-            assertTrue(expected.getCause().getMessage().contains("저장"));
+            assertTrue(expected.getCause().getMessage().contains("保存"));
             assertEquals("storage_failure", dev.mobilecodex.app.core.DiagnosticFailure.snapshot(expected.getCause(), new Object()).getString("errorCode"));
         }
         assertEquals("Original", session(handle(renamed, "state", new JSONObject()).getJSONArray("sessions"), "s1").getString("title"));
@@ -485,7 +485,7 @@ public class EngineOfflineSessionTest {
         Engine deleted = new Engine(context); handle(deleted, "chat.resume", obj("id", "s1")); deleted.setStateFileForTest(new File(parentFile, "sessions.json"));
         try { handle(deleted, "chat.delete", obj("id", "s1")); fail("expected durable write failure"); }
         catch (ExecutionException expected) {
-            assertTrue(expected.getCause().getMessage().contains("저장"));
+            assertTrue(expected.getCause().getMessage().contains("保存"));
             assertEquals("storage_failure", dev.mobilecodex.app.core.DiagnosticFailure.snapshot(expected.getCause(), new Object()).getString("errorCode"));
         }
         JSONObject state = handle(deleted, "state", new JSONObject());
@@ -508,7 +508,7 @@ public class EngineOfflineSessionTest {
 
         Engine failedRetry = new Engine(context);
         try { handle(failedRetry, "chat.resume", obj("id", "s1")); fail("pending deletion must not be resumable"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("찾을 수 없습니다")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("找不到")); }
         failedRetry.setTestTransport((method, params) -> { if (method.equals("thread/delete")) throw new java.io.IOException("network failed"); throw new AssertionError(method); });
         JSONObject stillPending = handle(failedRetry, "runtime.start", new JSONObject());
         assertEquals(1, stillPending.getInt("pendingDeletionCount"));
@@ -598,21 +598,21 @@ public class EngineOfflineSessionTest {
             obj("id", "s2", "title", "Two", "workspace", "", "workspaceKey", "", "messages", new JSONArray())).toString());
         Engine engine = new Engine(context); handle(engine, "chat.resume", obj("id", "s1"));
         try { handle(engine, "chat.history", obj("threadId", "s1", "beforeId", "gone")); fail("stale cursor must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("오래")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("已失效")); }
         try { handle(engine, "chat.history", obj("threadId", "s1", "beforeId", 123)); fail("malformed cursor must fail as a normal request error"); }
         catch (ExecutionException expected) { assertTrue(expected.getCause() instanceof java.io.IOException); }
         try { handle(engine, "chat.history", obj("threadId", "s1", "beforeId", "duplicate")); fail("ambiguous cursor must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("오래")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("已失效")); }
         try { handle(engine, "chat.history", obj("threadId", "unknown", "beforeId", "m1")); fail("unknown thread must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("대화")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("对话")); }
         handle(engine, "chat.resume", obj("id", "s2"));
         try { handle(engine, "chat.history", obj("threadId", "s1", "beforeId", "m1")); fail("cross-thread cursor must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("대화")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("对话")); }
         engine.io.shutdownNow();
 
         Engine deleted = new Engine(context); handle(deleted, "chat.resume", obj("id", "s1")); handle(deleted, "chat.delete", obj("id", "s1"));
         try { handle(deleted, "chat.history", obj("threadId", "s1", "beforeId", "m1")); fail("deleted thread cursor must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("대화")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("对话")); }
         deleted.io.shutdownNow();
     }
     @Test public void newUserMessagesReceiveTimestampsWithoutChangingLegacyMessages() throws Exception {
@@ -682,7 +682,7 @@ public class EngineOfflineSessionTest {
         Engine unsupported = new Engine(context); setField(unsupported, "models", array(obj("id", "test-model", "model", "test-model")));
         unsupported.setTestTransport((method, params) -> { throw new AssertionError("Fast rejection must happen before an RPC: " + method); });
         try { handle(unsupported, "chat.send", obj("text", "no fast", "model", "test-model", "fastMode", true)); fail("unsupported Fast must fail"); }
-        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("Fast")); }
+        catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("快速模式")); }
         unsupported.io.shutdownNow();
     }
     private JSONObject session(JSONArray sessions, String id) {

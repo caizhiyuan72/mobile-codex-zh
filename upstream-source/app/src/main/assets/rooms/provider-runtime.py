@@ -19,7 +19,7 @@ SAFE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$')
 # Together under providers.cjs' probe limit, whatever each step costs on a slow phone.
 PROBE_SECONDS = 100
 STEP_SECONDS = 30
-SLOW_REASON = '계정 상태를 확인하지 못했습니다. 로그인이 끊긴 것은 아닐 수 있으니 잠시 뒤 상태 확인을 다시 눌러 주세요.'
+SLOW_REASON = '暂时无法确认账号状态，不一定是登录失效。请稍后重新检查。'
 SIGNED_OUT = re.compile(r'authentication required|unauthenticated|not (?:logged|signed)[- ]?in|\bplease (?:sign|log)[- ]?in\b|\b(?:sign|log)[- ]?in (?:first|required)\b', re.I)
 NETWORK_FAILURE = re.compile(r'network|timed? ?out|unreachable|ENOTFOUND|ECONN|EAI_AGAIN|ETIMEDOUT', re.I)
 
@@ -51,7 +51,7 @@ def capture(argv, env, timeout=20):
         p = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout[:LIMIT], p.stderr[:LIMIT]
     except subprocess.TimeoutExpired:
-        return 124, '', '시간 초과'
+        return 124, '', '超时'
 
 def interrupted(code):
     """The command never finished: too slow under PRoot, or killed by a signal."""
@@ -71,7 +71,7 @@ def claude_authenticated(code, text):
 
 def probe(provider, binary, env):
     if not Path(binary).is_file():
-        return {'state': 'missing', 'auth': 'signed_out', 'reason': 'CLI 설치를 눌러 앱 내부 Linux에 설치해 주세요.', 'models': []}
+        return {'state': 'missing', 'auth': 'signed_out', 'reason': '请点击「安装 CLI」，将其安装到应用内的 Linux 环境。', 'models': []}
     deadline = time.monotonic() + PROBE_SECONDS
     steps = []
     def remaining(limit):
@@ -86,14 +86,14 @@ def probe(provider, binary, env):
     if interrupted(code) or (code != 0 and NETWORK_FAILURE.search(error)):
         return {'state': 'unverified', 'auth': 'unknown', 'reason': SLOW_REASON, 'models': [], 'steps': steps}
     if code:
-        return {'state': 'unavailable', 'auth': 'unknown', 'reason': 'CLI 실행 실패. Linux 라이브러리와 설치 상태를 확인해 주세요.', 'models': [], 'steps': steps}
+        return {'state': 'unavailable', 'auth': 'unknown', 'reason': 'CLI 启动失败。请检查 Linux 依赖库和安装状态。', 'models': [], 'steps': steps}
     code, help_out, help_err = run('--help')
     help_text = help_out + '\n' + help_err  # agy prints its usage to stderr
     if interrupted(code) or (code != 0 and NETWORK_FAILURE.search(help_err)) or not help_text.strip():
         return {'state': 'unverified', 'auth': 'unknown', 'version': version.strip()[:150], 'reason': SLOW_REASON, 'models': [], 'steps': steps}
     required = ['--input-format', '--output-format', '--resume' if provider == 'claude' else '--conversation']
     if any(flag not in help_text for flag in required):
-        return {'state': 'unsupported', 'auth': 'unknown', 'version': version.strip(), 'reason': '세션 스트리밍을 지원하는 CLI로 업데이트해 주세요.', 'models': [], 'steps': steps}
+        return {'state': 'unsupported', 'auth': 'unknown', 'version': version.strip(), 'reason': '请更新到支持会话流式传输的 CLI 版本。', 'models': [], 'steps': steps}
     models, usage = [], []
     if provider == 'claude':
         code, auth, _ = run('auth', 'status')
@@ -120,7 +120,7 @@ def probe(provider, binary, env):
                     models.append({'id': match[1], 'label': match[2].strip(), 'efforts': []})
         authenticated, usage = agy_status(*run('-p', '/usage'))
     state, auth, reason = {True: ('ready', 'signed_in', ''),
-                           False: ('login_required', 'signed_out', '로그인을 눌러 CLI 계정 연결을 완료해 주세요.'),
+                           False: ('login_required', 'signed_out', '请点击「登录」，完成 CLI 账号连接。'),
                            None: ('unverified', 'unknown', SLOW_REASON)}[authenticated]
     return {'state': state, 'auth': auth,
             'version': version.strip()[:150], 'models': models, 'transport': 'app-linux',
@@ -194,10 +194,10 @@ def claude_models(binary, env, timeout=45):
 def arguments(provider, binary, config):
     approval = config.get('approvalMode', 'ask')
     if approval not in ('ask', 'allow-all', 'auto-review') or (approval == 'auto-review' and provider != 'claude'):
-        raise ValueError('이 공급자가 지원하지 않는 승인 방식입니다.')
+        raise ValueError('此服务商不支持该审批方式。')
     for key in ('model', 'effort', 'sessionId'):
         if config.get(key) and not SAFE.fullmatch(config[key]):
-            raise ValueError('잘못된 CLI 옵션입니다: ' + key)
+            raise ValueError('无效的 CLI 选项：' + key)
     if provider == 'claude':
         args = [binary, '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
                 '--include-partial-messages', '--tools', '', '--strict-mcp-config', '--mcp-config', '/workspace/mcp.json',
@@ -315,11 +315,11 @@ def download_installer(url, installer, env):
         '--output', str(installer), url], env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=65)
     if result.returncode:
         installer.unlink(missing_ok=True)
-        raise RuntimeError('공식 CLI 설치 파일 다운로드 실패: ' + result.stderr.strip()[:600])
+        raise RuntimeError('下载官方 CLI 安装文件失败：' + result.stderr.strip()[:600])
     script = installer.read_bytes()
     if not script or len(script) > LIMIT or not script.startswith(b'#!/'):
         installer.unlink(missing_ok=True)
-        raise ValueError('설치 파일 내용 또는 크기가 올바르지 않습니다.')
+        raise ValueError('安装文件的内容或大小不符合要求。')
 
 def main():
     parser = argparse.ArgumentParser()

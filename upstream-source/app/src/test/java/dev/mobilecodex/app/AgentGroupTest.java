@@ -20,11 +20,13 @@ public class AgentGroupTest {
     }
     @Test public void mentionsFollowCallOrderAndIgnoreNonCallingText() throws Exception {
         List<String> people = AgentGroup.participants(session("claude", "gemini"));
-        assertEquals(List.of("gemini", "codex"), AgentGroup.mentions("@제미나이야 먼저, 그다음 @코덱스", people));
-        assertEquals(List.of("claude"), AgentGroup.mentions("@claude는 어때?", people));
+        assertEquals(List.of("gemini", "codex"), AgentGroup.mentions("@Gemini 先回答，然后 @Codex", people));
+        assertEquals(List.of("claude"), AgentGroup.mentions("@claude怎么看？", people));
         assertEquals(List.of(), AgentGroup.mentions("mail me@claude.ai, `@claude`, ```\n@gemini\n``` @file:claude.md @claudette @claude/x", people));
-        assertEquals(List.of("codex", "claude", "gemini"), AgentGroup.mentions("@all 의견", people));
-        assertEquals(List.of("gemini"), AgentGroup.mentions("@agy 확인", people));
+        assertEquals(people, AgentGroup.mentions("@all 请检查", people));
+        assertEquals(people, AgentGroup.mentions("@所有人 请检查", people));
+        assertEquals(List.of(), AgentGroup.mentions("@所有人2 请检查", people));
+        assertEquals(List.of("gemini"), AgentGroup.mentions("@agy 请确认", people));
     }
     @Test public void everyoneAnswersWithoutMentionAndCodexAlwaysLeads() throws Exception {
         JSONObject s = session("claude", "gemini");
@@ -43,11 +45,11 @@ public class AgentGroupTest {
             .put(message("3", "assistant", "claude", "Claude 답")).put(message("4", "user", null, "둘째 질문"));
         JSONObject claude = s.getJSONArray("agents").getJSONObject(0);
         String first = AgentGroup.agentPrompt(s, claude, messages);
-        assertTrue(first.contains("[사용자] 첫 질문")); assertTrue(first.contains("[@codex (Codex)] Codex 답"));
+        assertTrue(first.contains("[用户] 첫 질문")); assertTrue(first.contains("[@codex (Codex)] Codex 답"));
         claude.put("cursorId", "3");
         String next = AgentGroup.agentPrompt(s, claude, messages);
-        assertFalse(next.contains("첫 질문")); assertTrue(next.contains("[사용자] 둘째 질문"));
-        assertTrue(next.contains("@claude (Claude)입니다"));
+        assertFalse(next.contains("첫 질문")); assertTrue(next.contains("[用户] 둘째 질문"));
+        assertTrue(next.contains("@claude (Claude)。"));
     }
     @Test public void unfinishedAgentAnswersAreNotShared() throws Exception {
         JSONArray messages = new JSONArray().put(message("1", "assistant", "gemini", "부분 답").put("status", "error"))
@@ -59,7 +61,7 @@ public class AgentGroupTest {
         JSONArray messages = new JSONArray();
         for (int i = 0; i < 10; i++) messages.put(message(String.valueOf(i), "user", null, "메시지" + i + "x".repeat(40)));
         String text = AgentGroup.transcript(messages, 0, messages.length(), Set.of(), 200);
-        assertTrue(text.startsWith("(앞선 메시지 ")); assertTrue(text.contains("메시지9")); assertFalse(text.contains("메시지0"));
+        assertTrue(text.startsWith("（受长度限制，省略了前面 ")); assertTrue(text.contains("메시지9")); assertFalse(text.contains("메시지0"));
     }
     @Test public void codexContextNamesOtherParticipants() throws Exception {
         JSONObject s = session("claude", "gemini").put("codexCursorId", "1");

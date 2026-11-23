@@ -9,6 +9,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.*;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadow.api.Shadow;
+import dev.mobilecodex.app.core.Texts;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.Files;
@@ -30,7 +31,7 @@ public class AppUpdatesTest {
         candidate=obj("versionName","0.1.12-alpha","size",bytes.length,"sha256",hash.toString(),"repository","caizhiyuan72/mobile-codex-zh");
         updates=new AppUpdates(context,s->{});set("candidate",candidate);set("ready",true);Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(apk.getAbsolutePath(),archive("010203"));
     }
-    @After public void cleanup(){updates.shutdown();}
+    @After public void cleanup(){updates.shutdown();Texts.configure(java.util.Map.of());}
     private File prepare()throws Exception{CompletableFuture<File> result=new CompletableFuture<>();updates.prepareInstall(candidate.getString("sha256"),(file,error)->{if(error==null)result.complete(file);else result.completeExceptionally(error);});return result.get(5,TimeUnit.SECONDS);}
     private JSONObject release()throws Exception{
         String version=candidate.getString("versionName"),name="mobile-codex-"+version+"-arm64.apk";
@@ -47,6 +48,35 @@ public class AppUpdatesTest {
         JSONObject state=recheck(release());
         assertEquals("ready",state.getString("status"));assertTrue(state.getBoolean("ready"));
         assertEquals(apk,prepare());
+    }
+    @Test public void cachedUpdateStatusFollowsLiveLanguageWithoutChangingState()throws Exception{
+        AppLanguage.initialize(context);AppLanguage.set(context,"en");
+        JSONObject english=recheck(release());
+        assertEquals("A downloaded APK is available. It will be verified again before installation.",english.getString("message"));
+        AppLanguage.set(context,"zh-CN");
+        JSONObject chinese=updates.snapshot();
+        assertEquals("已下载更新 APK，安装前将重新验证。",chinese.getString("message"));
+        assertEquals("ready",chinese.getString("status"));assertTrue(chinese.getBoolean("ready"));
+        assertEquals(english.getLong("revision"),chinese.getLong("revision"));
+        assertEquals(english.getJSONObject("candidate").getString("sha256"),chinese.getJSONObject("candidate").getString("sha256"));
+        AppLanguage.set(context,"en");
+        assertEquals(english.getString("message"),updates.snapshot().getString("message"));
+    }
+    @Test public void cachedHttpFailureKeepsCodeWhenLanguageChanges()throws Exception{
+        AppLanguage.initialize(context);AppLanguage.set(context,"en");
+        updates.shutdown();
+        CompletableFuture<JSONObject> checked=new CompletableFuture<>();
+        updates=new AppUpdates(context,state->{if(!state.optBoolean("busy"))checked.complete(state);},repo->{throw AppUpdates.httpFailure(503);});
+        updates.check();
+        JSONObject english=checked.get(5,TimeUnit.SECONDS);
+        assertEquals("error",english.getString("status"));
+        assertEquals("Update server error (503)",english.getString("message"));
+        AppLanguage.set(context,"zh-CN");
+        JSONObject chinese=updates.snapshot();
+        assertEquals("更新服务器错误（503)",chinese.getString("message"));
+        assertEquals(english.getLong("revision"),chinese.getLong("revision"));
+        AppLanguage.set(context,"en");
+        assertEquals(english.getString("message"),updates.snapshot().getString("message"));
     }
     @Test public void recheckingRequiresDownloadForMissingTruncatedOrDifferentApk()throws Exception{
         JSONObject release=release();
@@ -73,7 +103,7 @@ public class AppUpdatesTest {
     }
     @Test public void changedApkAndWrongSignerNeverReachInstaller()throws Exception{
         Files.write(apk.toPath(),new byte[]{4,3,2,1});assertThrows(ExecutionException.class,this::prepare);assertFalse(updates.snapshot().getBoolean("ready"));
-        Files.write(apk.toPath(),new byte[]{1,2,3,4});set("ready",true);Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(apk.getAbsolutePath(),archive("040506"));assertThrows(ExecutionException.class,this::prepare);assertTrue(updates.snapshot().getString("message").contains("서명키"));
+        Files.write(apk.toPath(),new byte[]{1,2,3,4});set("ready",true);Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(apk.getAbsolutePath(),archive("040506"));assertThrows(ExecutionException.class,this::prepare);assertTrue(updates.snapshot().getString("message").contains("签名密钥"));
     }
     @Test public void providerSharesOnlyDedicatedUpdateDirectory()throws Exception{
         assertEquals("content",FileProvider.getUriForFile(context,context.getPackageName()+".updates",apk).getScheme());

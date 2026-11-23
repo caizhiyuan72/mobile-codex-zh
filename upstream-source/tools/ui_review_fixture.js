@@ -5,7 +5,7 @@
   if (window.HTMLDialogElement && !HTMLDialogElement.prototype.showModal) HTMLDialogElement.prototype.showModal = function() { this.setAttribute('open',''); };
   if (window.HTMLDialogElement && !HTMLDialogElement.prototype.close) HTMLDialogElement.prototype.close = function() { this.removeAttribute('open'); this.dispatchEvent(new Event('close')); };
   const query = new URLSearchParams(location.search), surface = query.get('surface') || 'main';
-  const language = query.get('language') || 'ko', theme = query.get('theme') || 'light';
+  const language = query.get('language') || 'zh-CN', theme = query.get('theme') || 'light';
   const textSize = Number(query.get('textSize') || 100);
   if (query.get('gallery') === '1') {
     window.setInterval = () => 0;
@@ -13,11 +13,11 @@
     document.addEventListener('focusout', event => event.stopImmediatePropagation(), true);
   }
   // Each iframe owns fixture preferences and drafts; matrix/gallery cases never share state.
-  const storage = new Map([['theme',theme]]);
+  const storage = new Map([['theme',theme], ['interfaceStyle',query.get('style') === 'glass' ? 'glass' : 'classic']]);
   Object.defineProperty(window, 'localStorage', {value:{getItem:key => storage.get(String(key)) ?? null, setItem:(key,value) => storage.set(String(key),String(value)), removeItem:key => storage.delete(String(key)), clear:() => storage.clear(), key:index => [...storage.keys()][index] ?? null, get length(){return storage.size;}}});
   const now = 1790670840000;
   const state = {
-    ready:true, busy:false, proBusy:false, permissions:'workspace-write', status:'연결됨', directWorkspace:true, allFilesAccess:true,
+    ready:true, busy:false, proBusy:false, permissions:'workspace-write', status:'已连接', directWorkspace:true, allFilesAccess:true,
     threadId:'review-thread', cwd:'/review/project', turnDiff:'src/app.js\n+  fixture review change', pendingDeletionCount:1,
     account:{type:'chatgpt',email:'review@example.test',planType:'Pro'}, accounts:[{key:'review',email:'review@example.test',planType:'Pro',active:true}],
     workspace:{selected:true,key:'review-project',name:'UI review project'},
@@ -84,20 +84,20 @@
     window.dispatchEvent(new Event('resize'));
   }
   function prepareDialog(id) {
-    if (id === 'file-actions-dialog') fill('file-actions','<button class="secondary-button">이름 변경</button><button class="secondary-button">다른 위치에 저장</button>');
-    if (id === 'session-actions-dialog') fill('session-actions','<button class="secondary-button">이름 변경</button><button class="secondary-button subtle-danger">대화 삭제</button>');
-    if (id === 'project-actions-dialog') fill('project-actions','<button class="secondary-button">프로젝트 내보내기</button><button class="secondary-button">기본 폴더</button>');
-    if (id === 'project-link-dialog') { const title=document.getElementById('project-link-title'); if(title)title.textContent='프로젝트 연결'; const description=document.getElementById('project-link-description'); if(description)description.textContent='Fixture project choices'; fill('project-link-choices','<button class="secondary-button">로컬 폴더 연결</button><button class="secondary-button">프로젝트 가져오기</button>'); }
+    if (id === 'file-actions-dialog') fill('file-actions','<button class="secondary-button">重命名</button><button class="secondary-button">另存为</button>');
+    if (id === 'session-actions-dialog') fill('session-actions','<button class="secondary-button">重命名</button><button class="secondary-button subtle-danger">删除对话</button>');
+    if (id === 'project-actions-dialog') fill('project-actions','<button class="secondary-button">导出项目</button><button class="secondary-button">默认文件夹</button>');
+    if (id === 'project-link-dialog') { const title=document.getElementById('project-link-title'); if(title)title.textContent='关联项目'; const description=document.getElementById('project-link-description'); if(description)description.textContent='Fixture project choices'; fill('project-link-choices','<button class="secondary-button">关联本地文件夹</button><button class="secondary-button">导入项目</button>'); }
     if (id === 'login-dialog') { document.getElementById('device-code').textContent='REVIEW-CODE'; document.getElementById('open-login').disabled=false; }
     if (id === 'editor-dialog') { document.getElementById('editor-title').textContent='README.md'; document.getElementById('editor').value='# Review\nA fixture file.'; }
     if (id === 'input-dialog') { document.getElementById('input-title').textContent='Fixture input'; document.getElementById('input-description').textContent='Use this field to inspect form spacing.'; }
-    if (id === 'changes-dialog') { document.getElementById('changes-status').textContent='1개 변경 사항'; fill('changes-list','<button class="file-row">src/app.js <small>수정됨</small></button>'); }
-    if (id === 'recovery-dialog') fill('recovery-list','<div class="recovery-item"><div><strong>src/app.js</strong><small>Fixture recovery copy</small></div><button>비교 / 복원</button></div>');
+    if (id === 'changes-dialog') { document.getElementById('changes-status').textContent='1 项更改'; fill('changes-list','<button class="file-row">src/app.js <small>已修改</small></button>'); }
+    if (id === 'recovery-dialog') fill('recovery-list','<div class="recovery-item"><div><strong>src/app.js</strong><small>Fixture recovery copy</small></div><button>比较 / 恢复</button></div>');
     if (id === 'terminal-dialog') { document.getElementById('terminal-output').textContent='$ npm test\nFixture terminal output'; }
-    if (id === 'tools-dialog') fill('tools-list','<section class="tool-card"><strong>Review plugin</strong><p>Loading and error states can be inspected here.</p><button class="secondary-button">상세</button></section>');
+    if (id === 'tools-dialog') fill('tools-list','<section class="tool-card"><strong>Review plugin</strong><p>Loading and error states can be inspected here.</p><button class="secondary-button">详情</button></section>');
     if (id === 'config-dialog') document.getElementById('config-editor').value='model = "review"';
     if (id === 'activity-dialog') fill('event-log','<article class="activity-event"><strong>Fixture event</strong><pre>Meaningful review detail</pre></article>');
-    if (id === 'request-dialog') { document.getElementById('request-title').textContent='Fixture approval'; document.getElementById('request-reason').textContent='Review approval spacing.'; fill('request-fields','<label>Reason <input class="text-input" value="Fixture value"></label>'); fill('request-actions','<button class="secondary-button" data-review-close>취소</button><button class="primary-button">허용</button>'); document.querySelector('#request-actions [data-review-close]')?.addEventListener('click',() => document.getElementById('request-dialog').close()); }
+    if (id === 'request-dialog') { document.getElementById('request-title').textContent='Fixture approval'; document.getElementById('request-reason').textContent='Review approval spacing.'; fill('request-fields','<label>Reason <input class="text-input" value="Fixture value"></label>'); fill('request-actions','<button class="secondary-button" data-review-close>取消</button><button class="primary-button">允许</button>'); document.querySelector('#request-actions [data-review-close]')?.addEventListener('click',() => document.getElementById('request-dialog').close()); }
     if (id === 'image-dialog') document.getElementById('image-preview').src='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="640" height="420"%3E%3Crect width="100%25" height="100%25" fill="%23ddd"/%3E%3Ctext x="30" y="80" font-size="32"%3EFixture image%3C/text%3E%3C/svg%3E';
     show(id);
   }
@@ -105,9 +105,9 @@
     await ready(); closeAll();
     if (name === 'main') return;
     if (name === 'welcome') { window.mobileCodexEvent('state', {...state,messages:[]}); return; }
-    if (name === 'files') { click('#files-toggle'); await pause(35); return; }
-    if (name === 'model-picker') return click('#composer-options');
-    if (name === 'options') { click('#composer-options'); return click('#model-picker-permissions'); }
+    if (name === 'files') { click('#header-more'); click('#files-toggle'); await pause(35); return; }
+    if (name === 'model-picker' || name === 'model-picker-dialog') { click('#add-attachment'); return click('#composer-options'); }
+    if (name === 'options') { await showSurface('model-picker'); return click('#model-picker-permissions'); }
     if (name === 'tool-menu') return click('#show-tools');
     if (name === 'composer-expanded') {
       const prompt = document.getElementById('prompt'); prompt.value = 'A deliberately long fixture prompt that expands the composer across multiple lines for review.';
@@ -123,8 +123,17 @@
     }
     if (name === 'loading') { window.mobileCodexEvent('state', {...state,busy:true,messages:[...state.messages,{id:'review-loading',role:'assistant',text:'',createdAt:now,imageStatus:'generating'}]}); return; }
     if (name === 'error') { window.mobileCodexEvent('error',{threadId:state.threadId,message:'Fixture operation failed. Review this inline feedback.'}); return; }
-    if (name === 'login') return prepareDialog('login-dialog');
-    if (name.startsWith('settings-')) { click('#settings'); const tab=name.slice('settings-'.length); document.querySelectorAll('[data-settings-tab]').forEach(button => { if (button.dataset.settingsTab === tab) button.click(); }); await pause(20); return; }
+    if (name === 'confirm-dialog') { window.MobileCodexConfirm?.('确认弹窗预览'); return; }
+    if (name.startsWith('settings-')) {
+      click('#settings');
+      const tab = name.slice('settings-'.length);
+      if (tab !== 'general') {
+        const advanced = document.getElementById('settings-advanced');
+        if (advanced) advanced.open = true;
+        click('[data-settings-tab="'+CSS.escape(tab)+'"]');
+      }
+      await pause(20); return;
+    }
     const id = name.endsWith('-dialog') ? name : name + '-dialog'; prepareDialog(id);
   }
   function geometry() {
@@ -147,7 +156,7 @@
       const animationFrames = child => new Promise(resolve => child.requestAnimationFrame(() => child.requestAnimationFrame(resolve)));
       let navigation=0;
       const loadFrame = () => new Promise((resolve,reject) => {
-        const data=new FormData(form), viewport=viewportFor(), query='?surface='+encodeURIComponent(data.get('surface'))+'&theme='+encodeURIComponent(data.get('theme'))+'&language='+encodeURIComponent(data.get('language'))+'&textSize='+encodeURIComponent(data.get('textSize'));
+        const data=new FormData(form), viewport=viewportFor(), query='?'+new URLSearchParams(data);
         const generation=++navigation, until=Date.now()+7000;
         let loaded=false, settling=false;
         const finish=async () => {
@@ -186,7 +195,7 @@
       };
       run.addEventListener('click', async () => {
         const lines=[], results=[], viewports=['320x568','393x852','800x1100','1280x900'], themes=['light','dark'], sizes=['100','150'];
-        run.disabled=true; report.textContent='검사 시작…'; let pass=0, fail=0, reportNote=''; const previousTransition=frame.style.transition; frame.style.transition='none';
+        run.disabled=true; report.textContent='开始检查…'; let pass=0, fail=0, reportNote=''; const previousTransition=frame.style.transition; frame.style.transition='none';
         try {
           for (const name of inventory.surfaces || []) for (const viewport of viewports) for (const reviewTheme of themes) for (const size of sizes) {
             form.elements.surface.value=name; form.elements.viewport.value=viewport; form.elements.theme.value=reviewTheme; form.elements.textSize.value=size;
@@ -194,12 +203,12 @@
             try { const child=await render(); problems=geometryProblems(child); } catch (error) { problems=[error.message]; }
             const passed=problems.length === 0, result={surface:name,viewport,theme:reviewTheme,textSize:Number(size),passed,problems}; results.push(result);
             if (passed) pass++; else { fail++; lines.push('FAIL '+name+' '+viewport+' '+reviewTheme+' '+size+'%: '+problems.join(', ')); }
-            if ((pass+fail)%12===0) report.textContent='검사 중 '+(pass+fail)+'건 (Android textZoom proxy)\n'+lines.slice(-8).join('\n');
+            if ((pass+fail)%12===0) report.textContent='已检查 '+(pass+fail)+' 项 (Android textZoom proxy)\n'+lines.slice(-8).join('\n');
           }
-          try { const saved=await persistReport(results); reportNote=' · 리포트 '+saved.results+'건 저장'; } catch (error) { reportNote=' · 리포트 저장 실패: '+error.message; }
+          try { const saved=await persistReport(results); reportNote=' · 已保存 '+saved.results+' 项结果'; } catch (error) { reportNote=' · 报告保存失败: '+error.message; }
         } finally {
           frame.style.transition=previousTransition; run.disabled=false;
-          report.textContent='완료: '+pass+' 통과, '+fail+' 실패'+reportNote+'\nAndroid textZoom proxy 사용'+(lines.length?'\n'+lines.join('\n'):'\n문제 없음');
+          report.textContent='完成： '+pass+' 通过，'+fail+' 失败'+reportNote+'\nAndroid textZoom proxy 模拟'+(lines.length?'\n'+lines.join('\n'):'\n未发现问题');
         }
       });
       form.addEventListener('change',render); render(); return;

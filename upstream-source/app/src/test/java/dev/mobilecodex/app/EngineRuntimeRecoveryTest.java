@@ -3,8 +3,10 @@ package dev.mobilecodex.app;
 import android.app.Application;
 import dev.mobilecodex.app.core.RpcClient;
 import dev.mobilecodex.app.core.RuntimeFailure;
+import dev.mobilecodex.app.core.Texts;
 import java.io.*;
 import java.lang.reflect.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import org.json.*;
@@ -66,6 +68,7 @@ public class EngineRuntimeRecoveryTest {
         field("serverThreadId", "remote-saved"); field("ready", true);
     }
     @After public void cleanup() throws Exception {
+        Texts.configure(Map.of());
         if (engine != null) {
             RpcClient rpc = (RpcClient) field("rpc"); if (rpc != null) rpc.close();
             engine.io.shutdownNow();
@@ -81,6 +84,40 @@ public class EngineRuntimeRecoveryTest {
             public void request(Object id, String method, JSONObject params) {}
             public void disconnected(Throwable error) {}
         });
+    }
+    private JSONObject state() throws Exception {
+        CompletableFuture<JSONObject> result = new CompletableFuture<>();
+        engine.handle("state", obj(), (value, error) -> {
+            if (error == null) result.complete(value); else result.completeExceptionally(error);
+        });
+        return result.get(5, TimeUnit.SECONDS);
+    }
+    @Test public void cachedDisconnectStatusFollowsLiveLanguageAndKeepsDiagnostics() throws Exception {
+        Application app = RuntimeEnvironment.getApplication();
+        AppLanguage.initialize(app);
+        AppLanguage.set(app, "en");
+        Child process = new Child(false);
+        RpcClient rpc = connection();
+        field("process", process);
+        field("rpc", rpc);
+        RuntimeFailure.Tail tail = new RuntimeFailure.Tail();
+        byte[] stderr = "memory allocation failed: private stderr".getBytes(StandardCharsets.UTF_8);
+        tail.append(stderr, stderr.length);
+        engine.io.submit(() -> engine.codexDisconnected(process, rpc, null, tail)).get(5, TimeUnit.SECONDS);
+        JSONObject english = state();
+        String englishStatus = english.getString("status");
+        assertTrue(englishStatus.startsWith("The execution engine disconnected (exit code 0). "));
+        assertTrue(englishStatus.endsWith("Diagnostic hint: Out of memory. Please reconnect."));
+        assertFalse(englishStatus.contains("private stderr"));
+        AppLanguage.set(app, "zh-CN");
+        JSONObject chinese = state();
+        String chineseStatus = chinese.getString("status");
+        assertTrue(chineseStatus.startsWith("执行引擎已断开连接（退出代码 0). "));
+        assertTrue(chineseStatus.endsWith("诊断提示：内存不足. 请重新连接。"));
+        assertFalse(chinese.getBoolean("ready"));
+        assertEquals(english.getString("threadId"), chinese.getString("threadId"));
+        AppLanguage.set(app, "en");
+        assertEquals(englishStatus, state().getString("status"));
     }
     private void replaceUnavailableTransport(Child child, RpcClient rpc) throws Exception {
         field("process", child); field("rpc", rpc);
