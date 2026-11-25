@@ -28,10 +28,12 @@ import static dev.mobilecodex.app.core.Json.*;
 public final class PhoneUseService extends AccessibilityService {
     private static volatile PhoneUseService instance;
     private static final String LEGACY_PROTECTED_PACKAGE = "dev.mobilecodex.app.rootfiles";
+    private static final long ACTION_QUIET_MS = 150, LAUNCH_SETTLE_MS = 350, ACTION_SETTLE_LIMIT_MS = 800;
     private final PhoneControlGate gate = new PhoneControlGate();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Set<CompletableFuture<JSONObject>> pending = ConcurrentHashMap.newKeySet();
     private long revision;
+    private long lastScreenChangeAt;
     private PhoneScreen screen;
     private Button stopButton;
     private FloatingChat floatingChat;
@@ -89,7 +91,10 @@ public final class PhoneUseService extends AccessibilityService {
         int type = event.getEventType();
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || type == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
-            type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) invalidate();
+            type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            lastScreenChangeAt = SystemClock.uptimeMillis();
+            invalidate();
+        }
     }
     @Override public void onInterrupt() { stopControl(); }
     @Override public boolean onUnbind(Intent intent) { disconnect(); return super.onUnbind(intent); }
@@ -195,17 +200,20 @@ public final class PhoneUseService extends AccessibilityService {
         }
         return obj("apps", apps);
     }
-    private void observe(JSONObject args, long ticket, CompletableFuture<JSONObject> future) throws Exception {
+    private PhoneScreen readScreen() throws Exception {
         requireAutomationView();
         invalidate(); AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) throw new IOException(t("无法读取当前屏幕，请打开应用后重试。"));
         DisplayMetrics metrics = metrics();
         try { requireUnprotectedWindow(root); requireDefaultDisplay(root); screen = new PhoneScreen(root, revision, metrics.widthPixels, metrics.heightPixels); }
         finally { root.recycle(); }
-        PhoneScreen captured = screen;
         Rect overlay = stopBounds();
-        Rect chat = floatingChat == null ? new Rect() : floatingChat.bounds(); captured.data.put("floatingChatBounds", array(chat.left, chat.top, chat.right, chat.bottom));
-        captured.data.put("stopButtonBounds", array(overlay.left, overlay.top, overlay.right, overlay.bottom));
+        Rect chat = floatingChat == null ? new Rect() : floatingChat.bounds(); screen.data.put("floatingChatBounds", array(chat.left, chat.top, chat.right, chat.bottom));
+        screen.data.put("stopButtonBounds", array(overlay.left, overlay.top, overlay.right, overlay.bottom));
+        return screen;
+    }
+    private void observe(JSONObject args, long ticket, CompletableFuture<JSONObject> future) throws Exception {
+        PhoneScreen captured = readScreen();
         if (!args.optBoolean("screenshot", true)) { success(future, ticket, captured.data); return; }
         if (Build.VERSION.SDK_INT < 30 || captured.passwordVisible) {
             captured.data.put("screenshotUnavailable", captured.passwordVisible ? t("包含可见密码输入框的屏幕不会以图片形式发送。") : t("Android 10 使用屏幕元素；截图 API 需要 Android 11 或更高版本。"));
@@ -242,20 +250,51 @@ public final class PhoneUseService extends AccessibilityService {
             }
         });
     }
+    private void finishAction(CompletableFuture<JSONObject> future, long ticket, JSONObject result, boolean observeNodes) {
+        if (future.isDone()) return;
+        if (!observeNodes) { success(future, ticket, result); return; }
+        long startedAt = SystemClock.uptimeMillis();
+        long deadline = startedAt + ACTION_SETTLE_LIMIT_MS;
+        long earliest = startedAt + (result.optString("action").equals("open_app") ? LAUNCH_SETTLE_MS : ACTION_QUIET_MS);
+        main.postAtTime(new Runnable() {
+            @Override public void run() {
+                if (future.isDone()) return;
+                long readyAt = Math.min(deadline, Math.max(earliest, lastScreenChangeAt + ACTION_QUIET_MS));
+                if (SystemClock.uptimeMillis() < readyAt) { main.postAtTime(this, readyAt); return; }
+                try {
+                    gate.check(ticket);
+                    try {
+                        requireUnlocked();
+                        result.put("observation", readScreen().data);
+                        result.remove("verify");
+                    } catch (Exception error) {
+                        result.put("observationError", error.getMessage()).put("verify", "mobile_phone_screen");
+                    }
+                    success(future, ticket, result);
+                } catch (Exception error) { future.completeExceptionally(error); }
+            }
+        }, earliest);
+    }
     private void act(JSONObject args, long ticket, CompletableFuture<JSONObject> future) throws Exception {
         requireAutomationView();
         String action = args.getString("action");
+        boolean observeNodes = switch (args.optString("observe", "none")) {
+            case "nodes" -> true;
+            case "none" -> false;
+            default -> throw new IOException("observe must be 'none' or 'nodes'.");
+        };
         Integer global = switch (action) {
             case "back" -> GLOBAL_ACTION_BACK; case "home" -> GLOBAL_ACTION_HOME; case "recents" -> GLOBAL_ACTION_RECENTS;
             case "notifications" -> GLOBAL_ACTION_NOTIFICATIONS; case "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS; default -> null;
         };
-        if (global != null) { boolean accepted = performGlobalAction(global); invalidate(); success(future, ticket, obj("accepted", accepted, "action", action)); return; }
+        if (global != null) { boolean accepted = performGlobalAction(global); invalidate(); finishAction(future, ticket, obj("accepted", accepted, "action", action), observeNodes); return; }
         if (action.equals("open_app")) {
             String name = args.getString("package");
             if (LEGACY_PROTECTED_PACKAGE.equals(name)) throw protectedWindow();
             Intent launch = getPackageManager().getLaunchIntentForPackage(name);
             if (launch == null) throw new IOException(t("找不到可启动的应用。请使用 mobile_phone_apps 检查包名。"));
-            startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); invalidate(); success(future, ticket, obj("accepted", true, "package", name)); return;
+            startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); invalidate();
+            finishAction(future, ticket, obj("accepted", true, "action", action, "package", name), observeNodes); return;
         }
         if (screen == null) throw new IOException(t("请先使用 mobile_phone_screen 读取屏幕。"));
         AccessibilityNodeInfo root = getRootInActiveWindow();
@@ -282,7 +321,7 @@ public final class PhoneUseService extends AccessibilityService {
                 arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
             }
             boolean accepted = node.performAction(nativeAction, arguments); invalidate();
-            success(future, ticket, obj("accepted", accepted, "action", action, "verify", "mobile_phone_screen")); return;
+            finishAction(future, ticket, obj("accepted", accepted, "action", action, "verify", "mobile_phone_screen"), observeNodes); return;
         }
         if (!Set.of("tap", "long_press", "swipe").contains(action)) throw new IOException(t("此操作需要屏幕元素的 nodeId。"));
         float x = PhoneScreen.coordinate(args, "x", screen.width), y = PhoneScreen.coordinate(args, "y", screen.height);
@@ -300,10 +339,10 @@ public final class PhoneUseService extends AccessibilityService {
         Path path = new Path(); path.moveTo(x, y); if (action.equals("swipe")) path.lineTo(endX, endY);
         GestureDescription gesture = new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path, 0, duration)).build();
         boolean dispatched = dispatchGesture(gesture, new GestureResultCallback() {
-            @Override public void onCompleted(GestureDescription description) { success(future, ticket, obj("accepted", true, "action", action, "verify", "mobile_phone_screen")); }
-            @Override public void onCancelled(GestureDescription description) { success(future, ticket, obj("accepted", false, "action", action, "reason", "Android cancelled gesture; inspect before retrying")); }
+            @Override public void onCompleted(GestureDescription description) { finishAction(future, ticket, obj("accepted", true, "action", action, "verify", "mobile_phone_screen"), observeNodes); }
+            @Override public void onCancelled(GestureDescription description) { finishAction(future, ticket, obj("accepted", false, "action", action, "reason", "Android cancelled gesture; inspect before retrying"), observeNodes); }
         }, main);
-        invalidate(); if (!dispatched) success(future, ticket, obj("accepted", false, "action", action));
+        invalidate(); if (!dispatched) finishAction(future, ticket, obj("accepted", false, "action", action), observeNodes);
     }
     private void requireAutomationView() throws IOException {
         if (VoiceInput.active()) throw new IOException(t("用户正在语音听写，等识别结束后再读取或控制屏幕。"));

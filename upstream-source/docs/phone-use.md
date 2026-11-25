@@ -19,7 +19,7 @@ Codex can operate the phone through four app-server dynamic tools. This is a nat
 | `mobile_phone_screen` | Current app/window, visible node labels and ids, bounds, physical pixel size, snapshot id; optional JPEG screenshot on Android 11+ |
 | `mobile_phone_action` | Tap/long press by node or coordinates; replace text; forward/backward node scroll; swipe; back/home/recents/notifications/quick settings; open an app by package |
 
-Actions return whether Android accepted the operation. They do not claim the requested task succeeded. The agent is instructed to inspect the resulting screen and verify the outcome. These tools coexist with the existing file tools, plugins, skills, MCP and shell runtime.
+Actions return whether Android accepted the operation. In new chats, `mobile_phone_action` can also request `observe: "nodes"` to return a fresh `observation` after the action, with no separate screen call or screenshot. The agent uses it to verify the outcome and can use its `snapshotId` for the next action. When the screen cannot be read, the response still reports the action result and provides `observationError`. For standalone inspection, agents request `screenshot: false` when accessibility nodes are enough. Existing chats keep their original tool schema; start a new chat to use combined action and observation.
 
 ## Behavior and boundaries
 

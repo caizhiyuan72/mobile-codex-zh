@@ -71,6 +71,11 @@ public class PhoneUseTest {
             Method start = Engine.class.getDeclaredMethod("threadStartParams", String.class); start.setAccessible(true);
             JSONObject params = (JSONObject) start.invoke(engine, "");
             assertTrue(params.getJSONArray("dynamicTools").toString().contains("mobile_phone_screen"));
+            for (int index = 0; index < params.getJSONArray("dynamicTools").length(); index++) {
+                JSONObject tool = params.getJSONArray("dynamicTools").getJSONObject(index);
+                if (!"mobile_phone_action".equals(tool.getString("name"))) continue;
+                assertEquals("nodes", tool.getJSONObject("inputSchema").getJSONObject("properties").getJSONObject("observe").getJSONArray("enum").getString(1));
+            }
             java.lang.reflect.Field active = Engine.class.getDeclaredField("active"); active.setAccessible(true);
             active.set(engine, obj("id", "legacy", "messages", array()));
             CompletableFuture<JSONObject> state = new CompletableFuture<>();
