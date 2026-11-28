@@ -1444,11 +1444,13 @@
     messages.forEach((message, index) => {
       if (emptyAssistantMessage(message) || (message.kind === 'taskSummary' && !legacySummaryNotice(message))) return;
       const isTool = message.kind === 'toolActivity';
-      const turn = isTool ? message.activityTurnId : message.completedTurnId;
+      const isImage = message.kind === 'image';
+      const turn = isTool ? message.activityTurnId : isImage ? message.imageGroup : message.completedTurnId;
+      const preview = isImage && (message.workPreview === true || (message.workPreview == null && index < final.get(turn)));
       const commentary = index < final.get(turn) && !message.kind && message.role === 'assistant' &&
         message.text?.trim() && !message.images?.length && !message.finalForTurn &&
         (!message.phase || message.phase === 'commentary');
-      if (!final.has(turn) || message.agent || (!isTool && !commentary)) {
+      if (!final.has(turn) || message.agent || (!isTool && !commentary && !preview)) {
         section = null;
         return;
       }
@@ -1523,6 +1525,7 @@
     const anchor = preserveReading ? readingPosition() : null;
     const allMessages = state.messages || [];
     if (dirtyIds && [...dirtyIds].some(id => !renderedMessages.has(id) ||
+        messageLookup.get(id)?.kind === 'image' ||
         (pendingToolReplies.has(id) && messageLookup.get(id)?.text?.trim()))) dirtyIds = null;
     if (!dirtyIds) {
       dirtyMessages.clear(); messageLookup.clear(); renderedMessages.clear();
@@ -1541,7 +1544,7 @@
     };
     let previous = null;
     const grouped = groupedMessages;
-    C.groupImageMessages(messages).forEach(m => {
+    C.groupImageMessages(messages, folds).forEach(m => {
       if (m.kind === 'taskSummary' && !legacySummaryNotice(m)) return;
       keep.add(m.id); let el = elements.get(m.id);
       if (!el) { el = node('article', null, m.kind === 'toolActivity' ? 'message-tool' : 'message ' + (m.role === 'user' ? 'user' : 'assistant')); el.dataset.id = m.id; }

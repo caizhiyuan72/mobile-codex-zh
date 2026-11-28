@@ -682,6 +682,31 @@ test('a gallery keeps partial successes, later images and failures without group
  w.mobileCodexEvent('state',{...snapshot,messages:[first,{...pending,imageStatus:'failed',imageError:'두 번째 이미지 실패'}]});
  assert.equal(d.querySelectorAll('#messages img:not(.chat-character)').length,1);assert.match(d.querySelector('.image-error').textContent,/두 번째/);
 });
+test('completed turns fold preview galleries without hiding final images from the same turn',async()=>{
+ const {w,snapshot,frames}=setup({}, {manualFrames:true});await tick();const d=w.document;
+ const imageMessage=(id,char,marker={})=>({id,role:'assistant',kind:'image',text:'',imageGroup:'turn-one',images:[{id:char.repeat(64),url:'/images/'+char.repeat(64),name:id+'.png'}],...marker});
+ const messages=[
+  imageMessage('preview','a',{workPreview:true}),imageMessage('legacy-preview','b'),
+  imageMessage('result','c',{workPreview:false}),
+  {id:'reply',role:'assistant',text:'Final reply',completedTurnId:'turn-one',finalForTurn:true},
+  imageMessage('legacy-result','d'),
+ ];
+ w.mobileCodexEvent('state',{...snapshot,messages});
+ const preview=d.querySelector('[data-id="preview"]'), result=d.querySelector('[data-id="result"]');
+ const toggle=d.querySelector('.work-toggle:not(.tool-group)');
+ assert.equal(d.querySelectorAll('#messages .image-gallery').length,2);
+ assert.equal(toggle.getAttribute('aria-expanded'),'false');
+ assert.equal(preview.hidden,true);assert.equal(result.hidden,false);
+ assert.equal(preview.querySelectorAll('.image-gallery img').length,2);
+ assert.equal(result.querySelectorAll('.image-gallery img').length,2);
+ toggle.click();await tick();
+ assert.equal(preview.hidden,false);assert.equal(result.hidden,false);
+ w.mobileCodexEvent('message.delta',{id:'result',delta:'Results'});
+ frames.splice(0).forEach(draw=>draw());
+ assert.equal(result.querySelectorAll('.image-gallery img').length,2);
+ toggle.click();await tick();
+ assert.equal(preview.hidden,true);assert.equal(result.hidden,false);
+});
 test('a horizontal swipe changes images but zoomed panning does not',async()=>{
  const {w,snapshot}=setup();await tick();const d=w.document;
  const images=['a','b'].map(s=>({id:s.repeat(64),url:'/images/'+s.repeat(64),name:s+'.png'}));

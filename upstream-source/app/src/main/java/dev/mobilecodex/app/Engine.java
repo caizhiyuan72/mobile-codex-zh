@@ -1933,6 +1933,7 @@ public final class Engine {
         if (!generation && !view && encoded.length() == 0) return false;
         JSONObject message = message(item.getString("id"));
         if (!group.isEmpty()) message.put("imageGroup", group);
+        if (generation || view) message.put("workPreview", view);
         if (completed && message.optJSONArray("images") != null && message.getJSONArray("images").length() > 0) return true;
         message.put("kind", "image").put("imageStatus", completed ? "completed" : "generating");
         if (!completed) return true;

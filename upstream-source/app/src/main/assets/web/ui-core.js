@@ -201,12 +201,13 @@
     isLoggedIn(account){return !!(account&&account.type);},
     safeImageUrl(url){return typeof url==='string' && /^\/images\/[0-9a-f]{64}$/.test(url);},
     localImagePath(path){return typeof path==='string' && !!path.trim() && !/[\u0000-\u001f]/.test(path) && !path.startsWith('//') && (!/^[a-z][a-z\d+.-]*:/i.test(path)||/^(sandbox:|file:\/\/\/)/.test(path));},
-    groupImageMessages(messages){
+    groupImageMessages(messages,folds){
       const result=[],groups=new Map();
       for(const message of messages){
         if(message.kind!=='image'||!message.imageGroup){result.push(message);continue;}
-        let group=groups.get(message.imageGroup);
-        if(!group){group={...message,images:[],imageError:'',imageStatus:'completed'};groups.set(message.imageGroup,group);result.push(group);}
+        const key=JSON.stringify([message.imageGroup,folds?.get(message.id)?.key ?? (message.workPreview === true)]);
+        let group=groups.get(key);
+        if(!group){group={...message,images:[],imageError:'',imageStatus:'completed'};groups.set(key,group);result.push(group);}
         group.images.push(...message.images||[]);
         if(message.imageStatus==='generating')group.imageStatus='generating';
         if(message.imageError)group.imageError+=(group.imageError?'\n':'')+message.imageError;

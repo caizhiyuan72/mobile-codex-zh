@@ -10,8 +10,8 @@ android {
         applicationId 'dev.mobilecodex.app.zhcnv3'
         minSdk 29
         targetSdk 35
-        versionCode 99
-        versionName '0.3.9-cn.28'
+        versionCode 136
+        versionName '1.0.13-rebuild.1'
         resourceConfigurations += ['en', 'zh', 'zh-rCN']
         buildConfigField 'String', 'SOURCE_SHA', '"' + ((System.getenv('GITHUB_SHA') ?: 'local').take(12)) + '"'
         buildConfigField 'String', 'REPORT_RELAY_URL', '"https://mobile-codex-diagnostic-relay.vercel.app"'
