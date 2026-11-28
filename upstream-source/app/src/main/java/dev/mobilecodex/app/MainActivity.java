@@ -180,8 +180,8 @@ public final class MainActivity extends Activity implements Engine.Ui {
             }
         });
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
-        applyTheme(appearance.getString("theme", "system"));
         setContentView(root);
+        applyTheme(appearance.getString("theme", "system"));
         if (Build.VERSION.SDK_INT >= 33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
             android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
         web.loadUrl("https://" + HOST + "/index.html");

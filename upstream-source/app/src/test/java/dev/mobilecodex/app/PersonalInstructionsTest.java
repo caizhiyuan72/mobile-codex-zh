@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.*;
 import static dev.mobilecodex.app.core.Json.*;
+import static dev.mobilecodex.app.core.Texts.t;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
@@ -40,7 +41,7 @@ public class PersonalInstructionsTest {
         assertFalse(fallback.getBoolean("overridden"));
         assertTrue(fallback.getString("activePath").endsWith("AGENTS.md"));
         assertEquals("Always test.", fallback.getString("content"));
-        assertTrue(fallback.getString("notice").contains("다시 활성화"));
+        assertEquals(t("AGENTS.override.md 已清空，已重新启用 AGENTS.md。"), fallback.getString("notice"));
     }
     @Test public void failedAtomicWriteRetainsExistingData() throws Exception {
         File blocked = new File(CodexHome.open(context).root(), "blocked");

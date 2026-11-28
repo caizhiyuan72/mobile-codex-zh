@@ -92,7 +92,7 @@ public class ProjectIdentityIntegrationTest {
         JSONObject created = call("projects.create", obj("name", "Only metadata"));
         assertFalse(created.getBoolean("available")); assertFalse(created.getBoolean("hasLocalFolder"));
         ExecutionException error = assertThrows(ExecutionException.class, () -> call("chat.send", obj("text", "run", "workspaceKey", created.getString("key"))));
-        assertEquals(t("이 프로젝트 폴더에 접근할 수 없습니다. 프로젝트에서 폴더를 다시 연결해 주세요."), error.getCause().getMessage());
+        assertEquals(t("无法访问此项目文件夹，请在项目列表中重新关联。"), error.getCause().getMessage());
         engine.io.shutdownNow(); engine = new Engine(context);
         assertEquals(created.getString("projectId"), call("state", obj()).getJSONObject("workspace").getString("projectId"));
     }
@@ -133,7 +133,7 @@ public class ProjectIdentityIntegrationTest {
         assertThrows(ExecutionException.class, () -> call("projects.prefer", obj("key", "b")));
         java.io.IOException picker = assertThrows(java.io.IOException.class,
             () -> engine.selectProjectFolder(android.net.Uri.parse("content://provider/tree/rebind"), "b"));
-        assertEquals(t("진행 중인 작업을 먼저 중지해 주세요."), picker.getMessage());
+        assertEquals(t("请先停止当前任务。"), picker.getMessage());
         assertEquals(before, context.getSharedPreferences("projects", 0).getString("registry", ""));
     }
     @Test public void addingProjectsKeepsTheRunningConversationAndItsWorkspace() throws Exception {
@@ -250,7 +250,7 @@ public class ProjectIdentityIntegrationTest {
         Files.write(new File(blocked, "keep").toPath(), new byte[]{1});
         engine.setStateFileForTest(blocked);
         ExecutionException failure = assertThrows(ExecutionException.class, () -> call("projects.remove", obj("key", "a")));
-        assertEquals(t("프로젝트 연결은 해제됐지만 대화 기록 저장을 마치지 못했습니다. 대화는 보존되며 앱을 다시 시작하면 일반 대화 이전을 재시도합니다."),
+        assertEquals(t("项目关联已移除，但对话记录尚未完成保存。对话会保留，并在下次启动时重试迁移到普通聊天。"),
             failure.getCause().getMessage());
         assertEquals(durableBefore, Utf8Files.read(new File(context.getFilesDir(), "sessions.json").toPath()));
         assertEquals("", call("state", obj()).getJSONArray("sessions").getJSONObject(1).getString("workspaceKey"));
