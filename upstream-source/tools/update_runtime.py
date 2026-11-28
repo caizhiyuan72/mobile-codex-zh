@@ -18,7 +18,8 @@ LOCK = ROOT / 'tools/runtime-lock.json'
 REGISTRY = 'https://registry.npmjs.org/'
 # Files that name the bundled runtime version for users and licence notices.
 VERSION_TEXT = ['README.md', 'README.ko.md', 'THIRD_PARTY_NOTICES.md', 'app/src/main/assets/web/index.html',
-                'app/src/main/assets/web/translations.js', 'app/src/main/assets/translations-en.json']
+                'app/src/main/assets/web/translations.js', 'app/src/main/assets/web/translations-zh.js',
+                'app/src/main/assets/translations-en.json', 'app/src/main/assets/translations-zh-CN.json']
 
 
 def version_key(version):
@@ -56,7 +57,8 @@ def updated_lock(lock, version, dist):
 def replace_version_text(text, old, new):
     # Only exact runtime mentions: package@version, tag URLs and the settings footer.
     patterns = [(f'codex-cli-termux@{old}', f'codex-cli-termux@{new}'), (f'/tree/v{old}', f'/tree/v{new}'),
-                (f'Codex 포트 {old}', f'Codex 포트 {new}'), (f'Codex port {old}', f'Codex port {new}')]
+                (f'Codex 포트 {old}', f'Codex 포트 {new}'), (f'Codex port {old}', f'Codex port {new}'),
+                (f'Codex 移植版 {old}', f'Codex 移植版 {new}')]
     for before, after in patterns:
         text = text.replace(before, after)
     return text

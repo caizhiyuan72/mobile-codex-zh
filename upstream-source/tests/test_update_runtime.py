@@ -43,12 +43,14 @@ class UpdateRuntimeTests(unittest.TestCase):
     def test_version_text_changes_only_runtime_mentions(self):
         text = ('`@mmmbuto/codex-cli-termux@0.155.1` (https://github.com/DioNanos/codex-termux/tree/v0.155.1)\n'
                 'Android용 Codex 포트 0.155.1 · Apache-2.0 / Android Codex port 0.155.1\n'
+                'Android Codex 移植版 0.155.1 · Apache-2.0\n'
                 'Verified against app-server v0.155.1.')
         result = update_runtime.replace_version_text(text, '0.155.1', '0.157.0')
         self.assertIn('codex-cli-termux@0.157.0', result)
         self.assertIn('/tree/v0.157.0', result)
         self.assertIn('Codex 포트 0.157.0', result)
         self.assertIn('Codex port 0.157.0', result)
+        self.assertIn('Codex 移植版 0.157.0', result)
         self.assertIn('app-server v0.155.1', result)
 
     def test_real_lock_and_version_text_agree(self):
@@ -57,7 +59,7 @@ class UpdateRuntimeTests(unittest.TestCase):
         upstream = lock.get('upstreamVersion', lock['version'])
         self.assertIsNotNone(update_runtime.version_key(upstream))
         html = (update_runtime.ROOT / 'app/src/main/assets/web/index.html').read_text(encoding='utf-8')
-        self.assertIn(f"Codex 포트 {upstream}", html)
+        self.assertTrue(f'Codex 移植版 {upstream}' in html, f'Missing Chinese runtime credit for {upstream}')
 
     def test_stock_runtime_cannot_replace_a_patched_build(self):
         lock = dict(LOCK, patchSha256='verified-source-patch')
